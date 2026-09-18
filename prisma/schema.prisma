@@ -1,0 +1,156 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../lib/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum Role {
+  CUSTOMER
+  ADMIN
+}
+
+enum FileFormat {
+  STL
+  OBJ
+}
+
+enum FileStatus {
+  ANALYZING
+  READY
+  ERROR
+}
+
+enum OrderStatus {
+  DRAFT
+  AWAITING_PAYMENT
+  PAID
+  QUEUED
+  PRINTING
+  READY
+  SHIPPED
+  CANCELLED
+}
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  passwordHash String
+  role         Role     @default(CUSTOMER)
+  name         String?
+  createdAt    DateTime @default(now())
+
+  orders Order[]
+}
+
+model Material {
+  id            String  @id @default(cuid())
+  slug          String  @unique
+  name          String
+  description   String?
+  pricePerCm3   Decimal @db.Decimal(10, 4)
+  setupFeeCents Int     @default(0)
+  minPriceCents Int     @default(500)
+  leadTimeDays  Int     @default(2)
+  active        Boolean @default(true)
+
+  // Relative 0-100 ratings for comparing materials against each other in this
+  // lineup — not lab-measured absolute values.
+  strength      Int     @default(50)
+  flexibility   Int     @default(50)
+  heatResistance Int    @default(50)
+  bestFor       String?
+
+  colors     Color[]
+  finishes   Finish[]
+  orderItems OrderItem[]
+}
+
+model Color {
+  id         String @id @default(cuid())
+  materialId String
+  name       String
+  hex        String
+
+  material   Material    @relation(fields: [materialId], references: [id], onDelete: Cascade)
+  orderItems OrderItem[]
+
+  @@unique([materialId, name])
+}
+
+model Finish {
+  id         String  @id @default(cuid())
+  materialId String
+  name       String
+  multiplier Decimal @default(1) @db.Decimal(5, 3)
+
+  material   Material    @relation(fields: [materialId], references: [id], onDelete: Cascade)
+  orderItems OrderItem[]
+
+  @@unique([materialId, name])
+}
+
+model UploadedFile {
+  id             String     @id @default(cuid())
+  storageKey     String
+  originalName   String
+  format         FileFormat
+  sizeBytes      Int
+  status         FileStatus @default(ANALYZING)
+  errorMessage   String?
+  volumeCm3      Decimal?   @db.Decimal(12, 4)
+  bboxXMm        Decimal?   @db.Decimal(10, 3)
+  bboxYMm        Decimal?   @db.Decimal(10, 3)
+  bboxZMm        Decimal?   @db.Decimal(10, 3)
+  triangleCount  Int?
+  createdAt      DateTime   @default(now())
+
+  orderItems OrderItem[]
+}
+
+model ShowcaseItem {
+  id         String   @id @default(cuid())
+  title      String
+  storageKey String
+  sortOrder  Int      @default(0)
+  createdAt  DateTime @default(now())
+}
+
+model Order {
+  id              String      @id @default(cuid())
+  userId          String?
+  status          OrderStatus @default(DRAFT)
+  shippingName    String?
+  shippingAddress String?
+  shippingCity    String?
+  shippingPostal  String?
+  shippingCountry String?
+  email           String?
+  totalCents      Int         @default(0)
+  stripeSessionId String?     @unique
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+
+  user  User?       @relation(fields: [userId], references: [id])
+  items OrderItem[]
+}
+
+model OrderItem {
+  id             String  @id @default(cuid())
+  orderId        String
+  fileId         String
+  materialId     String
+  colorId        String?
+  finishId       String?
+  quantity       Int     @default(1)
+  unitPriceCents Int
+  totalPriceCents Int
+
+  order    Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  file     UploadedFile @relation(fields: [fileId], references: [id])
+  material Material @relation(fields: [materialId], references: [id])
+  color    Color?   @relation(fields: [colorId], references: [id])
+  finish   Finish?  @relation(fields: [finishId], references: [id])
+}

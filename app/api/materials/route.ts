@@ -1,0 +1,34 @@
+import { NextResponse } from "next/server";
+
+import { prisma } from "@/lib/db";
+
+export async function GET() {
+  const materials = await prisma.material.findMany({
+    where: { active: true },
+    include: { colors: true, finishes: true },
+    orderBy: { name: "asc" },
+  });
+
+  return NextResponse.json({
+    materials: materials.map((m) => ({
+      id: m.id,
+      slug: m.slug,
+      name: m.name,
+      description: m.description,
+      pricePerCm3: Number(m.pricePerCm3),
+      setupFeeCents: m.setupFeeCents,
+      minPriceCents: m.minPriceCents,
+      leadTimeDays: m.leadTimeDays,
+      strength: m.strength,
+      flexibility: m.flexibility,
+      heatResistance: m.heatResistance,
+      bestFor: m.bestFor,
+      colors: m.colors.map((c) => ({ id: c.id, name: c.name, hex: c.hex })),
+      finishes: m.finishes.map((f) => ({
+        id: f.id,
+        name: f.name,
+        multiplier: Number(f.multiplier),
+      })),
+    })),
+  });
+}
