@@ -2,7 +2,7 @@
 
 import { useEffect, useRef } from "react";
 
-import { heroShapeTransform } from "@/lib/heroShape";
+import { HERO_BAND_HEIGHT_VH, HERO_BAND_TOP_VH, heroShapeTransform } from "@/lib/heroShape";
 
 // Once scrolled past the hero section, the band fades out over this many
 // extra pixels — short, so it never lingers as a muddy wash over the
@@ -46,8 +46,8 @@ export function TiltFrame() {
         style={{
           left: "-20%",
           width: "140%",
-          top: "-12vh",
-          height: "60vh",
+          top: `${HERO_BAND_TOP_VH * 100}vh`,
+          height: `${HERO_BAND_HEIGHT_VH * 100}vh`,
           background: "var(--accent)",
           transform: "rotate(-18deg)",
         }}

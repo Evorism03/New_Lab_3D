@@ -5,7 +5,7 @@ import { prisma } from "@/lib/db";
 import { getServerLocale } from "@/lib/i18n/locale";
 import { getDictionary } from "@/lib/i18n/translations";
 import { serializeOrder } from "@/lib/serializers";
-import { formatCents } from "@/lib/types";
+import { formatCents } from "@/lib/money";
 
 export default async function OrderStatusPage({
   params,
@@ -46,15 +46,15 @@ export default async function OrderStatusPage({
                 {item.material.name}
                 {item.color ? ` · ${item.color.name}` : ""}
                 {item.finish ? ` · ${item.finish.name}` : ""} · {t.qty} {item.quantity}
-                {item.file.volumeCm3 !== null ? ` · ${item.file.volumeCm3.toFixed(2)} cm³` : ""}
+                {item.file.volumeCm3 !== null ? ` · ${item.file.volumeCm3.toFixed(2)} ${dict.units.cm3}` : ""}
               </p>
             </div>
-            <p className="font-medium text-text">{formatCents(item.totalPriceCents)}</p>
+            <p className="font-medium text-text">{formatCents(item.totalPriceCents, dict.locale)}</p>
           </div>
         ))}
         <div className="flex items-center justify-between p-4">
           <p className="font-semibold text-text">{t.total}</p>
-          <p className="font-semibold text-text">{formatCents(dto.totalCents)}</p>
+          <p className="font-semibold text-text">{formatCents(dto.totalCents, dict.locale)}</p>
         </div>
       </div>
 

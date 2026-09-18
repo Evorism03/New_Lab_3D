@@ -3,9 +3,11 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 
+import { MaterialThumb } from "@/components/MaterialThumb";
 import { ModelViewer } from "@/components/ModelViewer";
-import { formatTemplate, type Dictionary } from "@/lib/i18n/translations";
-import { formatCents, type FileDTO, type MaterialDTO, type QuoteDTO } from "@/lib/types";
+import { formatDays, formatTemplate, type Dictionary } from "@/lib/i18n/translations";
+import { formatAmount, formatCents } from "@/lib/money";
+import type { FileDTO, MaterialDTO, QuoteDTO } from "@/lib/types";
 
 /** Falls back to the first option whenever `selectedId` doesn't belong to the current list
  *  (e.g. right after switching material) — avoids a setState-in-effect render cascade. */
@@ -84,20 +86,22 @@ export function ConfigureClient({
   };
 
   return (
-    <div className="mx-auto grid max-w-6xl grid-cols-1 gap-8 px-6 py-10 lg:grid-cols-5">
-      <div className="lg:col-span-3">
-        <div className="h-[420px]">
+    <div className="mx-auto grid max-w-[1600px] grid-cols-1 gap-8 px-6 py-6 lg:grid-cols-[minmax(0,2fr)_minmax(380px,1fr)]">
+      <div>
+        <div className="h-[55vh] min-h-[360px] lg:h-[calc(100vh-240px)] lg:min-h-[480px]">
           <ModelViewer fileUrl={`/api/files/${file.id}/raw`} format={file.format} />
         </div>
         <dl className="mt-4 grid grid-cols-3 gap-4 text-sm text-muted">
           <div>
             <dt className="font-medium text-text">{t.volume}</dt>
-            <dd>{file.volumeCm3?.toFixed(2)} cm³</dd>
+            <dd>
+              {file.volumeCm3?.toFixed(2)} {dict.units.cm3}
+            </dd>
           </div>
           <div>
             <dt className="font-medium text-text">{t.boundingBox}</dt>
             <dd>
-              {file.bboxMm?.x.toFixed(1)} × {file.bboxMm?.y.toFixed(1)} × {file.bboxMm?.z.toFixed(1)} mm
+              {file.bboxMm?.x.toFixed(1)} × {file.bboxMm?.y.toFixed(1)} × {file.bboxMm?.z.toFixed(1)} {dict.units.mm}
             </dd>
           </div>
           <div>
@@ -107,24 +111,43 @@ export function ConfigureClient({
         </dl>
       </div>
 
-      <div className="lg:col-span-2">
+      <div className="flex flex-col lg:sticky lg:top-[80px] lg:h-[calc(100vh-104px)]">
+        <div className="lg:min-h-0 lg:flex-1 lg:overflow-y-auto lg:pr-2">
         <h1 className="text-xl font-bold text-text">{t.title}</h1>
 
         <div className="mt-6">
           <label className="block text-sm font-medium text-text">{t.material}</label>
-          <select
-            value={material.id}
-            onChange={(e) => setMaterialId(e.target.value)}
-            className="mt-1 w-full px-3 py-2 text-sm"
-          >
-            {materials.map((m) => (
-              <option key={m.id} value={m.id}>
-                {m.name}
-              </option>
-            ))}
-          </select>
+          <div className="mt-2 grid grid-cols-2 gap-3">
+            {materials.map((m) => {
+              const isSelected = m.id === material.id;
+              return (
+                <button
+                  key={m.id}
+                  type="button"
+                  onClick={() => setMaterialId(m.id)}
+                  aria-pressed={isSelected}
+                  className={`overflow-hidden rounded-xl border text-left transition-colors ${
+                    isSelected
+                      ? "border-accent bg-accent-soft"
+                      : "border-border bg-bg-soft hover:border-accent/40"
+                  }`}
+                >
+                  <MaterialThumb imageUrl={m.imageUrl} alt={m.name} className="aspect-[4/3] w-full" />
+                  <div className="p-3">
+                    <div className={`text-sm font-semibold ${isSelected ? "text-accent" : "text-text"}`}>
+                      {m.name}
+                    </div>
+                    <div className="mt-0.5 text-xs text-muted">
+                      {dict.home.materialsPricePrefix} {formatAmount(m.pricePerCm3, dict.locale)}{" "}
+                      {dict.home.materialsPriceSuffix}
+                    </div>
+                  </div>
+                </button>
+              );
+            })}
+          </div>
           {material.description && (
-            <p className="mt-1 text-xs text-muted">{material.description}</p>
+            <p className="mt-3 text-xs text-muted">{material.description}</p>
           )}
         </div>
 
@@ -175,21 +198,22 @@ export function ConfigureClient({
             className="mt-1 w-24 px-3 py-2 text-sm"
           />
         </div>
+        </div>
 
-        <div className="card mt-8 p-4">
+        <div className="card mt-4 shrink-0 p-4">
           {quoteError && <p className="text-sm text-danger">{quoteError}</p>}
           {!quoteError && (
             <>
               <div className="flex items-baseline justify-between">
                 <span className="text-sm text-muted">{t.estimatedTotal}</span>
                 <span className="text-2xl font-bold text-text">
-                  {quote ? formatCents(quote.totalPriceCents) : isQuoting ? "…" : "—"}
+                  {quote ? formatCents(quote.totalPriceCents, dict.locale) : isQuoting ? "…" : "—"}
                 </span>
               </div>
               {quote && (
                 <p className="mt-1 text-xs text-muted">
-                  {formatCents(quote.unitPriceCents)} / {t.perUnit} ·{" "}
-                  {formatTemplate(t.shipsIn, quote.leadTimeDays)}
+                  {formatCents(quote.unitPriceCents, dict.locale)} / {t.perUnit} ·{" "}
+                  {formatTemplate(t.shipsIn, formatDays(quote.leadTimeDays, dict.locale))}
                 </p>
               )}
             </>

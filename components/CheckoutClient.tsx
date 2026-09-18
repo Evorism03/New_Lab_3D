@@ -4,7 +4,8 @@ import { useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useState } from "react";
 
 import type { Dictionary } from "@/lib/i18n/translations";
-import { formatCents, type QuoteDTO } from "@/lib/types";
+import { formatCents } from "@/lib/money";
+import type { QuoteDTO } from "@/lib/types";
 
 function CheckoutForm({ dict }: { dict: Dictionary }) {
   const t = dict.checkout;
@@ -92,7 +93,7 @@ function CheckoutForm({ dict }: { dict: Dictionary }) {
       <div className="card mt-6 flex items-baseline justify-between p-4">
         <span className="text-sm text-muted">{t.orderTotal}</span>
         <span className="text-xl font-bold text-text">
-          {quote ? formatCents(quote.totalPriceCents) : "…"}
+          {quote ? formatCents(quote.totalPriceCents, dict.locale) : "…"}
         </span>
       </div>
 

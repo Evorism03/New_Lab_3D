@@ -3,6 +3,9 @@
 // text layer to wherever it overlaps), so the two can never drift apart.
 export const HERO_ROTATE_DEG = -18;
 export const HERO_PARALLAX_FACTOR = 0.35;
+// Band geometry as fractions of viewport height (centre stays at 0.18).
+export const HERO_BAND_TOP_VH = -0.05;
+export const HERO_BAND_HEIGHT_VH = 0.46;
 
 export function heroShapeTransform(scrollY: number): string {
   return `translateY(${scrollY * HERO_PARALLAX_FACTOR}px) rotate(${HERO_ROTATE_DEG}deg)`;
@@ -15,9 +18,9 @@ export function heroShapeCorners(
   viewportHeight: number,
 ): [number, number][] {
   const x0 = -0.2 * viewportWidth;
-  const y0 = -0.12 * viewportHeight;
+  const y0 = HERO_BAND_TOP_VH * viewportHeight;
   const w = 1.4 * viewportWidth;
-  const h = 0.6 * viewportHeight;
+  const h = HERO_BAND_HEIGHT_VH * viewportHeight;
   const cx = x0 + w / 2;
   const cy = y0 + h / 2;
   const theta = (HERO_ROTATE_DEG * Math.PI) / 180;

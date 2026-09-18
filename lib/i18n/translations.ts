@@ -4,6 +4,13 @@ export const DEFAULT_LOCALE: Locale = "en";
 
 const dictionaries = {
   en: {
+    locale: "en",
+    units: { cm3: "cm³", mm: "mm" },
+    meta: {
+      titleSuffix: "Instant 3D Print Quotes",
+      description:
+        "Upload a 3D model, get an instant quote, and order professional 3D printed parts.",
+    },
     header: {
       getQuote: "Get a quote",
       admin: "Admin",
@@ -42,12 +49,11 @@ const dictionaries = {
       statsMaterialsLabel: "materials available",
       statsOrdersLabel: "orders placed",
       statsTurnaroundLabel: "fastest turnaround",
-      statsTurnaroundUnit: "business days",
       materialsTag: "Materials",
       materialsTitle: "%d types of plastic for any task",
       materialsPricePrefix: "from",
       materialsPriceSuffix: "/ cm³",
-      materialsLeadTime: "~%d business days",
+      materialsLeadTime: "~%d",
       materialsBestFor: "Best for:",
       materialsStrength: "Strength",
       materialsFlexibility: "Flexibility",
@@ -81,7 +87,7 @@ const dictionaries = {
     },
     upload: {
       title: "Upload your model",
-      subtitle: "Supported formats: STL, OBJ. Max 50MB.",
+      subtitle: "Supported formats: STL, OBJ. Max 500MB.",
       dropTitle: "Drag & drop your file here",
       dropSubtitle: "or click to browse",
       uploading: "Uploading and analyzing…",
@@ -98,7 +104,7 @@ const dictionaries = {
       quantity: "Quantity",
       estimatedTotal: "Estimated total",
       perUnit: "unit",
-      shipsIn: "ships in ~%d business days",
+      shipsIn: "ships in ~%d",
       continueToCheckout: "Continue to checkout",
       noMaterials: "No materials available.",
       analyzing: "Still analyzing your file — refresh in a moment.",
@@ -169,9 +175,33 @@ const dictionaries = {
       addWork: "Add work",
       deleteWork: "Delete",
       noWorks: "No works added yet.",
+      materialImagesTitle: "Material images",
+      materialImagesHint: "Illustrations shown when a customer picks a material.",
+      uploadImage: "Upload image",
+      replaceImage: "Replace image",
+      removeImage: "Remove",
+      pricingTitle: "Pricing",
+      pricingHint:
+        "Price = max(minimum price, volume × price per cm³ × finish multiplier) + setup fee. Prices are set in rubles; the English site shows them in dollars at the configured rate. Changes apply to new quotes immediately.",
+      pricePerCm3Label: "Price per cm³ (₽)",
+      setupFeeLabel: "Setup fee (₽)",
+      minPriceLabel: "Minimum price (₽)",
+      leadTimeLabel: "Lead time (business days)",
+      activeLabel: "Available to customers",
+      finishMultipliersLabel: "Finish multipliers",
+      savePricing: "Save",
+      pricingSaved: "Saved",
+      pricingInvalid: "Check the values — numbers only, no negatives.",
     },
   },
   ru: {
+    locale: "ru",
+    units: { cm3: "см³", mm: "мм" },
+    meta: {
+      titleSuffix: "Мгновенный расчёт 3D-печати",
+      description:
+        "Загрузите 3D-модель, получите мгновенный расчёт цены и закажите профессиональную 3D-печать.",
+    },
     header: {
       getQuote: "Рассчитать цену",
       admin: "Админка",
@@ -210,12 +240,11 @@ const dictionaries = {
       statsMaterialsLabel: "материалов в наличии",
       statsOrdersLabel: "оформленных заказов",
       statsTurnaroundLabel: "минимальный срок",
-      statsTurnaroundUnit: "рабочих дня",
       materialsTag: "Материалы",
       materialsTitle: "%d видов пластика под любую задачу",
       materialsPricePrefix: "от",
       materialsPriceSuffix: "/ см³",
-      materialsLeadTime: "~%d рабочих дня",
+      materialsLeadTime: "~%d",
       materialsBestFor: "Подходит для:",
       materialsStrength: "Прочность",
       materialsFlexibility: "Гибкость",
@@ -249,7 +278,7 @@ const dictionaries = {
     },
     upload: {
       title: "Загрузите модель",
-      subtitle: "Поддерживаемые форматы: STL, OBJ. До 50 МБ.",
+      subtitle: "Поддерживаемые форматы: STL, OBJ. До 500 МБ.",
       dropTitle: "Перетащите файл сюда",
       dropSubtitle: "или нажмите, чтобы выбрать",
       uploading: "Загружаем и анализируем…",
@@ -266,7 +295,7 @@ const dictionaries = {
       quantity: "Количество",
       estimatedTotal: "Итоговая цена",
       perUnit: "шт.",
-      shipsIn: "отправка через ~%d рабочих дней",
+      shipsIn: "отправка через ~%d",
       continueToCheckout: "Перейти к оформлению",
       noMaterials: "Нет доступных материалов.",
       analyzing: "Файл ещё анализируется — обновите страницу через момент.",
@@ -337,6 +366,23 @@ const dictionaries = {
       addWork: "Добавить работу",
       deleteWork: "Удалить",
       noWorks: "Работы пока не добавлены.",
+      materialImagesTitle: "Картинки материалов",
+      materialImagesHint: "Иллюстрации, которые видит клиент при выборе материала.",
+      uploadImage: "Загрузить картинку",
+      replaceImage: "Заменить картинку",
+      removeImage: "Убрать",
+      pricingTitle: "Цены",
+      pricingHint:
+        "Цена = max(минимальная цена, объём × цена за см³ × коэффициент финиша) + стоимость запуска. Цены задаются в рублях; английская версия сайта показывает их в долларах по заданному курсу. Изменения сразу действуют на новые расчёты.",
+      pricePerCm3Label: "Цена за см³ (₽)",
+      setupFeeLabel: "Запуск (₽)",
+      minPriceLabel: "Минимальная цена (₽)",
+      leadTimeLabel: "Срок (рабочих дней)",
+      activeLabel: "Доступен клиентам",
+      finishMultipliersLabel: "Коэффициенты финишей",
+      savePricing: "Сохранить",
+      pricingSaved: "Сохранено",
+      pricingInvalid: "Проверьте значения — только числа, без отрицательных.",
     },
   },
 } as const satisfies Record<Locale, unknown>;
@@ -347,6 +393,21 @@ export function getDictionary(locale: Locale): Dictionary {
   return dictionaries[locale];
 }
 
-export function formatTemplate(template: string, value: number): string {
+/** "business day" in the right form for n (Russian has three plural forms). */
+export function daysWord(n: number, locale: Locale): string {
+  if (locale === "en") return n === 1 ? "business day" : "business days";
+  const lastTwo = n % 100;
+  const last = n % 10;
+  if (lastTwo >= 11 && lastTwo <= 14) return "рабочих дней";
+  if (last === 1) return "рабочий день";
+  if (last >= 2 && last <= 4) return "рабочих дня";
+  return "рабочих дней";
+}
+
+export function formatDays(n: number, locale: Locale): string {
+  return `${n} ${daysWord(n, locale)}`;
+}
+
+export function formatTemplate(template: string, value: number | string): string {
   return template.replace("%d", String(value));
 }

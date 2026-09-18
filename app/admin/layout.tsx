@@ -27,6 +27,12 @@ export default async function AdminLayout({ children }: { children: React.ReactN
         <Link href="/admin/showcase" className="text-muted transition-colors hover:text-accent">
           {t.showcaseTitle}
         </Link>
+        <Link href="/admin/materials" className="text-muted transition-colors hover:text-accent">
+          {t.materialImagesTitle}
+        </Link>
+        <Link href="/admin/pricing" className="text-muted transition-colors hover:text-accent">
+          {t.pricingTitle}
+        </Link>
       </nav>
       {children}
     </div>

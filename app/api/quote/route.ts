@@ -53,7 +53,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({
       quote: {
         ...breakdown,
-        currency: "usd",
+        currency: "rub",
         leadTimeDays: material.leadTimeDays,
       },
     });

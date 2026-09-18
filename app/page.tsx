@@ -1,5 +1,6 @@
 import Link from "next/link";
 
+import { PageBand } from "@/components/PageBand";
 import { Reveal } from "@/components/Reveal";
 import { ScrollParallax } from "@/components/ScrollParallax";
 import { StatCounter } from "@/components/StatCounter";
@@ -7,7 +8,8 @@ import { TextMask } from "@/components/TextMask";
 import { TiltFrame } from "@/components/TiltFrame";
 import { prisma } from "@/lib/db";
 import { getServerLocale } from "@/lib/i18n/locale";
-import { formatTemplate, getDictionary } from "@/lib/i18n/translations";
+import { daysWord, formatDays, formatTemplate, getDictionary } from "@/lib/i18n/translations";
+import { formatAmount } from "@/lib/money";
 
 function StatBar({ label, value }: { label: string; value: number }) {
   return (
@@ -125,8 +127,9 @@ export default async function HomePage() {
         </div>
       </section>
 
-      <>
-        <div className="relative bg-bg">
+      <div className="relative isolate bg-bg">
+        <PageBand />
+        <div className="relative">
           <div className="divider" />
 
           <section className="px-6 py-[130px]">
@@ -171,7 +174,7 @@ export default async function HomePage() {
                     {fastestMaterial?.leadTimeDays ?? 2}
                   </strong>
                   <span className="text-sm text-muted">
-                    {home.statsTurnaroundLabel} ({home.statsTurnaroundUnit})
+                    {home.statsTurnaroundLabel} ({daysWord(fastestMaterial?.leadTimeDays ?? 2, dict.locale)})
                   </span>
                 </div>
               </Reveal>
@@ -231,12 +234,12 @@ export default async function HomePage() {
                       <span className="text-muted">
                         {home.materialsPricePrefix}{" "}
                         <span className="font-semibold text-text">
-                          ${Number(m.pricePerCm3).toFixed(2)}
+                          {formatAmount(Number(m.pricePerCm3), dict.locale)}
                         </span>{" "}
                         {home.materialsPriceSuffix}
                       </span>
                       <span className="text-muted">
-                        {formatTemplate(home.materialsLeadTime, m.leadTimeDays)}
+                        {formatTemplate(home.materialsLeadTime, formatDays(m.leadTimeDays, dict.locale))}
                       </span>
                     </div>
                   </div>
@@ -266,7 +269,7 @@ export default async function HomePage() {
             ))}
           </div>
         </section>
-      </>
+      </div>
     </div>
   );
 }

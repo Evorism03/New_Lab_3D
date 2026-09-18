@@ -37,9 +37,9 @@ async function main() {
       slug: "pla",
       name: "PLA",
       description: "Biodegradable plastic for prototypes. Easy to print, low heat resistance.",
-      pricePerCm3: 0.08,
-      setupFeeCents: 200,
-      minPriceCents: 500,
+      pricePerCm3: 7.2,
+      setupFeeCents: 18000,
+      minPriceCents: 45000,
       leadTimeDays: 1,
       colors: commonColors,
       finishes: standardFinishes,
@@ -52,9 +52,9 @@ async function main() {
       slug: "petg",
       name: "PETG",
       description: "A balance of strength and flexibility. Moisture and chemical resistant.",
-      pricePerCm3: 0.1,
-      setupFeeCents: 250,
-      minPriceCents: 600,
+      pricePerCm3: 9,
+      setupFeeCents: 22500,
+      minPriceCents: 54000,
       leadTimeDays: 1,
       colors: commonColors,
       finishes: standardFinishes,
@@ -67,9 +67,9 @@ async function main() {
       slug: "abs",
       name: "ABS",
       description: "Strong, heat-resistant plastic for mechanically loaded parts.",
-      pricePerCm3: 0.1,
-      setupFeeCents: 250,
-      minPriceCents: 600,
+      pricePerCm3: 9,
+      setupFeeCents: 22500,
+      minPriceCents: 54000,
       leadTimeDays: 1,
       colors: commonColors,
       finishes: standardFinishes,
@@ -82,9 +82,9 @@ async function main() {
       slug: "pet",
       name: "PET",
       description: "Reliable, general-purpose material for stable functional components.",
-      pricePerCm3: 0.1,
-      setupFeeCents: 250,
-      minPriceCents: 600,
+      pricePerCm3: 9,
+      setupFeeCents: 22500,
+      minPriceCents: 54000,
       leadTimeDays: 1,
       colors: commonColors,
       finishes: standardFinishes,
@@ -97,9 +97,9 @@ async function main() {
       slug: "tpu",
       name: "TPU",
       description: "Flexible and elastic. Highly resistant to deformation and wear.",
-      pricePerCm3: 0.14,
-      setupFeeCents: 300,
-      minPriceCents: 700,
+      pricePerCm3: 12.6,
+      setupFeeCents: 27000,
+      minPriceCents: 63000,
       leadTimeDays: 2,
       colors: ["Black", "White"],
       finishes: [{ name: "Standard", multiplier: 1 }],
@@ -112,9 +112,9 @@ async function main() {
       slug: "pa",
       name: "PA (Nylon)",
       description: "Engineering-grade polyamide with high wear and chemical resistance.",
-      pricePerCm3: 0.18,
-      setupFeeCents: 350,
-      minPriceCents: 800,
+      pricePerCm3: 16.2,
+      setupFeeCents: 31500,
+      minPriceCents: 72000,
       leadTimeDays: 2,
       colors: ["Black", "Natural"],
       finishes: [{ name: "Standard", multiplier: 1 }],
@@ -127,9 +127,9 @@ async function main() {
       slug: "pc",
       name: "PC",
       description: "Polycarbonate — maximum strength for heavily loaded, high-temperature parts.",
-      pricePerCm3: 0.2,
-      setupFeeCents: 400,
-      minPriceCents: 900,
+      pricePerCm3: 18,
+      setupFeeCents: 36000,
+      minPriceCents: 81000,
       leadTimeDays: 2,
       colors: ["Black", "Clear"],
       finishes: standardFinishes,
@@ -142,9 +142,9 @@ async function main() {
       slug: "pp",
       name: "PP",
       description: "Lightweight and chemical-resistant. Durable for long-lasting parts.",
-      pricePerCm3: 0.12,
-      setupFeeCents: 300,
-      minPriceCents: 700,
+      pricePerCm3: 10.8,
+      setupFeeCents: 27000,
+      minPriceCents: 63000,
       leadTimeDays: 2,
       colors: ["Black", "White"],
       finishes: [{ name: "Standard", multiplier: 1 }],
@@ -155,7 +155,12 @@ async function main() {
     },
   ];
 
-  for (const m of materials) {
+  // Prices and the catalog are editable in the admin panel, so a re-run must not
+  // overwrite them — the catalog is only (re)written on an empty database or SEED_RESET=1.
+  const catalogIsEmpty = (await prisma.material.count({ where: { active: true } })) === 0;
+  const writeCatalog = catalogIsEmpty || process.env.SEED_RESET === "1";
+
+  for (const m of writeCatalog ? materials : []) {
     const material = await prisma.material.upsert({
       where: { slug: m.slug },
       update: {
@@ -203,17 +208,31 @@ async function main() {
     }
   }
 
-  const adminEmail = "admin";
-  const adminPasswordHash = await bcrypt.hash("admin", 10);
-  await prisma.user.upsert({
-    where: { email: adminEmail },
-    update: { passwordHash: adminPasswordHash },
-    create: { email: adminEmail, passwordHash: adminPasswordHash, role: "ADMIN", name: "Admin" },
-  });
+  const isProduction = process.env.NODE_ENV === "production";
+  const adminEmail = process.env.ADMIN_EMAIL ?? "admin";
+  const adminPassword = process.env.ADMIN_PASSWORD;
+
+  if (isProduction && !adminPassword) {
+    // Re-running setup on a live server must not touch the existing admin login.
+    if ((await prisma.user.count({ where: { role: "ADMIN" } })) === 0) {
+      throw new Error("No admin exists yet - set ADMIN_PASSWORD (at least 8 characters).");
+    }
+  } else {
+    const password = adminPassword ?? "admin";
+    if (isProduction && (password === "admin" || password.length < 8)) {
+      throw new Error("ADMIN_PASSWORD must be at least 8 characters and not 'admin' on a production database.");
+    }
+    const adminPasswordHash = await bcrypt.hash(password, 10);
+    await prisma.user.upsert({
+      where: { email: adminEmail },
+      update: { passwordHash: adminPasswordHash },
+      create: { email: adminEmail, passwordHash: adminPasswordHash, role: "ADMIN", name: "Admin" },
+    });
+  }
   await prisma.user.deleteMany({ where: { email: "admin@formnow.local" } });
 
   console.log("Seed complete.");
-  console.log(`Admin login: ${adminEmail} / admin`);
+  console.log(`Admin login: ${adminEmail}`);
 }
 
 main()

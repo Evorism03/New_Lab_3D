@@ -5,6 +5,7 @@ import { prisma } from "@/lib/db";
 import { getServerLocale } from "@/lib/i18n/locale";
 import { getDictionary } from "@/lib/i18n/translations";
 import { serializeFile } from "@/lib/serializers";
+import { materialImageUrl } from "@/lib/types";
 
 export default async function ConfigurePage({
   params,
@@ -58,6 +59,7 @@ export default async function ConfigurePage({
         flexibility: m.flexibility,
         heatResistance: m.heatResistance,
         bestFor: m.bestFor,
+        imageUrl: materialImageUrl(m.id, m.imageKey),
         colors: m.colors.map((c) => ({ id: c.id, name: c.name, hex: c.hex })),
         finishes: m.finishes.map((f) => ({ id: f.id, name: f.name, multiplier: Number(f.multiplier) })),
       }))}

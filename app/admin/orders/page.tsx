@@ -6,7 +6,7 @@ import { OrderStatus } from "@/lib/generated/prisma/client";
 import { getServerLocale } from "@/lib/i18n/locale";
 import { getDictionary } from "@/lib/i18n/translations";
 import { serializeOrder } from "@/lib/serializers";
-import { formatCents } from "@/lib/types";
+import { formatCents } from "@/lib/money";
 
 const STATUSES = Object.values(OrderStatus);
 
@@ -86,7 +86,7 @@ export default async function AdminOrdersPage({
                   <td className="px-4 py-3 text-muted">{materials || "—"}</td>
                   <td className="px-4 py-3 text-muted">{destination || "—"}</td>
                   <td className="px-4 py-3 text-muted">{itemCount}</td>
-                  <td className="px-4 py-3 text-text">{formatCents(order.totalCents)}</td>
+                  <td className="px-4 py-3 text-text">{formatCents(order.totalCents, dict.locale)}</td>
                   <td className="px-4 py-3 text-muted">
                     {new Date(order.createdAt).toLocaleDateString()}
                   </td>

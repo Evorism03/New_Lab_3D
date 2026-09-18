@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { prisma } from "@/lib/db";
+import { materialImageUrl } from "@/lib/types";
 
 export async function GET() {
   const materials = await prisma.material.findMany({
@@ -23,6 +24,7 @@ export async function GET() {
       flexibility: m.flexibility,
       heatResistance: m.heatResistance,
       bestFor: m.bestFor,
+      imageUrl: materialImageUrl(m.id, m.imageKey),
       colors: m.colors.map((c) => ({ id: c.id, name: c.name, hex: c.hex })),
       finishes: m.finishes.map((f) => ({
         id: f.id,

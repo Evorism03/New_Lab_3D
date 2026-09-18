@@ -63,6 +63,9 @@ model Material {
   heatResistance Int    @default(50)
   bestFor       String?
 
+  // Storage key of the illustration shown when picking this material.
+  imageKey      String?
+
   colors     Color[]
   finishes   Finish[]
   orderItems OrderItem[]

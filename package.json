@@ -6,7 +6,12 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "server:setup": "server.bat setup",
+    "server:start": "server.bat start",
+    "server:autostart": "server.bat autostart",
+    "server": "server.bat",
+    "server:stop": "server.bat stop"
   },
   "dependencies": {
     "@prisma/adapter-pg": "^7.10.0",

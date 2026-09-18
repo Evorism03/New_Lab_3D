@@ -26,9 +26,15 @@ export type MaterialDTO = {
   flexibility: number;
   heatResistance: number;
   bestFor: string | null;
+  imageUrl: string | null;
   colors: ColorDTO[];
   finishes: FinishDTO[];
 };
+
+/** Public URL of a material's illustration; the key doubles as a cache-buster. */
+export function materialImageUrl(id: string, imageKey: string | null): string | null {
+  return imageKey ? `/api/materials/${id}/image?v=${encodeURIComponent(imageKey)}` : null;
+}
 
 export type QuoteDTO = {
   unitPriceCents: number;
@@ -67,7 +73,3 @@ export type OrderDTO = {
   createdAt: string;
   updatedAt: string;
 };
-
-export function formatCents(cents: number): string {
-  return (cents / 100).toLocaleString("en-US", { style: "currency", currency: "USD" });
-}

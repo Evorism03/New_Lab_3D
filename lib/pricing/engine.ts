@@ -2,7 +2,7 @@ export class PricingError extends Error {}
 
 export type PricingInput = {
   volumeCm3: number;
-  /** Material cost per cm³, in dollars (e.g. 0.45). */
+  /** Material cost per cm³, in rubles (e.g. 9). The *Cents fields are kopecks. */
   pricePerCm3: number;
   setupFeeCents: number;
   minPriceCents: number;

@@ -32,7 +32,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Order is not awaiting payment" }, { status: 400 });
   }
 
-  const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
+  const appUrl = process.env.APP_URL ?? process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
 
   const checkoutSession = await stripe.checkout.sessions.create({
     mode: "payment",
@@ -40,7 +40,7 @@ export async function POST(request: NextRequest) {
     line_items: order.items.map((item) => ({
       quantity: item.quantity,
       price_data: {
-        currency: "usd",
+        currency: "rub",
         unit_amount: item.unitPriceCents,
         product_data: {
           name: `${item.material.name}${item.finish ? ` — ${item.finish.name}` : ""}`,

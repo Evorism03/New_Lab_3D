@@ -5,7 +5,7 @@ import { prisma } from "@/lib/db";
 import { serializeFile } from "@/lib/serializers";
 import { storage } from "@/lib/storage";
 
-const MAX_FILE_SIZE_BYTES = 50 * 1024 * 1024;
+const MAX_FILE_SIZE_BYTES = 500 * 1024 * 1024;
 
 export async function POST(request: NextRequest) {
   const formData = await request.formData();
@@ -24,7 +24,7 @@ export async function POST(request: NextRequest) {
   }
 
   if (file.size > MAX_FILE_SIZE_BYTES) {
-    return NextResponse.json({ error: "File too large (max 50MB)" }, { status: 400 });
+    return NextResponse.json({ error: "File too large (max 500MB)" }, { status: 400 });
   }
 
   const buffer = Buffer.from(await file.arrayBuffer());
