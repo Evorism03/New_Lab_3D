@@ -31,6 +31,11 @@ $nodeVersion = [Version]((& $node -v).TrimStart('v'))
 if ($nodeVersion -lt [Version]"20.9.0") { throw "Нужен Node.js 20.9 или новее (сейчас $nodeVersion)." }
 Write-Ok "Node.js $nodeVersion"
 
+# Зависимости нужны уже для проверки базы (ensure-db.mjs использует пакет pg), поэтому ставим их первыми.
+Write-Step "Установка зависимостей"
+& npm install --no-audit --no-fund
+if ($LASTEXITCODE -ne 0) { throw "npm install завершился с ошибкой." }
+
 $existing = Read-EnvFile $script:EnvFile
 $firstRun = ($existing.Count -eq 0)
 
@@ -58,7 +63,8 @@ if (-not $DatabaseUrl) {
 }
 $env:DATABASE_URL = $DatabaseUrl
 & $node (Join-Path $PSScriptRoot "ensure-db.mjs")
-if ($LASTEXITCODE -ne 0) { throw "Нет связи с базой данных. Проверьте DATABASE_URL и что PostgreSQL запущен." }
+if ($LASTEXITCODE -eq 4) { throw "Не установлены зависимости проекта (npm install)." }
+if ($LASTEXITCODE -ne 0) { throw "Нет связи с базой данных. Проверьте пароль/адрес базы и что PostgreSQL запущен." }
 
 Write-Step "Запись .env.production"
 $baseUrl = if ($Domain) { "https://$Domain" } else { "https://$Ip" }
@@ -82,10 +88,6 @@ if ($caddy) { $settings["DEPLOY_CADDY"] = $caddy }
 Write-EnvFile $script:EnvFile $settings
 Import-EnvFile $script:EnvFile | Out-Null
 Write-Ok $script:EnvFile
-
-Write-Step "Установка зависимостей"
-& npm install --no-audit --no-fund
-if ($LASTEXITCODE -ne 0) { throw "npm install завершился с ошибкой." }
 
 Write-Step "Подготовка базы данных"
 & npx prisma generate

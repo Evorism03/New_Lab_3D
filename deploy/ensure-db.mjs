@@ -1,6 +1,12 @@
 // Makes sure the database named in DATABASE_URL exists (creating it if the server is reachable
 // but the database is not), so setup works right after a fresh PostgreSQL install.
-import pg from "pg";
+let pg;
+try {
+  ({ default: pg } = await import("pg"));
+} catch {
+  console.error('Пакет "pg" не найден: зависимости проекта не установлены (npm install).');
+  process.exit(4);
+}
 
 const url = process.env.DATABASE_URL;
 if (!url) {
