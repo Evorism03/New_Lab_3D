@@ -240,6 +240,27 @@ function Save-Settings($Values) {
     [IO.File]::WriteAllText($script:SettingsFile, ($Values | ConvertTo-Json), (New-Object Text.UTF8Encoding($false)))
 }
 
+# Адрес базы собирается из пароля: пользователь, сервер, порт и имя базы берутся из текущих настроек или по умолчанию.
+function ConvertFrom-DbUrl([string]$Url) {
+    $info = @{ User = "postgres"; Server = "localhost"; Port = 5432; Db = "formnow" }
+    if ($Url) {
+        try {
+            $uri = [Uri]$Url
+            if ($uri.Host) { $info.Server = $uri.Host }
+            if ($uri.Port -gt 0) { $info.Port = $uri.Port }
+            if ($uri.UserInfo) { $info.User = [Uri]::UnescapeDataString($uri.UserInfo.Split(":")[0]) }
+            $name = $uri.AbsolutePath.Trim("/")
+            if ($name) { $info.Db = [Uri]::UnescapeDataString($name) }
+        }
+        catch { }
+    }
+    return $info
+}
+
+function Build-DbUrl($Info, [string]$Password) {
+    return "postgresql://{0}:{1}@{2}:{3}/{4}?sslmode=disable" -f [Uri]::EscapeDataString($Info.User), [Uri]::EscapeDataString($Password), $Info.Server, $Info.Port, [Uri]::EscapeDataString($Info.Db)
+}
+
 function ConvertTo-Arg([string]$Value) { return '"' + ($Value -replace '"', '\"') + '"' }
 
 # ---------------------------------------------------------------- главное окно
@@ -585,9 +606,9 @@ $pSettings.Controls.Add((New-Heading "Настройки" "Установка, �
 
 $cardSet = New-Card $ColCard 18
 $cardSet.Dock = "Top"
-$cardSet.Height = 392
+$cardSet.Height = 416
 $cardSet.Margin = New-Object Windows.Forms.Padding(0, 0, 0, 16)
-$grid = New-Table @(58, 58, 58, 58, 50, 46) 2
+$grid = New-Table @(58, 58, 44, "auto", 58, 58, 50, 46) 2
 $grid.Dock = "Fill"
 $grid.BackColor = [Drawing.Color]::Transparent
 $grid.Padding = New-Object Windows.Forms.Padding(26, 14, 26, 8)
@@ -595,24 +616,48 @@ $grid.ColumnStyles.Clear()
 [void]$grid.ColumnStyles.Add((New-Object Windows.Forms.ColumnStyle("Absolute", 200)))
 [void]$grid.ColumnStyles.Add((New-Object Windows.Forms.ColumnStyle("Percent", 100)))
 $inDomain = New-Input "" $false "например lab-3d.pro (пусто - работать по IP)"
-$inDb = New-Input "" $true "postgresql://postgres:ПАРОЛЬ@localhost:5432/formnow"
+$inDbPass = New-Input "" $true "пароль пользователя postgres"
+$inDbUrl = New-Input "" $true "postgresql://пользователь:пароль@сервер:5432/база"
 $inAdmin = New-Input "admin"
 $inPass = New-Input "" $true "пусто - случайный пароль (или оставить прежний)"
 $chkAutostart = New-Toggle "Запускать сайт вместе с Windows" 420
 $chkAutostart.Anchor = "Left"
-$rowsDef = @(@("Домен", $inDomain), @("База данных (URL)", $inDb), @("Логин админа", $inAdmin), @("Пароль админа", $inPass))
-$ri = 0
-foreach ($def in $rowsDef) {
-    $lab = New-Label $def[0] 10 $ColMuted
-    $lab.Anchor = "Left"
-    $grid.Controls.Add($lab, 0, $ri)
-    $grid.Controls.Add($def[1], 1, $ri)
-    $ri++
-}
-$grid.Controls.Add($chkAutostart, 1, 4)
+
+$lblDbHint = New-Label "" 9 $ColMuted $false ([Drawing.Color]::Transparent)
+$lblDbHint.Margin = New-Object Windows.Forms.Padding(2, 11, 8, 0)
+$btnDbAdvanced = New-Button "Другой адрес базы..." "ghost" 200
+$btnDbAdvanced.Height = 32
+$btnDbAdvanced.Margin = New-Object Windows.Forms.Padding(0, 4, 0, 0)
+$dbHintRow = New-Object Windows.Forms.FlowLayoutPanel
+$dbHintRow.BackColor = [Drawing.Color]::Transparent
+$dbHintRow.Dock = "Fill"
+$dbHintRow.WrapContents = $false
+$dbHintRow.Controls.AddRange(@($lblDbHint, $btnDbAdvanced))
+$lblDbUrl = New-Label "Полный адрес" 10 $ColMuted
+$lblDbUrl.Anchor = "Left"
+$lblDbUrl.Visible = $false
+$inDbUrl.Visible = $false
+
+$labelDomain = New-Label "Домен" 10 $ColMuted; $labelDomain.Anchor = "Left"
+$labelDbPass = New-Label "Пароль PostgreSQL" 10 $ColMuted; $labelDbPass.Anchor = "Left"
+$labelAdmin = New-Label "Логин админа" 10 $ColMuted; $labelAdmin.Anchor = "Left"
+$labelAdminPass = New-Label "Пароль админа" 10 $ColMuted; $labelAdminPass.Anchor = "Left"
+$grid.Controls.Add($labelDomain, 0, 0);    $grid.Controls.Add($inDomain, 1, 0)
+$grid.Controls.Add($labelDbPass, 0, 1);    $grid.Controls.Add($inDbPass, 1, 1)
+$grid.Controls.Add($dbHintRow, 1, 2)
+$grid.Controls.Add($lblDbUrl, 0, 3);       $grid.Controls.Add($inDbUrl, 1, 3)
+$grid.Controls.Add($labelAdmin, 0, 4);     $grid.Controls.Add($inAdmin, 1, 4)
+$grid.Controls.Add($labelAdminPass, 0, 5); $grid.Controls.Add($inPass, 1, 5)
+$grid.Controls.Add($chkAutostart, 1, 6)
 $hint = New-Label "Домен: A-запись на IP сервера, порты 80 и 443 открыты. Пароль админа - не короче 8 символов." 9 $ColMuted
 $hint.Anchor = "Left"
-$grid.Controls.Add($hint, 1, 5)
+$grid.Controls.Add($hint, 1, 7)
+$btnDbAdvanced.Add_Click({
+    $show = -not $inDbUrl.Visible
+    $inDbUrl.Visible = $show
+    $lblDbUrl.Visible = $show
+    $cardSet.Height = $(if ($show) { 476 } else { 416 })
+})
 $cardSet.Controls.Add($grid)
 $pSettings.Controls.Add($cardSet, 0, 1)
 
@@ -629,7 +674,11 @@ Add-Page "settings" $pSettings
 function Load-SettingsValues {
     $config = Read-EnvFile $script:EnvFile
     $inDomain.Text = $config["DEPLOY_DOMAIN"]
-    $inDb.Text = $config["DATABASE_URL"]
+    $dbInfo = ConvertFrom-DbUrl $config["DATABASE_URL"]
+    $lblDbHint.Text = "Подключение: {0}@{1}:{2}, база {3}" -f $dbInfo.User, $dbInfo.Server, $dbInfo.Port, $dbInfo.Db
+    $inDbPass.Text = ""
+    $inDbPass.Cue = $(if ($config["DATABASE_URL"]) { "пусто - оставить прежний пароль" } else { "пароль пользователя postgres" })
+    $inDbUrl.Text = ""
     $chkAutostart.Checked = [bool](Get-AutostartTask)
     $btnApply.Text = $(if ($config.Count -gt 0) { "Применить" } else { "Установить" })
     $btnUninstall.Enabled = ($config.Count -gt 0)
@@ -956,8 +1005,12 @@ $btnConnect.Add_Click({
 $btnApply.Add_Click({
     $config = Read-EnvFile $script:EnvFile
     $first = ($config.Count -eq 0)
-    $db = $inDb.Text.Trim()
-    if (-not $db) { [void][Windows.Forms.MessageBox]::Show("Укажите адрес базы данных (PostgreSQL).", "Установка", "OK", "Information"); return }
+    $db = ""
+    $existingDb = $config["DATABASE_URL"]
+    if ($inDbUrl.Visible -and $inDbUrl.Text.Trim()) { $db = $inDbUrl.Text.Trim() }
+    elseif ($inDbPass.Text) { $db = Build-DbUrl (ConvertFrom-DbUrl $existingDb) $inDbPass.Text }
+    elseif ($existingDb) { $db = $existingDb }
+    if (-not $db) { [void][Windows.Forms.MessageBox]::Show("Введите пароль PostgreSQL - тот, что вы задали при установке PostgreSQL.", "Установка", "OK", "Information"); return }
     $pass = $inPass.Text
     if ($pass -and $pass.Length -lt 8) { [void][Windows.Forms.MessageBox]::Show("Пароль админа - не короче 8 символов.", "Установка", "OK", "Information"); return }
 
@@ -975,7 +1028,7 @@ $btnApply.Add_Click({
         $steps += @{ Title = $(if ($wantAutostart) { "Включение автозапуска" } else { "Выключение автозапуска" }); Script = (Join-Path $PSScriptRoot "install-autostart.ps1"); Args = $(if ($wantAutostart) { "" } else { "-Remove" }); Silent = $false }
     }
     if ($wasRunning -or $first) { $steps += (New-ServerStep "Запуск сервера" "start") }
-    Add-Steps $steps { param($ok) $inPass.Text = "" }
+    Add-Steps $steps { param($ok) $inPass.Text = ""; $inDbPass.Text = "" }
     Show-Page "overview"
 })
 
