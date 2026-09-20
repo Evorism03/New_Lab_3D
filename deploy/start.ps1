@@ -75,8 +75,8 @@ if (-not $NoCaddy) {
     $caddy = if ($config["DEPLOY_CADDY"] -and (Test-Path $config["DEPLOY_CADDY"])) { $config["DEPLOY_CADDY"] } else { Find-Caddy }
     if (-not $caddy) { throw "Caddy не установлен. Выполните: winget install CaddyServer.Caddy" }
     [IO.File]::WriteAllText($script:CaddyFile, (New-CaddyfileText $domain $ip $appPort), (New-Object Text.UTF8Encoding($false)))
-    & $caddy validate --config $script:CaddyFile --adapter caddyfile 2>&1 | Out-Null
-    if ($LASTEXITCODE -ne 0) { throw "Сгенерированный Caddyfile неверен: $script:CaddyFile" }
+    $validation = Invoke-Native { & $caddy validate --config $script:CaddyFile --adapter caddyfile }
+    if ($validation.ExitCode -ne 0) { throw ("Сгенерированный Caddyfile неверен ({0}): {1}" -f $script:CaddyFile, ($validation.Output -join " ")) }
 }
 
 $mode = if ($NoCaddy) { "http" } elseif ($domain) { "https-domain" } else { "https-ip" }

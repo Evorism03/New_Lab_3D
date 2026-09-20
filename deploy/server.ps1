@@ -19,13 +19,16 @@ param(
     [Parameter(Position = 0)][string]$Command = "menu",
     [Parameter(Position = 1, ValueFromRemainingArguments = $true)][string[]]$Rest = @(),
     [switch]$Elevated,
-    [switch]$NoElevate
+    [switch]$NoElevate,
+    [switch]$Yes,
+    [switch]$Force,
+    [switch]$RemoveModules
 )
 
 . (Join-Path $PSScriptRoot "lib.ps1")
 . (Join-Path $PSScriptRoot "ui.ps1")
-[Console]::OutputEncoding = [Text.Encoding]::UTF8
-$OutputEncoding = [Text.Encoding]::UTF8
+[Console]::OutputEncoding = New-Object Text.UTF8Encoding($false)
+$OutputEncoding = New-Object Text.UTF8Encoding($false)
 $Host.UI.RawUI.WindowTitle = "Лаборатория 3Д - сервер"
 Set-Location $script:Root
 
@@ -40,6 +43,8 @@ if (-not $NoElevate -and -not (Test-Admin)) {
 }
 
 $script:StartScript = Join-Path $PSScriptRoot "start.ps1"
+$script:AssumeYes = [bool]$Yes
+$script:HadError = $false
 
 function Format-Uptime($StartedAt) {
     $span = (Get-Date).ToUniversalTime() - (ConvertTo-Utc $StartedAt)
@@ -170,26 +175,78 @@ function Invoke-Logs {
     }
 }
 
+function Update-FromGit {
+    if (-not (Test-Path (Join-Path $script:Root ".git"))) { Write-Info "Папка не подключена к git - код не обновляется автоматически."; return $true }
+    if (-not (Find-Executable "git")) { Write-Bad "git не установлен: winget install Git.Git"; return $false }
+
+    Write-Step "Получение обновлений (git)"
+    $info = Get-GitInfo
+    if ($info.error) { Write-Bad "Не удалось связаться с репозиторием: $($info.error)"; return $false }
+    if (-not $info.upstream) { Write-Bad "Ветка не привязана к удалённому репозиторию."; return $false }
+    if ($info.behind -eq 0) { Write-Ok "Код уже актуален ($($info.head))."; return $true }
+
+    Write-Info ("Новых коммитов: {0}" -f $info.behind)
+    foreach ($line in $info.commits) { Write-Dim $line }
+    $out = Invoke-Git pull --ff-only
+    $out | ForEach-Object { Write-Dim $_ }
+    if ($script:GitExit -eq 0) { Write-Ok "Код обновлён."; return $true }
+
+    if (-not $Force) { Write-Bad "git pull не удался: локальные изменения мешают обновлению."; return $false }
+    Write-Info "Принудительное обновление: локальные изменения отбрасываются."
+    $out = Invoke-Git reset --hard "@{u}"
+    $out | ForEach-Object { Write-Dim $_ }
+    if ($script:GitExit -ne 0) { Write-Bad "Не удалось выполнить git reset."; return $false }
+    Write-Ok "Код обновлён."
+    return $true
+}
+
 function Invoke-Update {
     if (-not (Test-Installed)) { return }
     $wasRunning = [bool](Get-ServerState)
     if ($wasRunning) { Invoke-Stop }
     Import-EnvFile $script:EnvFile | Out-Null
 
-    if ((Test-Path (Join-Path $script:Root ".git")) -and (Find-Executable "git")) {
-        if (Read-Confirm "Скачать свежий код (git pull)?") {
-            Write-Step "git pull"
-            & git pull
-            if ($LASTEXITCODE -ne 0) { Write-Bad "git pull не удался."; return }
-        }
+    if ((Test-Path (Join-Path $script:Root ".git")) -and ($script:AssumeYes -or (Read-Confirm "Скачать свежий код (git pull)?"))) {
+        if (-not (Update-FromGit)) { if ($wasRunning) { Invoke-Start }; return }
     }
-    Write-Step "Зависимости";       & npm install --no-audit --no-fund;  if ($LASTEXITCODE -ne 0) { Write-Bad "npm install не удался."; return }
-    Write-Step "Клиент базы";       & npx prisma generate;               if ($LASTEXITCODE -ne 0) { Write-Bad "prisma generate не удался."; return }
-    Write-Step "Схема базы";        & npx prisma db push;                if ($LASTEXITCODE -ne 0) { Write-Bad "prisma db push не удался."; return }
-    Write-Step "Сборка сайта";      & npm run build;                     if ($LASTEXITCODE -ne 0) { Write-Bad "Сборка не удалась."; return }
+    Write-Step "Зависимости";  & npm install --no-audit --no-fund;  if ($LASTEXITCODE -ne 0) { Write-Bad "npm install не удался."; return }
+    Write-Step "Клиент базы";  & npx prisma generate;               if ($LASTEXITCODE -ne 0) { Write-Bad "prisma generate не удался."; return }
+    Write-Step "Схема базы";   & npx prisma db push;                if ($LASTEXITCODE -ne 0) { Write-Bad "prisma db push не удался."; return }
+    Write-Step "Сборка сайта"; & npm run build;                     if ($LASTEXITCODE -ne 0) { Write-Bad "Сборка не удалась."; return }
     Write-Good "Обновление завершено."
     if ($wasRunning) { Invoke-Start }
     else { Write-Info "Сервер был остановлен - запустите его пунктом [1]." }
+}
+
+# Machine-readable commands used by the desktop app.
+function Invoke-GitCheck { Get-GitInfo | ConvertTo-Json -Compress -Depth 4 }
+
+function Invoke-GitConnect([string]$Url, [string]$Branch) {
+    if (-not $Url) { Write-Bad "Укажите адрес репозитория."; return }
+    if (-not $Branch) { $Branch = "main" }
+    if (-not (Find-Executable "git")) { Write-Bad "git не установлен: winget install Git.Git"; return }
+    Write-Step "Подключение репозитория"
+    if (-not (Test-Path (Join-Path $script:Root ".git"))) { Invoke-Git init | ForEach-Object { Write-Dim $_ } }
+    Invoke-Git remote remove origin | Out-Null
+    Invoke-Git remote add origin $Url | Out-Null
+    $fetch = Invoke-Git fetch origin
+    if ($script:GitExit -ne 0) { Write-Bad "Не удалось получить репозиторий: $(($fetch -join ' ').Trim())"; return }
+    # Keeps the files as they are - only points the branch at the remote history.
+    Invoke-Git reset --mixed "origin/$Branch" | Out-Null
+    if ($script:GitExit -ne 0) { Write-Bad "В репозитории нет ветки '$Branch'."; return }
+    Invoke-Git branch -M $Branch | Out-Null
+    Invoke-Git branch --set-upstream-to="origin/$Branch" $Branch | Out-Null
+    Write-Good "Репозиторий подключён: $Url (ветка $Branch)."
+}
+
+function Invoke-UploadsScan([string]$Days, [string]$Mode) {
+    if (-not (Test-Installed)) { return }
+    Import-EnvFile $script:EnvFile | Out-Null
+    $node = Find-Executable "node"
+    $count = 30
+    if ($Days) { [void][int]::TryParse($Days, [ref]$count) }
+    & $node (Join-Path $PSScriptRoot "cleanup-uploads.mjs") $Mode $count
+    if ($LASTEXITCODE -ne 0) { $script:HadError = $true }
 }
 
 function Invoke-Setup {
@@ -241,7 +298,7 @@ function Invoke-Autostart {
 }
 
 function Remove-Folder([string]$Path) {
-    if (Test-Path $Path) { & cmd.exe /c "rmdir /s /q `"$Path`"" 2>&1 | Out-Null }
+    if (Test-Path $Path) { [void](Invoke-Native { & cmd.exe /c "rmdir /s /q `"$Path`"" }) }
 }
 
 function Clear-BuildAndLogs {
@@ -311,7 +368,7 @@ function Invoke-Uninstall {
     Write-Info "Будет удалено: автозапуск, правило брандмауэра, настройки (.env.production), логи и служебные файлы."
     Write-Good "Не затрагивается: база данных, папка uploads и сам код сайта."
     Write-Host ""
-    if (-not (Read-Confirm "Удалить установку сервера?")) { Write-Info "Отменено."; return }
+    if (-not $script:AssumeYes -and -not (Read-Confirm "Удалить установку сервера?")) { Write-Info "Отменено."; return }
 
     Stop-Server
     if (Get-AutostartTask) { Unregister-ScheduledTask -TaskName $script:TaskName -Confirm:$false -ErrorAction SilentlyContinue; Write-Ok "Автозапуск удалён." }
@@ -320,7 +377,8 @@ function Invoke-Uninstall {
     Remove-Folder $script:LogDir
     Write-Ok "Настройки, логи и служебные файлы удалены."
 
-    if (Read-Confirm "Удалить также node_modules и сборку .next? (вернутся при установке)") {
+    $dropModules = if ($script:AssumeYes) { [bool]$RemoveModules } else { Read-Confirm "Удалить также node_modules и сборку .next? (вернутся при установке)" }
+    if ($dropModules) {
         Remove-Folder (Join-Path $script:Root "node_modules")
         Remove-Folder (Join-Path $script:Root ".next")
         Write-Ok "node_modules и .next удалены."
@@ -382,6 +440,11 @@ try {
         "autostart" { Invoke-Autostart }
         "cleanup" { Invoke-Cleanup }
         "uninstall" { Invoke-Uninstall }
+        "git-check" { Invoke-GitCheck }
+        "git-connect" { Invoke-GitConnect $Rest[0] $Rest[1] }
+        "cleanup-cache" { Clear-BuildAndLogs }
+        "uploads-scan" { Invoke-UploadsScan $Rest[0] "scan" }
+        "uploads-delete" { Invoke-UploadsScan $Rest[0] "delete" }
         default {
             Write-Bad "Неизвестная команда: $Command"
             Write-Info "Доступно: menu, start, stop, restart, status, logs, update, setup, autostart, cleanup, uninstall"
@@ -391,3 +454,5 @@ try {
 catch { Write-Bad $_.Exception.Message }
 
 if ($Elevated -and $Command.ToLower() -ne "menu") { Wait-AnyKey "Нажмите любую клавишу, чтобы закрыть окно..." }
+
+if ($script:HadError) { exit 1 }

@@ -2,7 +2,13 @@
 
 import { useEffect, useRef } from "react";
 
-import { HERO_BAND_HEIGHT_VH, HERO_BAND_TOP_VH, heroShapeTransform } from "@/lib/heroShape";
+import {
+  getViewportSize,
+  HERO_BAND_HEIGHT_VH,
+  HERO_BAND_TOP_VH,
+  heroShapeBox,
+  heroShapeTransform,
+} from "@/lib/heroShape";
 
 // Once scrolled past the hero section, the band fades out over this many
 // extra pixels — short, so it never lingers as a muddy wash over the
@@ -18,6 +24,12 @@ export function TiltFrame() {
       if (frameRef.current) cancelAnimationFrame(frameRef.current);
       frameRef.current = requestAnimationFrame(() => {
         if (shapeRef.current) {
+          const { width, height } = getViewportSize();
+          const box = heroShapeBox(width, height);
+          shapeRef.current.style.left = `${box.left}px`;
+          shapeRef.current.style.top = `${box.top}px`;
+          shapeRef.current.style.width = `${box.width}px`;
+          shapeRef.current.style.height = `${box.height}px`;
           const heroHeight = document.getElementById("hero")?.offsetHeight ?? 0;
           const scrolledPastHero = Math.max(0, window.scrollY - heroHeight);
           const opacity = Math.max(0, 1 - scrolledPastHero / FADE_DISTANCE);

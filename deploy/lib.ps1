@@ -1,6 +1,11 @@
 ﻿# Shared helpers for the Windows server scripts (dot-sourced by setup/start/autostart).
 $ErrorActionPreference = "Stop"
 
+# Child processes whose output the app captures must speak UTF-8 (no BOM); git must never wait for a password.
+try { [Console]::OutputEncoding = New-Object Text.UTF8Encoding($false) } catch { }
+$env:GIT_TERMINAL_PROMPT = "0"
+$env:GCM_INTERACTIVE = "never"
+
 $script:Root = Split-Path -Parent $PSScriptRoot
 $script:EnvFile = Join-Path $script:Root ".env.production"
 $script:CaddyFile = Join-Path $PSScriptRoot "Caddyfile"
@@ -185,8 +190,21 @@ function Start-Detached([string]$CommandLine, [string]$WorkDir) {
     return [int]$result.ProcessId
 }
 
+# Native tools print status/warnings to stderr. Under $ErrorActionPreference = "Stop", Windows PowerShell 5.1
+# turns any redirected stderr line into a terminating error, so native calls that we expect to "fail" or be
+# noisy (caddy validate, taskkill, rmdir) go through here. Returns the exit code and the output lines.
+function Invoke-Native([scriptblock]$Command) {
+    $previous = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try {
+        $output = @(& $Command 2>&1 | ForEach-Object { "$_" })
+        return [pscustomobject]@{ ExitCode = $LASTEXITCODE; Output = $output }
+    }
+    finally { $ErrorActionPreference = $previous }
+}
+
 function Stop-ProcessTree($ProcessId) {
-    if ($ProcessId) { & taskkill /PID $ProcessId /T /F 2>&1 | Out-Null }
+    if ($ProcessId) { [void](Invoke-Native { & taskkill /PID $ProcessId /T /F }) }
 }
 
 # Stops the site: asks the supervisor to shut down cleanly, then forces it if it hangs.
@@ -224,4 +242,53 @@ function Get-FolderSize([string]$Path) {
     $sum = (Get-ChildItem -Path $Path -Recurse -File -Force -ErrorAction SilentlyContinue | Measure-Object -Property Length -Sum).Sum
     if ($sum) { return $sum }
     return 0
+}
+
+# ---------------------------------------------------------------------------
+# Git: the site is updated by pulling from the repository it was cloned from.
+# ---------------------------------------------------------------------------
+# Runs git in the project folder. Output lines are returned; the exit code is left in $script:GitExit.
+function Invoke-Git {
+    $git = Find-Executable "git"
+    if (-not $git) { throw "git не установлен (winget install Git.Git)." }
+    $ErrorActionPreference = "Continue"
+    $lines = & $git -c core.quotepath=off -c safe.directory=* -C $script:Root @args 2>&1 | ForEach-Object { "$_" }
+    $script:GitExit = $LASTEXITCODE
+    return @($lines)
+}
+
+function Get-GitInfo([switch]$NoFetch) {
+    $info = [ordered]@{
+        gitInstalled = [bool](Find-Executable "git"); isRepo = $false; branch = ""; upstream = ""; remote = ""
+        head = ""; headDate = ""; headMessage = ""; behind = 0; ahead = 0; dirty = 0; commits = @(); error = ""
+    }
+    if (-not $info.gitInstalled) { return $info }
+    if (-not (Test-Path (Join-Path $script:Root ".git"))) { return $info }
+    $info.isRepo = $true
+
+    $branch = Invoke-Git rev-parse --abbrev-ref HEAD
+    if ($script:GitExit -eq 0) { $info.branch = "$($branch | Select-Object -First 1)" }
+    $remote = Invoke-Git remote get-url origin
+    if ($script:GitExit -eq 0) { $info.remote = "$($remote | Select-Object -First 1)" }
+    $log = @(Invoke-Git log -1 "--format=%h|%cd|%s" "--date=format:%d.%m.%Y %H:%M")
+    if ($script:GitExit -eq 0 -and $log.Count -gt 0) {
+        $parts = "$($log[0])".Split("|", 3)
+        if ($parts.Count -eq 3) { $info.head = $parts[0]; $info.headDate = $parts[1]; $info.headMessage = $parts[2] }
+    }
+    $info.dirty = @(Invoke-Git status --porcelain -uno | Where-Object { $_ }).Count
+
+    if (-not $NoFetch -and $info.remote) {
+        $fetch = Invoke-Git fetch --quiet
+        if ($script:GitExit -ne 0) { $info.error = ("$($fetch -join ' ')").Trim() }
+    }
+    $upstream = Invoke-Git rev-parse --abbrev-ref --symbolic-full-name "@{u}"
+    if ($script:GitExit -eq 0) {
+        $info.upstream = "$($upstream | Select-Object -First 1)"
+        $behind = Invoke-Git rev-list --count "HEAD..@{u}"
+        if ($script:GitExit -eq 0) { $info.behind = [int]"$($behind | Select-Object -First 1)" }
+        $ahead = Invoke-Git rev-list --count "@{u}..HEAD"
+        if ($script:GitExit -eq 0) { $info.ahead = [int]"$($ahead | Select-Object -First 1)" }
+        $info.commits = @(Invoke-Git log "HEAD..@{u}" "--format=%h  %s" -n 30 | Where-Object { $_ })
+    }
+    return $info
 }

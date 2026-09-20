@@ -3,10 +3,12 @@
 import { useEffect, useRef } from "react";
 
 import {
+  getViewportSize,
   HERO_BAND_HEIGHT_VH,
   HERO_BAND_TOP_VH,
   HERO_PARALLAX_FACTOR,
   HERO_ROTATE_DEG,
+  heroShapeBox,
 } from "@/lib/heroShape";
 
 // Where (fraction of viewport height) the band's centre ends up at the very
@@ -34,7 +36,13 @@ export function PageBand() {
         const section = root?.parentElement;
         if (!root || !band || !section) return;
 
-        const vh = window.innerHeight;
+        const viewport = getViewportSize();
+        const vh = viewport.height;
+        const box = heroShapeBox(viewport.width, vh);
+        band.style.left = `${box.left}px`;
+        band.style.top = `${box.top}px`;
+        band.style.width = `${box.width}px`;
+        band.style.height = `${box.height}px`;
         const y = window.scrollY;
         const heroHeight = document.getElementById("hero")?.offsetHeight ?? 0;
         const maxScroll = document.documentElement.scrollHeight - vh;

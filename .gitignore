@@ -53,3 +53,6 @@ next-env.d.ts
 /deploy/logs/
 /deploy/state.json
 /deploy/stop.flag
+/Lab3D.exe
+/deploy/app.ico
+/deploy/app-settings.json

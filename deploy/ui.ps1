@@ -3,7 +3,8 @@ $script:UiWidth = 70
 
 function Write-Info([string]$Text) { Write-Host "  $Text" -ForegroundColor Gray }
 function Write-Good([string]$Text) { Write-Host "  $Text" -ForegroundColor Green }
-function Write-Bad([string]$Text) { Write-Host "  $Text" -ForegroundColor Red }
+# Any printed error marks the run as failed, so server.ps1 exits non-zero and the app can tell.
+function Write-Bad([string]$Text) { $script:HadError = $true; Write-Host "  $Text" -ForegroundColor Red }
 function Write-Dim([string]$Text) { Write-Host "  $Text" -ForegroundColor DarkGray }
 
 function Write-Rule([string]$Char = "─", [string]$Color = "DarkGray") {
@@ -49,6 +50,7 @@ function Wait-AnyKey([string]$Text = "Нажмите любую клавишу..
 }
 
 function Read-Confirm([string]$Question) {
+    if ($script:AssumeYes) { return $true }
     Write-Host ("  {0} " -f $Question) -NoNewline -ForegroundColor Yellow
     Write-Host "[д/н] " -NoNewline -ForegroundColor DarkGray
     $answer = (Read-MenuKey).ToLower()
@@ -57,17 +59,18 @@ function Read-Confirm([string]$Question) {
 }
 
 function Show-Spinner([scriptblock]$Done, [string]$Text, [int]$TimeoutSeconds = 120) {
+    $animate = -not [Console]::IsOutputRedirected
     $frames = @("|", "/", "-", "\")
     $started = Get-Date
     $i = 0
     while (-not (& $Done)) {
         $elapsed = [int]((Get-Date) - $started).TotalSeconds
-        if ($elapsed -ge $TimeoutSeconds) { Write-Host ("`r" + (" " * 78) + "`r") -NoNewline; return $false }
-        Write-Host ("`r  {0} {1} ({2} с)   " -f $frames[$i % 4], $Text, $elapsed) -NoNewline -ForegroundColor Cyan
+        if ($elapsed -ge $TimeoutSeconds) { if ($animate) { Write-Host ("`r" + (" " * 78) + "`r") -NoNewline }; return $false }
+        if ($animate) { Write-Host ("`r  {0} {1} ({2} с)   " -f $frames[$i % 4], $Text, $elapsed) -NoNewline -ForegroundColor Cyan }
         $i++
         Start-Sleep -Milliseconds 200
     }
-    Write-Host ("`r" + (" " * 78) + "`r") -NoNewline
+    if ($animate) { Write-Host ("`r" + (" " * 78) + "`r") -NoNewline }
     return $true
 }
 

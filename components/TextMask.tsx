@@ -2,7 +2,7 @@
 
 import { useEffect, useRef } from "react";
 
-import { heroShapeCorners } from "@/lib/heroShape";
+import { getViewportSize, heroShapeCorners } from "@/lib/heroShape";
 
 /** Renders children twice — a light base copy and a dark copy clipped to
  *  wherever the hero's parallax shape currently overlaps it — so text turns
@@ -32,7 +32,8 @@ export function TextMask({
         const dark = darkRef.current;
         if (!wrap || !dark) return;
 
-        const corners = heroShapeCorners(window.scrollY, window.innerWidth, window.innerHeight);
+        const viewport = getViewportSize();
+        const corners = heroShapeCorners(window.scrollY, viewport.width, viewport.height);
         const wrapRect = wrap.getBoundingClientRect();
         const points = corners
           .map(([x, y]) => `${x - wrapRect.left}px ${y - wrapRect.top}px`)

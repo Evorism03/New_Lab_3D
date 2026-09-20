@@ -36,25 +36,32 @@ Open http://localhost:3000. Seeded dev admin login (for `/admin`): `admin` / `ad
 
 Works like a VPS: the site listens on the machine's IP behind [Caddy](https://caddyserver.com), which
 provides HTTPS, and runs as a **background process** — closing the terminal does not stop it.
-Everything is managed from one menu: double-click `server.bat` (or run it in a terminal). It asks for
-administrator rights itself.
+Everything is managed from a desktop app: double-click `server.bat` (first run builds `Lab3D.exe` with the
+C# compiler built into Windows — nothing to download — then opens the window; it asks for administrator
+rights itself). Closing the window does not stop the site.
 
 ```powershell
-winget install OpenJS.NodeJS.LTS PostgreSQL.PostgreSQL.17 CaddyServer.Caddy   # once, if missing
-server.bat            # the menu
+winget install OpenJS.NodeJS.LTS PostgreSQL.PostgreSQL.17 CaddyServer.Caddy Git.Git   # once, if missing
+server.bat            # the app (Lab3D.exe)
 ```
 
-| Menu item | What it does |
+| Page | What it does |
 | --- | --- |
-| 6 Setup | first install or change of domain: detects the IP, writes `.env.production`, creates the database, admin, build, firewall |
-| 1 / 2 / 3 Start · Stop · Restart | run the site in the background; reopen the menu any time to see the status or stop it |
-| 4 Logs | live view of the site / Caddy / supervisor logs (Q to go back) |
-| 5 Update | `git pull` (optional), dependencies, database schema, rebuild, restart |
-| 7 Autostart | start with Windows (no login needed) and restart after a crash |
-| 8 Cleanup | build cache and old logs; uploaded models that never became an order; stray files |
-| 9 Uninstall | removes autostart, the firewall rule, settings and logs — the database and `uploads/` stay |
+| Overview | status, address, processes, Start / Stop / Restart / Open site, and a journal of what the app ran |
+| Logs | live view of the site, its errors, Caddy (HTTPS) and the supervisor (crashes, restarts) |
+| Updates | shows the installed version and the commits waiting in the git repository; one button pulls them, installs dependencies, updates the database schema, rebuilds and restarts. Checks automatically every 30 minutes and shows a banner |
+| Settings | first install / change of domain, database, admin login, autostart with Windows; uninstall |
+| Cleanup | build cache and old logs; uploaded models that never became an order; stray files |
 
-The same actions work without the menu: `server.bat start | stop | restart | status | logs | update | setup | autostart | cleanup | uninstall`
+**Updates through git:** push your work to the repository; the app on the server pulls it. If the server
+folder is a `git clone`, it just works. If it was copied or downloaded as a zip, open *Updates* and enter the
+repository URL once (files are kept as they are). Private repositories need credentials on the server
+(Git Credential Manager, or a token in the URL). The app itself is `deploy/app.ps1`, so updates also update
+the app — it restarts itself after an update that changed it. If local edits in the server folder block a
+pull, the app offers a forced update (`git reset --hard`; `.env*` and `uploads/` are not touched).
+
+Everything the window does is also available as commands (and there is a console menu):
+`server.bat menu | start | stop | restart | status | logs | update | setup | autostart | cleanup | uninstall`
 (also as `npm run server:start` etc.). A supervisor (`deploy/start.ps1`) restarts the site or Caddy if they crash.
 
 - **Domain:** enter it in Setup and create a DNS `A` record to the server's public IP. Ports 80 and 443 must be reachable from the internet (forward them on the router if the PC is behind one). Without a domain the site opens on `https://<IP>` with a self-signed certificate (the browser warns).
