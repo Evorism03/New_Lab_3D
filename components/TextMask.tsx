@@ -22,34 +22,35 @@ export function TextMask({
 }) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const darkRef = useRef<HTMLDivElement>(null);
-  const frameRef = useRef<number | null>(null);
 
+  // The text moves on its own (reveal animation, scroll parallax) without any scroll or resize
+  // event, so the clip is re-measured every frame instead of only on events.
   useEffect(() => {
-    function update() {
-      if (frameRef.current) cancelAnimationFrame(frameRef.current);
-      frameRef.current = requestAnimationFrame(() => {
-        const wrap = wrapRef.current;
-        const dark = darkRef.current;
-        if (!wrap || !dark) return;
+    let frame = 0;
+    let last = "";
 
-        const viewport = getViewportSize();
-        const corners = heroShapeCorners(window.scrollY, viewport.width, viewport.height);
-        const wrapRect = wrap.getBoundingClientRect();
-        const points = corners
-          .map(([x, y]) => `${x - wrapRect.left}px ${y - wrapRect.top}px`)
-          .join(", ");
+    function tick() {
+      frame = requestAnimationFrame(tick);
+      const wrap = wrapRef.current;
+      const dark = darkRef.current;
+      if (!wrap || !dark) return;
+
+      const viewport = getViewportSize();
+      const wrapRect = wrap.getBoundingClientRect();
+      if (wrapRect.bottom < -100 || wrapRect.top > viewport.height + 100) return;
+
+      const corners = heroShapeCorners(window.scrollY, viewport.width, viewport.height);
+      const points = corners
+        .map(([x, y]) => `${(x - wrapRect.left).toFixed(2)}px ${(y - wrapRect.top).toFixed(2)}px`)
+        .join(", ");
+      if (points !== last) {
+        last = points;
         dark.style.clipPath = `polygon(${points})`;
-      });
+      }
     }
 
-    update();
-    window.addEventListener("scroll", update, { passive: true });
-    window.addEventListener("resize", update);
-    return () => {
-      window.removeEventListener("scroll", update);
-      window.removeEventListener("resize", update);
-      if (frameRef.current) cancelAnimationFrame(frameRef.current);
-    };
+    frame = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(frame);
   }, []);
 
   return (
