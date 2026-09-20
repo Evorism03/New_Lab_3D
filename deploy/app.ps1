@@ -574,7 +574,9 @@ $updBar.BackColor = $ColBg
 $updBar.Padding = New-Object Windows.Forms.Padding(0, 16, 0, 0)
 $btnCheck = New-Button "Проверить сейчас" "secondary" 200 (G 0xE895)
 $btnUpdate = New-Button "Обновить и перезапустить" "primary" 280 (G 0xE896)
-$updBar.Controls.AddRange(@($btnCheck, $btnUpdate))
+$lblUpdHint = New-Label "" 9.5 $ColMuted $false $ColBg
+$lblUpdHint.Margin = New-Object Windows.Forms.Padding(6, 12, 0, 0)
+$updBar.Controls.AddRange(@($btnCheck, $btnUpdate, $lblUpdHint))
 $pUpdates.Controls.Add($updBar, 0, 4)
 
 # Если папка не подключена к git (или подключена не до конца) - вместо версии показываем форму подключения.
@@ -816,6 +818,15 @@ $script:SiteUrl = ""
 $script:DiskTick = 0
 $script:DiskText = "-"
 
+# update: есть новые коммиты; sync: коммитов нет, но файлы на диске отличаются от репозитория; none: делать нечего.
+function Get-UpdateMode {
+    $g = $script:Git
+    if (-not $g -or -not $g.isRepo -or -not $g.hasCommits -or -not $g.upstream) { return "none" }
+    if ($g.behind -gt 0) { return "update" }
+    if ($g.dirty -gt 0) { return "sync" }
+    return "none"
+}
+
 function Update-Status {
     $installed = Test-Path $script:EnvFile
     $config = Read-EnvFile $script:EnvFile
@@ -873,8 +884,11 @@ function Update-Status {
     $btnOpen.Enabled = [bool]$script:SiteUrl
     foreach ($b in @($btnCheck, $btnUpdate, $btnConnect, $btnApply, $btnUninstall, $btnCache, $btnScan, $btnBanner)) { if ($b) { $b.Enabled = $free -and (($b -ne $btnUninstall) -or $installed) } }
     $btnPurge.Enabled = $free -and $script:ScanFound
-    $btnUpdate.Enabled = $free -and $installed -and ($script:Git -and $script:Git.isRepo -and $script:Git.behind -gt 0)
-    $btnBanner.Enabled = $btnUpdate.Enabled
+    $mode = Get-UpdateMode
+    $btnUpdate.Enabled = $free -and ($mode -ne "none")
+    $label = $(if ($mode -eq "sync") { "Синхронизировать файлы" } else { "Обновить и перезапустить" })
+    if ($btnUpdate.Text -ne $label) { $btnUpdate.Text = $label }
+    $btnBanner.Enabled = $free -and ($mode -eq "update")
 }
 
 # ---------------------------------------------------------------- обновления из git
@@ -911,9 +925,15 @@ function Update-UpdatesView {
     if ($git.error) { $status.Text = "нет связи с репозиторием"; $status.ForeColor = $ColRed }
     elseif (-not $git.upstream) { $status.Text = "ветка не привязана к удалённому репозиторию"; $status.ForeColor = $ColYellow }
     elseif ($git.behind -gt 0) { $status.Text = "доступно обновлений: {0}" -f $git.behind; $status.ForeColor = $ColAccent }
+    elseif ($git.dirty -gt 0) { $status.Text = "файлы на диске отличаются от репозитория: {0}" -f $git.dirty; $status.ForeColor = $ColYellow }
     elseif ($git.ahead -gt 0) { $status.Text = "актуально (локально на {0} коммит. новее)" -f $git.ahead; $status.ForeColor = $ColAccent }
     else { $status.Text = "установлена последняя версия"; $status.ForeColor = $ColAccent }
 
+    $lblUpdHint.Text = $(switch (Get-UpdateMode) {
+        "update" { if (Test-Path $script:EnvFile) { "" } else { "Сервер здесь не установлен - обновится только код (без пересборки и перезапуска)." } }
+        "sync" { "Коммитов нет, но файлы отличаются - «Синхронизировать» заменит их версией из репозитория." }
+        default { "Обновлений нет - версия актуальна." }
+    })
     $commitList.Items.Clear()
     foreach ($line in $git.commits) { [void]$commitList.Items.Add($line) }
     if ($git.error) { [void]$commitList.Items.Add($git.error) }
@@ -954,6 +974,11 @@ function Start-GitCheck([bool]$Manual = $false) {
 }
 
 function Start-Update([bool]$Force = $false) {
+    if (-not $Force -and (Get-UpdateMode) -eq "sync") {
+        $answer = [Windows.Forms.MessageBox]::Show(("Файлы в папке сайта отличаются от версии в репозитории ({0} шт.).`n`nЗаменить их версией из репозитория? (файлы .env и загрузки не затрагиваются)" -f $script:Git.dirty), "Синхронизация", "YesNo", "Question")
+        if ($answer -ne "Yes") { return }
+        $Force = $true
+    }
     $arguments = "update -Yes"
     if ($Force) { $arguments += " -Force" }
     $step = New-ServerStep "Обновление сайта" $arguments @{

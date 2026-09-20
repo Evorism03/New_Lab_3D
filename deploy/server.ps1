@@ -201,7 +201,19 @@ function Update-FromGit {
     $info = Get-GitInfo
     if ($info.error) { Write-Bad "Не удалось связаться с репозиторием: $($info.error)"; return $false }
     if (-not $info.upstream) { Write-Bad "Ветка не привязана к удалённому репозиторию."; return $false }
-    if ($info.behind -eq 0) { Write-Ok "Код уже актуален ($($info.head))."; return $true }
+    if ($info.behind -eq 0) {
+        # Репозиторий "актуален", но файлы на диске могут быть старыми (например, после git reset --mixed).
+        if ($Force -and $info.dirty -gt 0) {
+            Write-Info "Файлов, отличающихся от репозитория: $($info.dirty). Привожу их к версии $($info.head)."
+            $out = Invoke-Git reset --hard "@{u}"
+            $out | ForEach-Object { Write-Dim $_ }
+            if ($script:GitExit -ne 0) { Write-Bad "Не удалось выполнить git reset."; return $false }
+            Write-Ok "Файлы синхронизированы."
+            return $true
+        }
+        Write-Ok "Код уже актуален ($($info.head))."
+        return $true
+    }
 
     Write-Info ("Новых коммитов: {0}" -f $info.behind)
     foreach ($line in $info.commits) { Write-Dim $line }
@@ -219,13 +231,18 @@ function Update-FromGit {
 }
 
 function Invoke-Update {
-    if (-not (Test-Installed)) { return }
-    $wasRunning = [bool](Get-ServerState)
+    # Без установленного сервера (например, на компьютере разработчика) обновляется только код.
+    $installed = Test-Path $script:EnvFile
+    $wasRunning = $installed -and [bool](Get-ServerState)
     if ($wasRunning) { Invoke-Stop }
-    Import-EnvFile $script:EnvFile | Out-Null
+    if ($installed) { Import-EnvFile $script:EnvFile | Out-Null }
 
     if ((Test-Path (Join-Path $script:Root ".git")) -and ($script:AssumeYes -or (Read-Confirm "Скачать свежий код (git pull)?"))) {
         if (-not (Update-FromGit)) { if ($wasRunning) { Invoke-Start }; return }
+    }
+    if (-not $installed) {
+        Write-Good "Код обновлён. Сервер здесь не установлен, поэтому зависимости, сборка и перезапуск пропущены."
+        return
     }
     Write-Step "Зависимости";  & npm install --no-audit --no-fund;  if ($LASTEXITCODE -ne 0) { Write-Bad "npm install не удался."; return }
     Write-Step "Клиент базы";  & npx prisma generate;               if ($LASTEXITCODE -ne 0) { Write-Bad "prisma generate не удался."; return }
