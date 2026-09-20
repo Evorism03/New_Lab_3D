@@ -14,105 +14,138 @@ param([string]$Snapshot = "")
 Set-Location $script:Root
 
 Add-Type -AssemblyName System.Windows.Forms, System.Drawing
-Add-Type -Namespace Native -Name Win -MemberDefinition @'
-[DllImport("user32.dll")] public static extern bool SetProcessDPIAware();
-[DllImport("dwmapi.dll")] public static extern int DwmSetWindowAttribute(IntPtr hwnd, int attr, ref int value, int size);
-[DllImport("uxtheme.dll", CharSet = CharSet.Unicode)] public static extern int SetWindowTheme(IntPtr hwnd, string appName, string idList);
-[DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern IntPtr SendMessage(IntPtr hWnd, int msg, int wParam, string lParam);
-'@
-[void][Native.Win]::SetProcessDPIAware()
+
+# Собственные элементы (скруглённые кнопки, карточки, поля...) компилируются один раз и кэшируются в deploy\controls-<хэш>.dll.
+function Import-Controls {
+    $source = Join-Path $PSScriptRoot "controls.cs"
+    $hash = (Get-FileHash -Path $source -Algorithm SHA256).Hash.Substring(0, 12)
+    $dll = Join-Path $PSScriptRoot "controls-$hash.dll"
+    $refs = @("System.Windows.Forms.dll", "System.Drawing.dll")
+    if ("Lab3D.RoundButton" -as [type]) { return }
+    if (-not (Test-Path $dll)) {
+        $code = [IO.File]::ReadAllText($source, [Text.Encoding]::UTF8)
+        try {
+            Get-ChildItem -Path $PSScriptRoot -Filter "controls-*.dll" -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue
+            Add-Type -TypeDefinition $code -ReferencedAssemblies $refs -OutputAssembly $dll -OutputType Library -Language CSharp
+        }
+        catch { $dll = $null }
+        if (-not $dll -or -not (Test-Path $dll)) { Add-Type -TypeDefinition $code -ReferencedAssemblies $refs -Language CSharp; return }
+    }
+    if (-not ("Lab3D.RoundButton" -as [type])) { Add-Type -Path $dll }
+}
+Import-Controls
+
+[void][Lab3D.Native]::SetProcessDPIAware()
 [Windows.Forms.Application]::EnableVisualStyles()
 
 $script:ServerScript = Join-Path $PSScriptRoot "server.ps1"
 $script:SettingsFile = Join-Path $PSScriptRoot "app-settings.json"
 $script:AppHash = (Get-FileHash -Path $PSCommandPath -Algorithm SHA256).Hash
 
-# ---------------------------------------------------------------- палитра и виджеты
+# ---------------------------------------------------------------- палитра
 function New-Color([int]$R, [int]$G, [int]$B) { return [Drawing.Color]::FromArgb($R, $G, $B) }
-$ColBg = New-Color 10 10 10
-$ColSide = New-Color 16 16 18
-$ColCard = New-Color 24 24 27
-$ColField = New-Color 32 32 36
-$ColLine = New-Color 48 48 54
-$ColInk = New-Color 232 232 232
-$ColMuted = New-Color 140 140 148
+$ColBg = New-Color 10 10 12
+$ColSide = New-Color 14 14 17
+$ColCard = New-Color 21 21 25
+$ColField = New-Color 30 30 35
+$ColLine = New-Color 42 42 48
+$ColInk = New-Color 238 238 240
+$ColMuted = New-Color 140 140 150
 $ColAccent = New-Color 127 191 127
-$ColAccentDark = New-Color 11 31 11
-$ColRed = New-Color 226 100 100
+$ColAccentDark = New-Color 10 30 12
+$ColRed = New-Color 232 108 108
 $ColYellow = New-Color 232 190 90
+$ColBlue = New-Color 110 190 220
+$ColConsole = New-Color 13 13 16
+$ColEmpty = [Drawing.Color]::Empty
 
+function G([int]$Code) { return [string][char]$Code }
+
+# ---------------------------------------------------------------- виджеты
 function New-Font([single]$Size = 10, [bool]$Bold = $false) {
-    $style = if ($Bold) { [Drawing.FontStyle]::Bold } else { [Drawing.FontStyle]::Regular }
-    return New-Object Drawing.Font("Segoe UI", $Size, $style)
+    $family = if ($Bold) { "Segoe UI Semibold" } else { "Segoe UI" }
+    return New-Object Drawing.Font($family, $Size, [Drawing.FontStyle]::Regular)
 }
 
-function New-Label([string]$Content, [single]$Size = 10, $Color = $ColInk, [bool]$Bold = $false) {
+function New-Label([string]$Content, [single]$Size = 10, $Color = $ColInk, [bool]$Bold = $false, $Back = $ColCard) {
     $label = New-Object Windows.Forms.Label
     $label.Text = $Content
     $label.AutoSize = $true
     $label.ForeColor = $Color
-    $label.BackColor = [Drawing.Color]::Transparent
+    $label.BackColor = $Back
     $label.Font = New-Font $Size $Bold
     return $label
 }
 
-function Set-ButtonLook($Button) {
-    if (-not $Button.Enabled) {
-        $Button.BackColor = $ColCard
-        $Button.ForeColor = New-Color 88 88 94
-        $Button.FlatAppearance.BorderColor = $ColLine
-        return
+function New-Button([string]$Content, [string]$Kind = "secondary", [int]$Width = 160, [string]$Glyph = "") {
+    $b = New-Object Lab3D.RoundButton
+    $b.Text = $Content
+    $b.Glyph = $Glyph
+    $b.Width = $Width
+    $b.Height = 42
+    $b.Font = New-Font 10 $true
+    $b.Margin = New-Object Windows.Forms.Padding(0, 0, 10, 0)
+    switch ($Kind) {
+        "primary" {
+            $b.Fill = $ColAccent; $b.HoverFill = New-Color 152 210 152; $b.PressFill = New-Color 104 164 104; $b.Ink = $ColAccentDark
+            $b.OffFill = New-Color 30 46 33; $b.OffInk = New-Color 92 118 94
+        }
+        "danger" {
+            $b.Fill = $ColCard; $b.HoverFill = New-Color 46 26 28; $b.PressFill = New-Color 36 20 22; $b.Edge = New-Color 150 74 74; $b.Ink = $ColRed
+            $b.OffFill = $ColCard; $b.OffInk = New-Color 90 70 72; $b.OffEdge = $ColLine
+        }
+        "ghost" {
+            $b.Fill = $ColEmpty; $b.HoverFill = $ColField; $b.PressFill = $ColLine; $b.Ink = $ColMuted
+            $b.OffFill = $ColEmpty; $b.OffInk = New-Color 80 80 88
+        }
+        default {
+            $b.Fill = $ColField; $b.HoverFill = New-Color 40 40 47; $b.PressFill = New-Color 26 26 31; $b.Edge = $ColLine; $b.Ink = $ColInk
+            $b.OffFill = $ColCard; $b.OffInk = New-Color 86 86 94; $b.OffEdge = $ColLine
+        }
     }
-    switch ($Button.Tag) {
-        "primary" { $Button.BackColor = $ColAccent; $Button.ForeColor = $ColAccentDark; $Button.FlatAppearance.BorderColor = $ColAccent }
-        "danger" { $Button.BackColor = $ColCard; $Button.ForeColor = $ColRed; $Button.FlatAppearance.BorderColor = $ColRed }
-        default { $Button.BackColor = $ColField; $Button.ForeColor = $ColInk; $Button.FlatAppearance.BorderColor = $ColLine }
-    }
+    return $b
 }
 
-function New-Button([string]$Content, [string]$Kind = "secondary", [int]$Width = 150) {
-    $button = New-Object Windows.Forms.Button
-    $button.Text = $Content
-    $button.Width = $Width
-    $button.Height = 38
-    $button.FlatStyle = "Flat"
-    $button.Cursor = "Hand"
-    $button.Font = New-Font 10 ($Kind -eq "primary")
-    $button.Margin = New-Object Windows.Forms.Padding(0, 0, 10, 0)
-    $button.FlatAppearance.BorderSize = 1
-    switch ($Kind) {
-        "primary" { $button.BackColor = $ColAccent; $button.ForeColor = $ColAccentDark; $button.FlatAppearance.BorderColor = $ColAccent }
-        "danger" { $button.BackColor = $ColCard; $button.ForeColor = $ColRed; $button.FlatAppearance.BorderColor = $ColRed }
-        default { $button.BackColor = $ColField; $button.ForeColor = $ColInk; $button.FlatAppearance.BorderColor = $ColLine }
-    }
-    $button.Tag = $Kind
-    $button.Add_EnabledChanged({ Set-ButtonLook $this })
-    return $button
+function New-Card($Fill = $ColCard, [int]$Radius = 16) {
+    $card = New-Object Lab3D.CardPanel
+    $card.Fill = $Fill
+    $card.Edge = $ColLine
+    $card.Radius = $Radius
+    $card.BackColor = $Fill
+    return $card
 }
 
 function New-Input([string]$Value = "", [bool]$Secret = $false, [string]$Hint = "") {
-    $box = New-Object Windows.Forms.TextBox
-    $box.Text = $Value
-    $box.BackColor = $ColField
-    $box.ForeColor = $ColInk
-    $box.BorderStyle = "FixedSingle"
+    $box = New-Object Lab3D.RoundTextBox
+    $box.Fill = $ColField
+    $box.Edge = $ColLine
+    $box.FocusEdge = $ColAccent
     $box.Font = New-Font 10
+    $box.Inner.ForeColor = $ColInk
+    $box.Text = $Value
+    $box.Secret = $Secret
+    if ($Hint) { $box.Cue = $Hint }
     $box.Dock = "Fill"
-    $box.Margin = New-Object Windows.Forms.Padding(0, 4, 0, 4)
-    if ($Secret) { $box.UseSystemPasswordChar = $true }
-    if ($Hint) { $box.Tag = $Hint; $box.Add_HandleCreated({ [void][Native.Win]::SendMessage($this.Handle, 0x1501, 1, [string]$this.Tag) }) }
+    $box.Margin = New-Object Windows.Forms.Padding(0, 8, 0, 8)
     return $box
 }
 
-function New-Panel($Color = $ColCard) {
-    $panel = New-Object Windows.Forms.Panel
-    $panel.BackColor = $Color
-    return $panel
+function New-Toggle([string]$Content, [int]$Width = 520) {
+    $t = New-Object Lab3D.ToggleSwitch
+    $t.Text = $Content
+    $t.Width = $Width
+    $t.Font = New-Font 10
+    $t.OnColor = $ColAccent
+    $t.OffColor = New-Color 62 62 70
+    $t.Knob = New-Color 246 246 246
+    $t.Ink = $ColInk
+    return $t
 }
 
 function New-Table([string[]]$Rows, [int]$Columns = 1) {
     $table = New-Object Windows.Forms.TableLayoutPanel
     $table.Dock = "Fill"
+    $table.BackColor = $ColBg
     $table.ColumnCount = $Columns
     for ($c = 0; $c -lt $Columns; $c++) { [void]$table.ColumnStyles.Add((New-Object Windows.Forms.ColumnStyle("Percent", (100 / $Columns)))) }
     $table.RowCount = $Rows.Count
@@ -125,22 +158,30 @@ function New-Table([string[]]$Rows, [int]$Columns = 1) {
 }
 
 function Set-DarkScroll($Control) {
-    try { [void][Native.Win]::SetWindowTheme($Control.Handle, "DarkMode_Explorer", $null) } catch { }
+    try { [void][Lab3D.Native]::SetWindowTheme($Control.Handle, "DarkMode_Explorer", $null) } catch { }
 }
 
 function New-Console {
     $box = New-Object Windows.Forms.RichTextBox
-    $box.BackColor = New-Color 14 14 16
+    $box.BackColor = $ColConsole
     $box.ForeColor = $ColMuted
     $box.BorderStyle = "None"
     $box.ReadOnly = $true
     $box.Font = New-Object Drawing.Font("Consolas", 9.5)
     $box.Dock = "Fill"
     $box.DetectUrls = $false
-    $box.Margin = New-Object Windows.Forms.Padding(0)
     $box.HideSelection = $false
     $box.Add_HandleCreated({ Set-DarkScroll $this })
     return $box
+}
+
+# Тёмная скруглённая «панель» с консольным текстом внутри.
+function New-ConsoleCard($Box) {
+    $card = New-Card $ColConsole 12
+    $card.Dock = "Fill"
+    $card.Padding = New-Object Windows.Forms.Padding(14, 12, 8, 12)
+    $card.Controls.Add($Box)
+    return $card
 }
 
 function Add-ConsoleText($Box, [string]$Content, $Color = $null) {
@@ -161,10 +202,10 @@ function Add-ColoredLines($Box, [string]$Raw) {
     foreach ($line in ($clean -split "`n")) {
         if ($line -eq "") { continue }
         $color = $ColMuted
-        if ($line -match "^\s*==>") { $color = New-Color 110 190 220 }
+        if ($line -match "^\s*==>") { $color = $ColBlue }
         elseif ($line -match "ошибк|error|не удал|не найден|не запустил|failed|fatal") { $color = $ColRed }
         elseif ($line -match "warn|предупрежд|\s!\s") { $color = $ColYellow }
-        elseif ($line -match "готово|запущен|остановлен|завершен|актуал|обновлён") { $color = $ColAccent }
+        elseif ($line -match "готово|запущен|остановлен|завершен|актуал|обновлён|подключён") { $color = $ColAccent }
         Add-ConsoleText $Box ($line + "`n") $color
     }
 }
@@ -203,64 +244,97 @@ function ConvertTo-Arg([string]$Value) { return '"' + ($Value -replace '"', '\"'
 
 # ---------------------------------------------------------------- главное окно
 $form = New-Object Windows.Forms.Form
+$form.AutoScaleDimensions = New-Object Drawing.SizeF(96, 96)
+$form.AutoScaleMode = "Dpi"
 $form.Text = "Лаборатория 3Д - сервер"
 $form.StartPosition = "CenterScreen"
-$form.ClientSize = New-Object Drawing.Size(1040, 700)
-$form.MinimumSize = New-Object Drawing.Size(940, 640)
+$form.ClientSize = New-Object Drawing.Size(1120, 740)
+$form.MinimumSize = New-Object Drawing.Size(1000, 680)
 $form.BackColor = $ColBg
 $form.ForeColor = $ColInk
 $form.Font = New-Font 10
 $exe = Join-Path $script:Root "Lab3D.exe"
 if (Test-Path $exe) { try { $form.Icon = [Drawing.Icon]::ExtractAssociatedIcon($exe) } catch { } }
 
-$sidebar = New-Panel $ColSide
+$sidebar = New-Object Windows.Forms.Panel
+$sidebar.BackColor = $ColSide
 $sidebar.Dock = "Left"
-$sidebar.Width = 220
-$content = New-Panel $ColBg
+$sidebar.Width = 236
+$content = New-Object Windows.Forms.Panel
+$content.BackColor = $ColBg
 $content.Dock = "Fill"
-$content.Padding = New-Object Windows.Forms.Padding(28, 24, 28, 24)
+$content.Padding = New-Object Windows.Forms.Padding(34, 26, 34, 26)
 $form.Controls.Add($content)
 $form.Controls.Add($sidebar)
 
-$brand = New-Label "ЛАБОРАТОРИЯ 3Д" 13 $ColAccent $true
-$brand.Location = New-Object Drawing.Point(22, 22)
-$brandSub = New-Label "управление сервером" 9 $ColMuted
-$brandSub.Location = New-Object Drawing.Point(23, 48)
-$sidebar.Controls.AddRange(@($brand, $brandSub))
+# бренд
+$logo = New-Object Windows.Forms.PictureBox
+$logo.SetBounds(22, 24, 40, 40)
+$logo.SizeMode = "Zoom"
+$logo.BackColor = $ColSide
+$icoPath = Join-Path $PSScriptRoot "app.ico"
+if (Test-Path $icoPath) {
+    try {
+        $icoBytes = [IO.File]::ReadAllBytes($icoPath)
+        $frameCount = [BitConverter]::ToUInt16($icoBytes, 4)
+        for ($i = 0; $i -lt $frameCount; $i++) {
+            $entry = 6 + 16 * $i
+            if ($icoBytes[$entry] -eq 64) {
+                $size = [BitConverter]::ToUInt32($icoBytes, $entry + 8)
+                $offset = [BitConverter]::ToUInt32($icoBytes, $entry + 12)
+                $png = New-Object byte[] $size
+                [Array]::Copy($icoBytes, $offset, $png, 0, $size)
+                $logo.Image = [Drawing.Image]::FromStream((New-Object IO.MemoryStream(, $png)))
+                break
+            }
+        }
+    }
+    catch { }
+}
+$brand = New-Label "Лаборатория 3Д" 13 $ColInk $true $ColSide
+$brand.Location = New-Object Drawing.Point(72, 24)
+$brandSub = New-Label "панель сервера" 9 $ColMuted $false $ColSide
+$brandSub.Location = New-Object Drawing.Point(73, 50)
+$sidebar.Controls.AddRange(@($logo, $brand, $brandSub))
 
 $script:Pages = @{}
 $script:NavButtons = @{}
-$navItems = @(@("overview", "Обзор"), @("logs", "Логи"), @("updates", "Обновления"), @("settings", "Настройки"), @("cleanup", "Очистка"))
-$y = 100
+$navItems = @(
+    @("overview", "Обзор", (G 0xE80F)), @("logs", "Логи", (G 0xE8FD)), @("updates", "Обновления", (G 0xE895)),
+    @("settings", "Настройки", (G 0xE713)), @("cleanup", "Очистка", (G 0xE74D))
+)
+$navY = 108
 foreach ($item in $navItems) {
-    $nav = New-Object Windows.Forms.Button
-    $nav.Text = "   " + $item[1]
+    $nav = New-Object Lab3D.RoundButton
+    $nav.Text = $item[1]
+    $nav.Glyph = $item[2]
     $nav.Tag = $item[0]
-    $nav.SetBounds(0, $y, 220, 44)
-    $nav.FlatStyle = "Flat"
-    $nav.FlatAppearance.BorderSize = 0
-    $nav.TextAlign = "MiddleLeft"
+    $nav.NavMode = $true
+    $nav.Radius = 11
+    $nav.SetBounds(14, $navY, 208, 46)
     $nav.Font = New-Font 10.5
-    $nav.Cursor = "Hand"
-    $nav.BackColor = $ColSide
-    $nav.ForeColor = $ColMuted
+    $nav.Ink = $ColMuted
+    $nav.HoverFill = New-Color 26 26 31
+    $nav.PressFill = New-Color 20 20 24
+    $nav.ActiveFill = $ColCard
+    $nav.ActiveInk = $ColAccent
+    $nav.ActiveEdge = $ColLine
+    $nav.Bar = $ColAccent
+    $nav.OffInk = $ColMuted
+    $nav.OffFill = $ColSide
     $nav.Add_Click({ Show-Page ([string]$this.Tag) })
     $sidebar.Controls.Add($nav)
     $script:NavButtons[$item[0]] = $nav
-    $y += 46
+    $navY += 52
 }
-$versionLabel = New-Label "" 8.5 $ColMuted
-$versionLabel.Location = New-Object Drawing.Point(22, 640)
+$versionLabel = New-Label "" 9 $ColMuted $false $ColSide
+$versionLabel.Location = New-Object Drawing.Point(24, 660)
 $sidebar.Controls.Add($versionLabel)
-$sidebar.Add_Resize({ $versionLabel.Top = $sidebar.Height - 50 })
+$sidebar.Add_Resize({ $versionLabel.Top = $sidebar.Height - 52 })
 
 function Show-Page([string]$Name) {
     foreach ($key in $script:Pages.Keys) { $script:Pages[$key].Visible = ($key -eq $Name) }
-    foreach ($key in $script:NavButtons.Keys) {
-        $active = ($key -eq $Name)
-        $script:NavButtons[$key].BackColor = $(if ($active) { $ColCard } else { $ColSide })
-        $script:NavButtons[$key].ForeColor = $(if ($active) { $ColAccent } else { $ColMuted })
-    }
+    foreach ($key in $script:NavButtons.Keys) { $script:NavButtons[$key].SetActive(($key -eq $Name)) }
     $script:CurrentPage = $Name
     if ($Name -eq "logs") { Reset-LogView }
     if ($Name -eq "updates") { Update-UpdatesView }
@@ -275,246 +349,279 @@ function Add-Page([string]$Name, $Control) {
 }
 
 function New-Heading([string]$Title, [string]$Subtitle) {
-    $panel = New-Panel $ColBg
+    $panel = New-Object Windows.Forms.Panel
     $panel.Dock = "Fill"
-    $t = New-Label $Title 18 $ColInk $true
+    $panel.BackColor = $ColBg
+    $t = New-Label $Title 21 $ColInk $true $ColBg
     $t.Location = New-Object Drawing.Point(0, 0)
-    $s = New-Label $Subtitle 9.5 $ColMuted
-    $s.Location = New-Object Drawing.Point(2, 38)
+    $s = New-Label $Subtitle 10 $ColMuted $false $ColBg
+    $s.Location = New-Object Drawing.Point(2, 44)
     $panel.Controls.AddRange(@($t, $s))
     return $panel
 }
 
 # ---------------------------------------------------------------- страница: обзор
-$pOverview = New-Table @(70, 222, 56, "auto", 30, "*")
+$pOverview = New-Table @(80, 184, 120, "auto", 40, "*")
 $pOverview.Controls.Add((New-Heading "Обзор" "Состояние сайта и быстрые действия"), 0, 0)
 
-$cardStatus = New-Panel $ColCard
-$cardStatus.Dock = "Fill"
-$cardStatus.Margin = New-Object Windows.Forms.Padding(0, 0, 0, 12)
-$lblState = New-Label "..." 20 $ColInk $true
-$lblState.Location = New-Object Drawing.Point(22, 16)
+$cardHero = New-Card $ColCard 18
+$cardHero.Dock = "Fill"
+$cardHero.Margin = New-Object Windows.Forms.Padding(0, 0, 0, 16)
+$dot = New-Object Lab3D.StatusDot
+$dot.SetBounds(24, 24, 34, 34)
+$lblState = New-Label "..." 22 $ColInk $true
+$lblState.Location = New-Object Drawing.Point(64, 20)
 $lblUptime = New-Label "" 10 $ColMuted
-$lblUptime.Location = New-Object Drawing.Point(24, 58)
-$cardStatus.Controls.AddRange(@($lblState, $lblUptime))
-$fieldNames = @("Адрес", "Процессы", "Автозапуск", "Диск")
-$script:FieldValues = @{}
-$fy = 92
-foreach ($name in $fieldNames) {
-    $k = New-Label $name 10 $ColMuted
-    $k.Location = New-Object Drawing.Point(24, $fy)
-    if ($name -eq "Адрес") {
-        $v = New-Object Windows.Forms.LinkLabel
-        $v.AutoSize = $true
-        $v.Font = New-Font 10
-        $v.LinkColor = New-Color 110 190 220
-        $v.ActiveLinkColor = $ColAccent
-        $v.VisitedLinkColor = New-Color 110 190 220
-        $v.BackColor = [Drawing.Color]::Transparent
-        $v.Text = "-"
-        $v.Add_LinkClicked({ if ($script:SiteUrl) { Start-Process $script:SiteUrl } })
-    }
-    else { $v = New-Label "-" 10 $ColInk }
-    $v.Location = New-Object Drawing.Point(130, $fy)
-    $cardStatus.Controls.AddRange(@($k, $v))
-    $script:FieldValues[$name] = $v
-    $fy += 26
-}
-$pOverview.Controls.Add($cardStatus, 0, 1)
+$lblUptime.Location = New-Object Drawing.Point(66, 66)
+$cardHero.Controls.AddRange(@($dot, $lblState, $lblUptime))
 
 $actions = New-Object Windows.Forms.FlowLayoutPanel
-$actions.Dock = "Fill"
-$actions.BackColor = $ColBg
-$btnStart = New-Button "Запустить" "primary" 150
-$btnStop = New-Button "Остановить" "secondary" 150
-$btnRestart = New-Button "Перезапустить" "secondary" 150
-$btnOpen = New-Button "Открыть сайт" "secondary" 150
+$actions.Dock = "Bottom"
+$actions.Height = 74
+$actions.BackColor = [Drawing.Color]::Transparent
+$actions.Padding = New-Object Windows.Forms.Padding(22, 6, 0, 18)
+$btnStart = New-Button "Запустить" "primary" 156 (G 0xE768)
+$btnStop = New-Button "Остановить" "secondary" 158 (G 0xE71A)
+$btnRestart = New-Button "Перезапустить" "secondary" 176 (G 0xE72C)
+$btnOpen = New-Button "Открыть сайт" "secondary" 166 (G 0xE774)
 $actions.Controls.AddRange(@($btnStart, $btnStop, $btnRestart, $btnOpen))
-$pOverview.Controls.Add($actions, 0, 2)
+$cardHero.Controls.Add($actions)
+$pOverview.Controls.Add($cardHero, 0, 1)
 
-$bannerUpdate = New-Panel (New-Color 18 34 20)
+# плитки: адрес / процессы / автозапуск / диск
+$tiles = New-Table @(100) 4
+$tiles.Margin = New-Object Windows.Forms.Padding(0, 0, 0, 16)
+$script:FieldValues = @{}
+$col = 0
+foreach ($name in @("Адрес", "Процессы", "Автозапуск", "Диск")) {
+    $tile = New-Card $ColCard 14
+    $tile.Dock = "Fill"
+    $tile.Padding = New-Object Windows.Forms.Padding(18, 16, 12, 8)
+    $tile.Margin = New-Object Windows.Forms.Padding(0, 0, $(if ($col -lt 3) { 14 } else { 0 }), 0)
+    if ($name -eq "Адрес") {
+        $v = New-Object Windows.Forms.LinkLabel
+        $v.LinkColor = $ColBlue
+        $v.ActiveLinkColor = $ColAccent
+        $v.VisitedLinkColor = $ColBlue
+        $v.LinkBehavior = "HoverUnderline"
+        $v.Add_LinkClicked({ if ($script:SiteUrl) { Start-Process $script:SiteUrl } })
+    }
+    else { $v = New-Object Windows.Forms.Label; $v.ForeColor = $ColInk }
+    $v.AutoSize = $false
+    $v.AutoEllipsis = $true
+    $v.Dock = "Top"
+    $v.Height = 34
+    $v.BackColor = $ColCard
+    $v.Font = New-Font 12 $true
+    $v.Text = "-"
+    $k = New-Label $name 9 $ColMuted $false $ColCard
+    $k.AutoSize = $false
+    $k.Dock = "Top"
+    $k.Height = 22
+    $tile.Controls.Add($v)
+    $tile.Controls.Add($k)
+    $tiles.Controls.Add($tile, $col, 0)
+    $script:FieldValues[$name] = $v
+    $col++
+}
+$pOverview.Controls.Add($tiles, 0, 2)
+
+$bannerUpdate = New-Card (New-Color 19 38 23) 14
+$bannerUpdate.Edge = New-Color 58 108 64
 $bannerUpdate.Dock = "Fill"
-$bannerUpdate.Height = 52
+$bannerUpdate.Height = 60
 $bannerUpdate.Visible = $false
-$bannerUpdate.Margin = New-Object Windows.Forms.Padding(0, 6, 0, 0)
-$lblBanner = New-Label "" 10 $ColAccent $true
-$lblBanner.Location = New-Object Drawing.Point(16, 15)
-$btnBanner = New-Button "Обновить" "primary" 130
-$btnBanner.Height = 32
+$bannerUpdate.Margin = New-Object Windows.Forms.Padding(0, 0, 0, 16)
+$lblBanner = New-Label "" 10.5 $ColAccent $true (New-Color 19 38 23)
+$lblBanner.Location = New-Object Drawing.Point(20, 19)
+$btnBanner = New-Button "Обновить" "primary" 140 (G 0xE896)
+$btnBanner.Height = 38
 $btnBanner.Anchor = "Top,Right"
-$btnBanner.Location = New-Object Drawing.Point(($bannerUpdate.Width - 150), 10)
-$bannerUpdate.Add_Resize({ $btnBanner.Left = $bannerUpdate.Width - 146 })
+$btnBanner.Location = New-Object Drawing.Point(($bannerUpdate.Width - 160), 11)
+$bannerUpdate.Add_Resize({ $btnBanner.Left = $bannerUpdate.Width - $btnBanner.Width - 16 })
 $bannerUpdate.Controls.AddRange(@($lblBanner, $btnBanner))
 $pOverview.Controls.Add($bannerUpdate, 0, 3)
 
-$consoleTitle = New-Label "Журнал действий" 9.5 $ColMuted
-$consoleTitle.Margin = New-Object Windows.Forms.Padding(2, 10, 0, 0)
-$pOverview.Controls.Add($consoleTitle, 0, 4)
+$journalHead = New-Object Windows.Forms.Panel
+$journalHead.Dock = "Fill"
+$journalHead.BackColor = $ColBg
+$consoleTitle = New-Label "Журнал действий" 10 $ColMuted $false $ColBg
+$consoleTitle.Location = New-Object Drawing.Point(2, 10)
+$btnClearJournal = New-Button "Очистить" "ghost" 110 (G 0xE74D)
+$btnClearJournal.Height = 30
+$btnClearJournal.Anchor = "Top,Right"
+$btnClearJournal.Location = New-Object Drawing.Point(($journalHead.Width - 100), 4)
+$journalHead.Add_Resize({ $btnClearJournal.Left = $journalHead.Width - $btnClearJournal.Width })
+$journalHead.Controls.AddRange(@($consoleTitle, $btnClearJournal))
+$pOverview.Controls.Add($journalHead, 0, 4)
 $console = New-Console
-$pOverview.Controls.Add($console, 0, 5)
+$pOverview.Controls.Add((New-ConsoleCard $console), 0, 5)
 Add-Page "overview" $pOverview
 
 # ---------------------------------------------------------------- страница: логи
-$pLogs = New-Table @(70, 44, "*")
+$pLogs = New-Table @(80, 52, "*")
 $pLogs.Controls.Add((New-Heading "Логи" "Живой вывод сайта, ошибок, HTTPS и событий сервера"), 0, 0)
 $logBar = New-Object Windows.Forms.FlowLayoutPanel
 $logBar.Dock = "Fill"
 $logBar.BackColor = $ColBg
-$logCombo = New-Object Windows.Forms.ComboBox
-$logCombo.DropDownStyle = "DropDownList"
-$logCombo.FlatStyle = "Flat"
-$logCombo.BackColor = $ColField
-$logCombo.ForeColor = $ColInk
-$logCombo.Font = New-Font 10
-$logCombo.Width = 300
 $logSources = [ordered]@{ "Сайт" = "next.log"; "Ошибки сайта" = "next-error.log"; "HTTPS (Caddy)" = "caddy-error.log"; "События сервера" = "supervisor.log"; "Журнал операций" = "gui-task-out.log" }
-foreach ($key in $logSources.Keys) { [void]$logCombo.Items.Add($key) }
-$logCombo.SelectedIndex = 0
-$logBar.Controls.Add($logCombo)
+$script:LogChips = @{}
+$script:LogKey = "Сайт"
+foreach ($key in $logSources.Keys) {
+    $chip = New-Object Lab3D.RoundButton
+    $chip.Text = $key
+    $chip.Tag = $key
+    $chip.Radius = 17
+    $chip.Height = 36
+    $chip.Width = 30 + $key.Length * 9
+    $chip.Font = New-Font 9.5
+    $chip.Margin = New-Object Windows.Forms.Padding(0, 0, 10, 0)
+    $chip.Fill = $ColField; $chip.HoverFill = New-Color 40 40 47; $chip.PressFill = $ColLine; $chip.Edge = $ColLine; $chip.Ink = $ColMuted
+    $chip.ActiveFill = New-Color 22 42 26; $chip.ActiveInk = $ColAccent; $chip.ActiveEdge = New-Color 64 118 70
+    $chip.Add_Click({ Set-LogSource ([string]$this.Tag) })
+    $logBar.Controls.Add($chip)
+    $script:LogChips[$key] = $chip
+}
 $pLogs.Controls.Add($logBar, 0, 1)
 $logView = New-Console
-$pLogs.Controls.Add($logView, 0, 2)
+$pLogs.Controls.Add((New-ConsoleCard $logView), 0, 2)
 Add-Page "logs" $pLogs
 $script:LogPos = 0
 
 function Reset-LogView {
+    foreach ($key in $script:LogChips.Keys) { $script:LogChips[$key].SetActive(($key -eq $script:LogKey)) }
     $logView.Clear()
     $script:LogPos = 0
-    $path = Join-Path $script:LogDir $logSources[[string]$logCombo.SelectedItem]
+    $path = Join-Path $script:LogDir $logSources[$script:LogKey]
     if (Test-Path $path) {
         $length = (Get-Item $path).Length
         if ($length -gt 12000) { $script:LogPos = $length - 12000 }
     }
     else { Add-ConsoleText $logView "Лог пока пуст.`n" $ColMuted }
 }
-$logCombo.Add_SelectedIndexChanged({ Reset-LogView })
+
+function Set-LogSource([string]$Key) {
+    $script:LogKey = $Key
+    Reset-LogView
+}
 
 # ---------------------------------------------------------------- страница: обновления
-$pUpdates = New-Table @(70, 178, 30, "*", 56)
+$pUpdates = New-Table @(80, 224, 34, "*", 70)
 $pUpdates.Controls.Add((New-Heading "Обновления" "Код сайта берётся из git-репозитория"), 0, 0)
 
-$cardVersion = New-Panel $ColCard
+$cardVersion = New-Card $ColCard 16
 $cardVersion.Dock = "Fill"
-$cardVersion.Margin = New-Object Windows.Forms.Padding(0, 0, 0, 12)
+$cardVersion.Margin = New-Object Windows.Forms.Padding(0, 0, 0, 14)
 $script:UpdateValues = @{}
-$uy = 16
+$uy = 20
 foreach ($name in @("Версия", "Ветка", "Репозиторий", "Статус")) {
     $k = New-Label $name 10 $ColMuted
-    $k.Location = New-Object Drawing.Point(22, $uy)
+    $k.Location = New-Object Drawing.Point(26, $uy)
     $v = New-Label "-" 10 $ColInk
-    $v.Location = New-Object Drawing.Point(150, $uy)
+    $v.Location = New-Object Drawing.Point(160, $uy)
     $cardVersion.Controls.AddRange(@($k, $v))
     $script:UpdateValues[$name] = $v
-    $uy += 30
+    $uy += 34
 }
-$chkAuto = New-Object Windows.Forms.CheckBox
-$chkAuto.Text = "Проверять обновления автоматически (раз в 30 минут)"
-$chkAuto.ForeColor = $ColMuted
-$chkAuto.AutoSize = $true
-$chkAuto.Location = New-Object Drawing.Point(22, 140)
+$chkAuto = New-Toggle "Проверять обновления автоматически (раз в 30 минут)" 560
+$chkAuto.Location = New-Object Drawing.Point(24, 170)
 $chkAuto.Checked = [bool](Get-Settings).autoCheck
 $chkAuto.Add_CheckedChanged({ Save-Settings ([ordered]@{ autoCheck = [bool]$chkAuto.Checked }) })
 $cardVersion.Controls.Add($chkAuto)
 $pUpdates.Controls.Add($cardVersion, 0, 1)
 
-$lblCommits = New-Label "Что изменится после обновления" 9.5 $ColMuted
-$lblCommits.Margin = New-Object Windows.Forms.Padding(2, 4, 0, 0)
+$lblCommits = New-Label "Что изменится после обновления" 10 $ColMuted $false $ColBg
+$lblCommits.Margin = New-Object Windows.Forms.Padding(2, 6, 0, 0)
 $pUpdates.Controls.Add($lblCommits, 0, 2)
 
 $commitList = New-Object Windows.Forms.ListBox
 $commitList.Dock = "Fill"
-$commitList.BackColor = New-Color 14 14 16
+$commitList.BackColor = $ColConsole
 $commitList.ForeColor = $ColInk
 $commitList.BorderStyle = "None"
 $commitList.Font = New-Object Drawing.Font("Consolas", 10)
 $commitList.Add_HandleCreated({ Set-DarkScroll $this })
-$pUpdates.Controls.Add($commitList, 0, 3)
+$cardCommits = New-Card $ColConsole 12
+$cardCommits.Dock = "Fill"
+$cardCommits.Padding = New-Object Windows.Forms.Padding(14, 12, 8, 12)
+$cardCommits.Controls.Add($commitList)
+$pUpdates.Controls.Add($cardCommits, 0, 3)
 
 $updBar = New-Object Windows.Forms.FlowLayoutPanel
 $updBar.Dock = "Fill"
 $updBar.BackColor = $ColBg
-$updBar.Padding = New-Object Windows.Forms.Padding(0, 12, 0, 0)
-$btnCheck = New-Button "Проверить сейчас" "secondary" 170
-$btnUpdate = New-Button "Обновить и перезапустить" "primary" 240
+$updBar.Padding = New-Object Windows.Forms.Padding(0, 16, 0, 0)
+$btnCheck = New-Button "Проверить сейчас" "secondary" 200 (G 0xE895)
+$btnUpdate = New-Button "Обновить и перезапустить" "primary" 280 (G 0xE896)
 $updBar.Controls.AddRange(@($btnCheck, $btnUpdate))
 $pUpdates.Controls.Add($updBar, 0, 4)
 
-# Если папка не подключена к git - вместо версии показываем форму подключения.
-$cardConnect = New-Panel $ColCard
+# Если папка не подключена к git (или подключена не до конца) - вместо версии показываем форму подключения.
+$cardConnect = New-Card $ColCard 16
 $cardConnect.Dock = "Fill"
 $cardConnect.Visible = $false
-$cardConnect.Margin = New-Object Windows.Forms.Padding(0, 0, 0, 12)
+$cardConnect.Margin = New-Object Windows.Forms.Padding(0, 0, 0, 14)
 $cLbl = New-Label "Папка не подключена к git. Укажите репозиторий, из которого сайт будет обновляться." 10 $ColYellow
-$cLbl.Location = New-Object Drawing.Point(22, 16)
+$cLbl.Location = New-Object Drawing.Point(26, 20)
 $cUrlLbl = New-Label "Адрес репозитория" 10 $ColMuted
-$cUrlLbl.Location = New-Object Drawing.Point(22, 56)
+$cUrlLbl.Location = New-Object Drawing.Point(26, 68)
 $inUrl = New-Input "https://github.com/ВАШ_АККАУНТ/ВАШ_РЕПОЗИТОРИЙ.git"
 $inUrl.Dock = "None"
-$inUrl.SetBounds(180, 52, 520, 28)
+$inUrl.SetBounds(200, 60, 560, 38)
 $cBranchLbl = New-Label "Ветка" 10 $ColMuted
-$cBranchLbl.Location = New-Object Drawing.Point(22, 94)
-$inBranch = New-Input "main"
+$cBranchLbl.Location = New-Object Drawing.Point(26, 118)
+$inBranch = New-Input "" $false "auto - ветка по умолчанию"
 $inBranch.Dock = "None"
-$inBranch.SetBounds(180, 90, 160, 28)
-$btnConnect = New-Button "Подключить" "primary" 150
-$btnConnect.Location = New-Object Drawing.Point(180, 128)
+$inBranch.SetBounds(200, 110, 240, 38)
+$btnConnect = New-Button "Подключить" "primary" 170 (G 0xE71B)
+$btnConnect.Location = New-Object Drawing.Point(200, 164)
 $cardConnect.Controls.AddRange(@($cLbl, $cUrlLbl, $inUrl, $cBranchLbl, $inBranch, $btnConnect))
 $pUpdates.Controls.Add($cardConnect, 0, 1)
 Add-Page "updates" $pUpdates
 
 # ---------------------------------------------------------------- страница: настройки
-$pSettings = New-Table @(70, "auto", "auto", "*")
-$pSettings.AutoScroll = $true
+$pSettings = New-Table @(80, "auto", "auto", "*")
 $pSettings.Controls.Add((New-Heading "Настройки" "Установка, домен, база данных и автозапуск"), 0, 0)
 
-$cardSet = New-Panel $ColCard
+$cardSet = New-Card $ColCard 18
 $cardSet.Dock = "Top"
-$cardSet.Height = 350
-$cardSet.Margin = New-Object Windows.Forms.Padding(0, 0, 0, 14)
-$grid = New-Table @(50, 50, 50, 50, 50, 44) 2
+$cardSet.Height = 392
+$cardSet.Margin = New-Object Windows.Forms.Padding(0, 0, 0, 16)
+$grid = New-Table @(58, 58, 58, 58, 50, 46) 2
 $grid.Dock = "Fill"
-$grid.Padding = New-Object Windows.Forms.Padding(16, 10, 16, 6)
+$grid.BackColor = [Drawing.Color]::Transparent
+$grid.Padding = New-Object Windows.Forms.Padding(26, 14, 26, 8)
 $grid.ColumnStyles.Clear()
-[void]$grid.ColumnStyles.Add((New-Object Windows.Forms.ColumnStyle("Absolute", 190)))
+[void]$grid.ColumnStyles.Add((New-Object Windows.Forms.ColumnStyle("Absolute", 200)))
 [void]$grid.ColumnStyles.Add((New-Object Windows.Forms.ColumnStyle("Percent", 100)))
 $inDomain = New-Input "" $false "например lab-3d.pro (пусто - работать по IP)"
 $inDb = New-Input "" $true "postgresql://postgres:ПАРОЛЬ@localhost:5432/formnow"
 $inAdmin = New-Input "admin"
 $inPass = New-Input "" $true "пусто - случайный пароль (или оставить прежний)"
-$chkAutostart = New-Object Windows.Forms.CheckBox
-$chkAutostart.Text = "Запускать сайт вместе с Windows"
-$chkAutostart.ForeColor = $ColInk
-$chkAutostart.AutoSize = $true
-$chkAutostart.Margin = New-Object Windows.Forms.Padding(0, 10, 0, 0)
-$rowsDef = @(
-    @("Домен", $inDomain, "пусто - работать по IP (самоподписанный сертификат)"),
-    @("База данных (URL)", $inDb, "postgresql://postgres:ПАРОЛЬ@localhost:5432/formnow"),
-    @("Логин админа", $inAdmin, "нужен только при первой установке"),
-    @("Пароль админа", $inPass, "пусто - создать случайный (или оставить прежний)")
-)
-$script:SettingHints = @()
+$chkAutostart = New-Toggle "Запускать сайт вместе с Windows" 420
+$chkAutostart.Anchor = "Left"
+$rowsDef = @(@("Домен", $inDomain), @("База данных (URL)", $inDb), @("Логин админа", $inAdmin), @("Пароль админа", $inPass))
 $ri = 0
 foreach ($def in $rowsDef) {
     $lab = New-Label $def[0] 10 $ColMuted
-    $lab.Margin = New-Object Windows.Forms.Padding(0, 10, 0, 0)
+    $lab.Anchor = "Left"
     $grid.Controls.Add($lab, 0, $ri)
     $grid.Controls.Add($def[1], 1, $ri)
     $ri++
 }
 $grid.Controls.Add($chkAutostart, 1, 4)
-$hintPanel = New-Label "" 9 $ColMuted
-$hintPanel.Text = "Домен: A-запись на IP сервера, порты 80/443 открыты. Пароль админа: не короче 8 символов."
-$hintPanel.Margin = New-Object Windows.Forms.Padding(0, 6, 0, 0)
-$grid.Controls.Add($hintPanel, 1, 5)
+$hint = New-Label "Домен: A-запись на IP сервера, порты 80 и 443 открыты. Пароль админа - не короче 8 символов." 9 $ColMuted
+$hint.Anchor = "Left"
+$grid.Controls.Add($hint, 1, 5)
 $cardSet.Controls.Add($grid)
 $pSettings.Controls.Add($cardSet, 0, 1)
 
 $setBar = New-Object Windows.Forms.FlowLayoutPanel
 $setBar.Dock = "Fill"
 $setBar.BackColor = $ColBg
-$setBar.Height = 56
-$btnApply = New-Button "Применить и установить" "primary" 230
-$btnUninstall = New-Button "Удалить установку..." "danger" 200
+$setBar.Height = 60
+$btnApply = New-Button "Применить и установить" "primary" 260 (G 0xE73E)
+$btnUninstall = New-Button "Удалить установку..." "danger" 230 (G 0xE74D)
 $setBar.Controls.AddRange(@($btnApply, $btnUninstall))
 $pSettings.Controls.Add($setBar, 0, 2)
 Add-Page "settings" $pSettings
@@ -529,48 +636,46 @@ function Load-SettingsValues {
 }
 
 # ---------------------------------------------------------------- страница: очистка
-$pCleanup = New-Table @(70, 150, 190, "*")
+$pCleanup = New-Table @(80, 168, 228, "*")
 $pCleanup.Controls.Add((New-Heading "Очистка" "Удаление файлов, которые больше не нужны"), 0, 0)
 
-$cardCache = New-Panel $ColCard
+$cardCache = New-Card $ColCard 16
 $cardCache.Dock = "Fill"
-$cardCache.Margin = New-Object Windows.Forms.Padding(0, 0, 0, 14)
-$t1 = New-Label "Кэш сборки и старые логи" 11.5 $ColInk $true
-$t1.Location = New-Object Drawing.Point(22, 16)
-$d1 = New-Label "Безопасно: всё пересоздаётся само при следующей сборке и работе сервера." 9.5 $ColMuted
-$d1.Location = New-Object Drawing.Point(22, 46)
-$btnCache = New-Button "Очистить" "secondary" 150
-$btnCache.Location = New-Object Drawing.Point(22, 76)
+$cardCache.Margin = New-Object Windows.Forms.Padding(0, 0, 0, 16)
+$t1 = New-Label "Кэш сборки и старые логи" 12 $ColInk $true
+$t1.Location = New-Object Drawing.Point(26, 20)
+$d1 = New-Label "Безопасно: всё пересоздаётся само при следующей сборке и работе сервера." 10 $ColMuted
+$d1.Location = New-Object Drawing.Point(26, 54)
+$btnCache = New-Button "Очистить" "secondary" 160 (G 0xE74D)
+$btnCache.Location = New-Object Drawing.Point(26, 96)
 $cardCache.Controls.AddRange(@($t1, $d1, $btnCache))
 $pCleanup.Controls.Add($cardCache, 0, 1)
 
-$cardUploads = New-Panel $ColCard
+$cardUploads = New-Card $ColCard 16
 $cardUploads.Dock = "Fill"
-$cardUploads.Margin = New-Object Windows.Forms.Padding(0, 0, 0, 14)
-$t2 = New-Label "Неиспользуемые загрузки" 11.5 $ColInk $true
-$t2.Location = New-Object Drawing.Point(22, 16)
-$d2 = New-Label "Модели, которые загрузили для расчёта, но не заказали, и файлы без записи в базе." 9.5 $ColMuted
-$d2.Location = New-Object Drawing.Point(22, 46)
+$cardUploads.Margin = New-Object Windows.Forms.Padding(0, 0, 0, 16)
+$t2 = New-Label "Неиспользуемые загрузки" 12 $ColInk $true
+$t2.Location = New-Object Drawing.Point(26, 20)
+$d2 = New-Label "Модели, которые загрузили для расчёта, но не заказали, и файлы без записи в базе." 10 $ColMuted
+$d2.Location = New-Object Drawing.Point(26, 54)
 $dl = New-Label "Старше (дней):" 10 $ColMuted
-$dl.Location = New-Object Drawing.Point(22, 82)
-$numDays = New-Object Windows.Forms.NumericUpDown
-$numDays.Minimum = 1
-$numDays.Maximum = 3650
-$numDays.Value = 30
-$numDays.BackColor = $ColField
-$numDays.ForeColor = $ColInk
-$numDays.Font = New-Font 10
-$numDays.SetBounds(150, 78, 80, 28)
-$btnScan = New-Button "Найти" "secondary" 130
-$btnScan.Location = New-Object Drawing.Point(250, 74)
-$btnPurge = New-Button "Удалить найденное" "danger" 190
-$btnPurge.Location = New-Object Drawing.Point(392, 74)
+$dl.Location = New-Object Drawing.Point(26, 104)
+$numDays = New-Input "30"
+$numDays.Dock = "None"
+$numDays.SetBounds(150, 94, 90, 38)
+$numDays.Inner.Add_KeyPress({ if (-not [char]::IsDigit($_.KeyChar) -and -not [char]::IsControl($_.KeyChar)) { $_.Handled = $true } })
+function Get-Days { $n = 30; if ([int]::TryParse($numDays.Text, [ref]$n) -and $n -ge 1) { return $n }; return 30 }
+$btnScan = New-Button "Найти" "secondary" 140 (G 0xE721)
+$btnScan.Location = New-Object Drawing.Point(262, 94)
+$btnPurge = New-Button "Удалить найденное" "danger" 210 (G 0xE74D)
+$btnPurge.Location = New-Object Drawing.Point(416, 94)
 $btnPurge.Enabled = $false
 $lblScan = New-Label "" 10 $ColInk
-$lblScan.Location = New-Object Drawing.Point(22, 124)
+$lblScan.Location = New-Object Drawing.Point(26, 148)
 $cardUploads.Controls.AddRange(@($t2, $d2, $dl, $numDays, $btnScan, $btnPurge, $lblScan))
 $pCleanup.Controls.Add($cardUploads, 0, 2)
 Add-Page "cleanup" $pCleanup
+
 
 # ---------------------------------------------------------------- выполнение операций
 $script:Queue = New-Object Collections.Queue
@@ -600,7 +705,7 @@ function Start-NextStep {
     $out = Join-Path $script:LogDir "gui-task-out.log"
     $err = Join-Path $script:LogDir "gui-task-err.log"
     Remove-Item $out, $err -ErrorAction SilentlyContinue
-    if (-not $step.Silent) { Add-ConsoleText $console ("`n▶ " + $step.Title + "`n") (New-Color 110 190 220) }
+    if (-not $step.Silent) { Add-ConsoleText $console ("`n► " + $step.Title + "`n") (New-Color 110 190 220) }
     $argLine = '-NoProfile -ExecutionPolicy Bypass -File "{0}" {1}' -f $step.Script, $step.Args
     $process = Start-Process -FilePath "powershell.exe" -ArgumentList $argLine -WorkingDirectory $script:Root -PassThru -WindowStyle Hidden `
         -RedirectStandardOutput $out -RedirectStandardError $err
@@ -641,13 +746,13 @@ function Step-Tick {
     $script:Current = $null
     if ($step.OnResult) { & $step.OnResult $text $code }
     if ($code -ne 0 -and -not $step.IgnoreFailure) {
-        if (-not $step.Silent) { Add-ConsoleText $console "✖ Операция завершилась с ошибкой.`n" $ColRed }
+        if (-not $step.Silent) { Add-ConsoleText $console "× Операция завершилась с ошибкой.`n" $ColRed }
         $failHook = $step.OnFail
         Complete-Steps $false
         if ($failHook) { & $failHook $text }
         return
     }
-    if (-not $step.Silent -and $script:Queue.Count -eq 0) { Add-ConsoleText $console "✔ Готово.`n" $ColAccent }
+    if (-not $step.Silent -and $script:Queue.Count -eq 0) { Add-ConsoleText $console "√ Готово.`n" $ColAccent }
     Start-NextStep
 }
 
@@ -668,28 +773,32 @@ function Update-Status {
     $state = Get-ServerState
 
     if (-not $installed) {
-        $lblState.Text = "○  Не установлен"
+        $lblState.Text = "Не установлен"
         $lblState.ForeColor = $ColYellow
+        $dot.DotColor = $ColYellow; $dot.Pulse = $false
         $lblUptime.Text = "Откройте «Настройки» и нажмите «Установить»"
         $script:SiteUrl = ""
     }
     elseif ($state -and $state.ready) {
-        $lblState.Text = "●  Работает"
+        $lblState.Text = "Работает"
         $lblState.ForeColor = $ColAccent
+        $dot.DotColor = $ColAccent; $dot.Pulse = $false
         $span = (Get-Date).ToUniversalTime() - (ConvertTo-Utc $state.startedAt)
         $up = if ($span.TotalDays -ge 1) { "{0} д {1} ч" -f [int]$span.TotalDays, $span.Hours } elseif ($span.TotalHours -ge 1) { "{0} ч {1} мин" -f [int]$span.TotalHours, $span.Minutes } else { "{0} мин {1} с" -f $span.Minutes, $span.Seconds }
         $lblUptime.Text = "аптайм $up - продолжает работать, даже если закрыть это окно"
         $script:SiteUrl = $state.url
     }
     elseif ($state) {
-        $lblState.Text = "●  Запускается..."
+        $lblState.Text = "Запускается..."
         $lblState.ForeColor = $ColYellow
+        $dot.DotColor = $ColYellow; $dot.Pulse = $true
         $lblUptime.Text = ""
         $script:SiteUrl = $state.url
     }
     else {
-        $lblState.Text = "○  Остановлен"
+        $lblState.Text = "Остановлен"
         $lblState.ForeColor = $ColRed
+        $dot.DotColor = $ColRed; $dot.Pulse = $false
         $lblUptime.Text = ""
         $script:SiteUrl = if ($config["DEPLOY_DOMAIN"]) { "https://" + $config["DEPLOY_DOMAIN"] } elseif ($config["DEPLOY_IP"]) { "https://" + $config["DEPLOY_IP"] } else { "" }
     }
@@ -703,7 +812,7 @@ function Update-Status {
     $script:DiskTick++
     if ($script:DiskTick -ge 15 -or $script:DiskText -eq "-") {
         $script:DiskTick = 0
-        $script:DiskText = "загрузки {0}  ·  логи {1}" -f (Format-Size (Get-FolderSize (Join-Path $script:Root "uploads"))), (Format-Size (Get-FolderSize $script:LogDir))
+        $script:DiskText = "загрузки " + (Format-Size (Get-FolderSize (Join-Path $script:Root "uploads")))
     }
     $script:FieldValues["Диск"].Text = $script:DiskText
 
@@ -737,7 +846,13 @@ function Update-UpdatesView {
         $script:UpdateValues["Статус"].ForeColor = $ColRed
         return
     }
-    if (-not $git.isRepo) { $cardVersion.Visible = $false; $cardConnect.Visible = $true; return }
+    if (-not $git.isRepo -or -not $git.hasCommits) {
+        $cardVersion.Visible = $false
+        $cardConnect.Visible = $true
+        if ($git.remote -and $inUrl.Text -like "*ВАШ_*") { $inUrl.Text = $git.remote }
+        $cLbl.Text = $(if ($git.isRepo) { "Репозиторий подключён не до конца. Проверьте адрес и нажмите «Подключить»." } else { "Папка не подключена к git. Укажите репозиторий, из которого сайт будет обновляться." })
+        return
+    }
 
     $version = "{0}  ·  {1}  ·  {2}" -f $git.head, $git.headDate, $git.headMessage
     $script:UpdateValues["Версия"].Text = $version
@@ -826,6 +941,7 @@ $btnStart.Add_Click({ Add-Steps @((New-ServerStep "Запуск сервера" 
 $btnStop.Add_Click({ Add-Steps @((New-ServerStep "Остановка сервера" "stop")) })
 $btnRestart.Add_Click({ Add-Steps @((New-ServerStep "Перезапуск сервера" "restart")) })
 $btnOpen.Add_Click({ if ($script:SiteUrl) { Start-Process $script:SiteUrl } })
+$btnClearJournal.Add_Click({ $console.Clear() })
 $btnCheck.Add_Click({ Start-GitCheck $true })
 $btnUpdate.Add_Click({ Start-Update })
 $btnBanner.Add_Click({ Start-Update })
@@ -833,7 +949,7 @@ $btnConnect.Add_Click({
     $url = $inUrl.Text.Trim()
     $branch = $inBranch.Text.Trim()
     if (-not $url -or $url -like "*ВАШ_*") { [void][Windows.Forms.MessageBox]::Show("Укажите адрес репозитория.", "Подключение", "OK", "Information"); return }
-    Add-Steps @((New-ServerStep "Подключение репозитория" ("git-connect {0} {1}" -f (ConvertTo-Arg $url), (ConvertTo-Arg $(if ($branch) { $branch } else { "main" }))))) { param($ok) Start-GitCheck }
+    Add-Steps @((New-ServerStep "Подключение репозитория" ("git-connect {0} {1}" -f (ConvertTo-Arg $url), (ConvertTo-Arg $(if ($branch) { $branch } else { "auto" }))))) { param($ok) Start-GitCheck }
     Show-Page "overview"
 })
 
@@ -879,7 +995,7 @@ $btnCache.Add_Click({
 })
 
 $btnScan.Add_Click({
-    $days = [int]$numDays.Value
+    $days = (Get-Days)
     $script:ScanFound = $false
     $lblScan.Text = "Проверяю..."
     $lblScan.ForeColor = $ColMuted
@@ -901,7 +1017,7 @@ $btnScan.Add_Click({
 $btnPurge.Add_Click({
     $answer = [Windows.Forms.MessageBox]::Show("Удалить найденные файлы безвозвратно?", "Очистка", "YesNo", "Warning")
     if ($answer -ne "Yes") { return }
-    $days = [int]$numDays.Value
+    $days = (Get-Days)
     $script:ScanFound = $false
     Add-Steps @((New-ServerStep "Удаление неиспользуемых загрузок" ("uploads-delete {0}" -f $days) @{
         Silent = $true
@@ -915,7 +1031,7 @@ $pump.Interval = 400
 $pump.Add_Tick({
     Step-Tick
     if ($script:CurrentPage -eq "logs") {
-        $path = Join-Path $script:LogDir $logSources[[string]$logCombo.SelectedItem]
+        $path = Join-Path $script:LogDir $logSources[$script:LogKey]
         $chunk = Read-Appended $path ([ref]$script:LogPos)
         if ($chunk) { Add-ColoredLines $logView $chunk }
     }

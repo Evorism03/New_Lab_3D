@@ -42,6 +42,24 @@ if (-not $NoElevate -and -not (Test-Admin)) {
     return
 }
 
+# Случайный клик мышью включает в консоли режим выделения («Выбрать» в заголовке), и вывод замирает.
+# В интерактивном меню отключаем QuickEdit, чтобы окно нельзя было "заморозить" мышью.
+if (-not [Console]::IsInputRedirected -and -not [Console]::IsOutputRedirected) {
+    try {
+        Add-Type -Namespace Native -Name Con -MemberDefinition @'
+[DllImport("kernel32.dll")] public static extern IntPtr GetStdHandle(int handle);
+[DllImport("kernel32.dll")] public static extern bool GetConsoleMode(IntPtr handle, out uint mode);
+[DllImport("kernel32.dll")] public static extern bool SetConsoleMode(IntPtr handle, uint mode);
+'@
+        $consoleHandle = [Native.Con]::GetStdHandle(-10)
+        $consoleMode = [uint32]0
+        if ([Native.Con]::GetConsoleMode($consoleHandle, [ref]$consoleMode)) {
+            [void][Native.Con]::SetConsoleMode($consoleHandle, [uint32](($consoleMode -band (-bnot 0x40)) -bor 0x80))
+        }
+    }
+    catch { }
+}
+
 $script:StartScript = Join-Path $PSScriptRoot "start.ps1"
 $script:AssumeYes = [bool]$Yes
 $script:HadError = $false
@@ -223,20 +241,40 @@ function Invoke-GitCheck { Get-GitInfo | ConvertTo-Json -Compress -Depth 4 }
 
 function Invoke-GitConnect([string]$Url, [string]$Branch) {
     if (-not $Url) { Write-Bad "Укажите адрес репозитория."; return }
-    if (-not $Branch) { $Branch = "main" }
+    if ($Branch -eq "auto") { $Branch = "" }
     if (-not (Find-Executable "git")) { Write-Bad "git не установлен: winget install Git.Git"; return }
     Write-Step "Подключение репозитория"
     if (-not (Test-Path (Join-Path $script:Root ".git"))) { Invoke-Git init | ForEach-Object { Write-Dim $_ } }
-    Invoke-Git remote remove origin | Out-Null
-    Invoke-Git remote add origin $Url | Out-Null
+    [void](Invoke-Git remote remove origin)
+    [void](Invoke-Git remote add origin $Url)
     $fetch = Invoke-Git fetch origin
     if ($script:GitExit -ne 0) { Write-Bad "Не удалось получить репозиторий: $(($fetch -join ' ').Trim())"; return }
-    # Keeps the files as they are - only points the branch at the remote history.
-    Invoke-Git reset --mixed "origin/$Branch" | Out-Null
-    if ($script:GitExit -ne 0) { Write-Bad "В репозитории нет ветки '$Branch'."; return }
-    Invoke-Git branch -M $Branch | Out-Null
-    Invoke-Git branch --set-upstream-to="origin/$Branch" $Branch | Out-Null
-    Write-Good "Репозиторий подключён: $Url (ветка $Branch)."
+
+    # Ветку берём ту, что указана; иначе ветку по умолчанию на сервере репозитория (main или master).
+    [void](Invoke-Git remote set-head origin -a)
+    $remoteHead = Invoke-Git symbolic-ref --short refs/remotes/origin/HEAD
+    $candidates = @()
+    if ($Branch) { $candidates += $Branch }
+    if ($script:GitExit -eq 0 -and $remoteHead) { $candidates += ("$($remoteHead | Select-Object -First 1)" -replace "^origin/", "") }
+    $candidates += @("main", "master")
+    $chosen = $null
+    foreach ($candidate in ($candidates | Select-Object -Unique)) {
+        [void](Invoke-Git rev-parse --verify --quiet "refs/remotes/origin/$candidate")
+        if ($script:GitExit -eq 0) { $chosen = $candidate; break }
+    }
+    if (-not $chosen) {
+        $branches = (Invoke-Git branch -r | ForEach-Object { $_.Trim() }) -join ", "
+        Write-Bad "В репозитории не найдена подходящая ветка. Есть: $branches"
+        return
+    }
+    if ($Branch -and $chosen -ne $Branch) { Write-Warn "Ветки '$Branch' нет в репозитории - использую '$chosen'." }
+
+    # Файлы остаются как есть - ветка только «наводится» на историю репозитория.
+    [void](Invoke-Git reset --mixed "origin/$chosen")
+    if ($script:GitExit -ne 0) { Write-Bad "Не удалось привязать ветку '$chosen'."; return }
+    [void](Invoke-Git branch -M $chosen)
+    [void](Invoke-Git branch --set-upstream-to="origin/$chosen" $chosen)
+    Write-Good "Репозиторий подключён: $Url (ветка $chosen)."
 }
 
 function Invoke-UploadsScan([string]$Days, [string]$Mode) {
@@ -379,6 +417,7 @@ function Invoke-Uninstall {
 
     $dropModules = if ($script:AssumeYes) { [bool]$RemoveModules } else { Read-Confirm "Удалить также node_modules и сборку .next? (вернутся при установке)" }
     if ($dropModules) {
+        Write-Info "Удаляю node_modules и .next - это может занять до минуты, окно не завис..."
         Remove-Folder (Join-Path $script:Root "node_modules")
         Remove-Folder (Join-Path $script:Root ".next")
         Write-Ok "node_modules и .next удалены."

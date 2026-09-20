@@ -259,17 +259,21 @@ function Invoke-Git {
 
 function Get-GitInfo([switch]$NoFetch) {
     $info = [ordered]@{
-        gitInstalled = [bool](Find-Executable "git"); isRepo = $false; branch = ""; upstream = ""; remote = ""
+        gitInstalled = [bool](Find-Executable "git"); isRepo = $false; hasCommits = $false; branch = ""; upstream = ""; remote = ""
         head = ""; headDate = ""; headMessage = ""; behind = 0; ahead = 0; dirty = 0; commits = @(); error = ""
     }
     if (-not $info.gitInstalled) { return $info }
     if (-not (Test-Path (Join-Path $script:Root ".git"))) { return $info }
     $info.isRepo = $true
 
-    $branch = Invoke-Git rev-parse --abbrev-ref HEAD
-    if ($script:GitExit -eq 0) { $info.branch = "$($branch | Select-Object -First 1)" }
+    [void](Invoke-Git rev-parse --verify --quiet HEAD)
+    $info.hasCommits = ($script:GitExit -eq 0)
     $remote = Invoke-Git remote get-url origin
     if ($script:GitExit -eq 0) { $info.remote = "$($remote | Select-Object -First 1)" }
+    if (-not $info.hasCommits) { return $info }
+
+    $branch = Invoke-Git rev-parse --abbrev-ref HEAD
+    if ($script:GitExit -eq 0) { $info.branch = "$($branch | Select-Object -First 1)" }
     $log = @(Invoke-Git log -1 "--format=%h|%cd|%s" "--date=format:%d.%m.%Y %H:%M")
     if ($script:GitExit -eq 0 -and $log.Count -gt 0) {
         $parts = "$($log[0])".Split("|", 3)

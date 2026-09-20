@@ -56,3 +56,4 @@ next-env.d.ts
 /Lab3D.exe
 /deploy/app.ico
 /deploy/app-settings.json
+/deploy/controls-*.dll
