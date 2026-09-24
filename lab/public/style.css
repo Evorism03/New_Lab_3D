@@ -573,4 +573,9 @@ table.orders-table td.nowrap, table.orders-table th.nowrap, table.orders-table t
   /* Адрес и список товаров — длинные, им две клетки. */
   table.orders-table tbody td.wide, .items-table tbody td.wide { grid-column: span 2; }
   .items-table tbody td select, .items-table tbody td input:not([type="hidden"]):not([type="checkbox"]) { width: 100%; }
+  /* Ячейки без подписи (кнопки PDF и т.п.) — вровень с полями, а не выше них. */
+  table.orders-table tbody td:not([data-label]), .items-table tbody td:not([data-label]) { align-self: end; }
+  /* «✕ удалить товар» — в правый верхний угол карточки, а не отдельной строкой. */
+  .items-table tbody tr { position: relative; padding-right: 44px; }
+  .items-table tbody td:has(> .remove-item) { position: absolute; top: 12px; right: 4px; }
 }
