@@ -110,6 +110,37 @@ async function rawRequest(pathname, body, token, extraHeaders) {
   return res;
 }
 
+// Ozon может вернуть ошибку в разных формах: { message }, { error: "..." },
+// { error: { code, message, details } }, { code, message, details: [...] }. Собираем читаемый
+// текст, чтобы вместо «[object Object]» пользователь видел реальную причину.
+function stringifyPart(value) {
+  if (value == null || value === '') return '';
+  if (typeof value === 'string') return value;
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+  if (Array.isArray(value)) return value.map(stringifyPart).filter(Boolean).join('; ');
+  if (typeof value === 'object') {
+    const main = stringifyPart(value.message) || stringifyPart(value.error_description)
+      || stringifyPart(value.error) || stringifyPart(value.description);
+    const code = typeof value.code === 'string' || typeof value.code === 'number' ? String(value.code) : '';
+    const details = stringifyPart(value.details) || stringifyPart(value.errors);
+    const field = stringifyPart(value.field) || stringifyPart(value.path);
+    const head = code && main ? `${code}: ${main}` : (main || code);
+    const parts = [field && head ? `${field}: ${head}` : head, details].filter(Boolean);
+    if (parts.length) return parts.join(' — ');
+    try {
+      return JSON.stringify(value);
+    } catch {
+      return '';
+    }
+  }
+  return String(value);
+}
+
+function errorMessage(data, status) {
+  const text = stringifyPart(data.raw != null ? data.raw.slice(0, 500) : data);
+  return text && text !== '{}' ? `${status} ${text}` : `HTTP ${status}`;
+}
+
 export async function ozonRequest(pathname, body = {}, { idempotencyKey } = {}) {
   const extraHeaders = idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : undefined;
   let token = await getToken();
@@ -128,8 +159,7 @@ export async function ozonRequest(pathname, body = {}, { idempotencyKey } = {}) 
     }
   }
   if (!res.ok) {
-    const message = data.message || data.error || data.code || data.raw || `HTTP ${res.status}`;
-    const err = new Error(`Ozon API ${pathname}: ${message}`);
+    const err = new Error(`Ozon API ${pathname}: ${errorMessage(data, res.status)}`);
     err.status = res.status;
     err.data = data;
     throw err;
