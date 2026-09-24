@@ -101,6 +101,10 @@
 
   <div class="card" style="margin-top:16px">
     <h2>🚚 Ozon Доставка</h2>
+    <div class="field" style="max-width:360px">
+      <label>Шаблон коробки <span class="muted" style="font-weight:normal">— шаблоны настраиваются на странице «Ozon Доставка»</span></label>
+      <select id="ozon-box-template"><option value="">— вручную —</option></select>
+    </div>
     <div class="grid-3">
       <div class="field">
         <label>Вес, г</label>
@@ -396,6 +400,38 @@ dropzone.addEventListener('drop', (e) => {
   if (files.length) uploadReceipts(files);
 });
 
+let boxTemplates = [];
+const boxSelect = document.getElementById('ozon-box-template');
+const boxFields = { weight_g: 'ozon-weight', length_mm: 'ozon-length', width_mm: 'ozon-width', height_mm: 'ozon-height' };
+
+// Подсвечиваем шаблон, если габариты заказа с ним совпадают; иначе — «вручную».
+function syncBoxSelect() {
+  const idx = boxTemplates.findIndex((t) => Object.entries(boxFields)
+    .every(([k, elId]) => String(t[k]) === document.getElementById(elId).value.trim()));
+  boxSelect.value = idx >= 0 ? String(idx) : '';
+}
+
+async function loadBoxTemplates() {
+  ({ templates: boxTemplates } = await api('/api/ozon/box-templates'));
+  boxTemplates.forEach((t, i) => boxSelect.appendChild(el(
+    `<option value="${i}">${escapeText(t.name)} — ${t.weight_g} г, ${t.length_mm}×${t.width_mm}×${t.height_mm} мм</option>`
+  )));
+  syncBoxSelect();
+}
+
+boxSelect.addEventListener('change', async () => {
+  const t = boxTemplates[Number(boxSelect.value)];
+  if (!boxSelect.value || !t) return;
+  for (const [k, elId] of Object.entries(boxFields)) document.getElementById(elId).value = t[k];
+  try {
+    await saveOzonPoint(document.getElementById('ozon-delivery-point').value.trim());
+    toast(`Габариты из шаблона «${t.name}» сохранены`, 'success');
+  } catch (err) {
+    toast(err.message, 'error');
+  }
+});
+Object.values(boxFields).forEach((elId) => document.getElementById(elId).addEventListener('input', syncBoxSelect));
+
 const addressFields = LabAddress.bindAddressFields(document.querySelector('[name="pvz_address"]'), document.getElementById('address-parts'));
 let ozonDraftCreated = false;
 // Адрес ПВЗ изменился — выбранный ранее ПВЗ Ozon больше не подходит (пока черновик не создан).
@@ -426,7 +462,12 @@ function ozonAmount(value) {
   return Number.isFinite(n) ? n : null;
 }
 
-function checkoutLine(checkout) {
+function checkoutLine(checkout, price) {
+  if (price) {
+    const ins = price.insurance ? ` + страховка ${money(price.insurance)} (${price.percent}%)` : '';
+    const days = (checkout?.posting || checkout?.postings?.[0] || checkout || {}).estimated_delivery_days;
+    return `<div class="muted">Расчёт: доставка ${money(price.delivery)}${ins} = <strong>${money(price.total)}</strong>${days != null ? `, ${days} дн.` : ''}</div>`;
+  }
   if (!checkout) return '';
   const posting = checkout.posting || checkout.postings?.[0] || checkout;
   const cost = ozonAmount(posting.estimated_delivery_cost ?? posting.delivery_cost ?? posting.price ?? checkout.estimated_delivery_cost);
@@ -500,7 +541,7 @@ document.getElementById('ozon-find-point').addEventListener('click', async () =>
 function renderOzonStatus(shipment) {
   const wrap = document.getElementById('ozon-status');
   if (!shipment || !shipment.order_number) {
-    wrap.innerHTML = `<span class="muted">Черновик в Ozon ещё не создан.</span>${checkoutLine(shipment?.checkout)}`;
+    wrap.innerHTML = `<span class="muted">Черновик в Ozon ещё не создан.</span>${checkoutLine(shipment?.checkout, shipment?.price)}`;
     document.getElementById('ozon-approve').disabled = true;
     document.getElementById('ozon-label-link').style.pointerEvents = 'none';
     document.getElementById('ozon-label-link').style.opacity = '0.5';
@@ -511,7 +552,7 @@ function renderOzonStatus(shipment) {
   wrap.innerHTML = `
     <div><strong>Заказ Ozon:</strong> ${shipment.order_number} <span class="pill">${ozonStatusLabel(liveStatus)}</span></div>
     <div class="muted">Отправление: ${shipment.posting_number || '—'}</div>
-    ${checkoutLine(shipment.checkout)}
+    ${checkoutLine(shipment.checkout, shipment.price)}
     ${shipment.estimated_delivery_days != null ? `<div class="muted">Срок доставки: ${shipment.estimated_delivery_days} дн.</div>` : ''}
     ${shipment.approved_at ? `<div class="muted">Подтверждено: ${new Date(shipment.approved_at).toLocaleString('ru-RU')}</div>` : ''}
   `;
@@ -561,6 +602,8 @@ document.getElementById('ozon-checkout').addEventListener('click', async () => {
   try {
     const order = await api(`/api/orders/${id}/ozon/checkout`, { method: 'POST' });
     document.getElementById('ozon-delivery-point').value = order.ozon_delivery_point_id || '';
+    document.querySelector('[name="delivery_price"]').value = order.delivery_price || 0;
+    updatePreview();
     renderOzonStatus(order.ozon_shipment);
     toast('Расчёт получен', 'success');
   } catch (err) {
@@ -645,6 +688,7 @@ async function load() {
   document.getElementById('ozon-height').value = order.height_mm || '';
   document.getElementById('ozon-delivery-point').value = order.ozon_delivery_point_id || '';
   renderOzonStatus(order.ozon_shipment);
+  loadBoxTemplates().catch((err) => toast(err.message, 'error'));
 
   sel.addEventListener('change', async () => {
     await api(`/api/orders/${id}`, { method: 'PATCH', body: JSON.stringify({ status: sel.value }) });

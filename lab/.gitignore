@@ -9,3 +9,4 @@ data/uploads/
 /deploy/logs/
 /deploy/state.json
 /deploy/stop.flag
+data/ozon-delivery-points.json

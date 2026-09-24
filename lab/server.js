@@ -256,6 +256,54 @@ function ozonDeclaredValue(order) {
   return { amount: order.goods_total.toFixed(2), currency_code: 'RUB' };
 }
 
+// Шаблоны коробок (вес с товаром и габариты), чтобы не вводить их вручную в каждом заказе.
+function readBoxTemplates() {
+  try {
+    const list = JSON.parse(getSetting('ozon_box_templates') || '[]');
+    return Array.isArray(list) ? list : [];
+  } catch {
+    return [];
+  }
+}
+
+function cleanBoxTemplates(list) {
+  if (!Array.isArray(list)) return [];
+  return list
+    .map((t) => ({
+      name: String(t?.name || '').trim(),
+      weight_g: Math.round(Number(t?.weight_g) || 0),
+      length_mm: Math.round(Number(t?.length_mm) || 0),
+      width_mm: Math.round(Number(t?.width_mm) || 0),
+      height_mm: Math.round(Number(t?.height_mm) || 0),
+    }))
+    .filter((t) => t.name);
+}
+
+// Ozon отдаёт сумму объектом { amount: "123.00", currency_code: "RUB" } (иногда — числом/строкой),
+// а сам расчёт может лежать в posting, в postings[0] или на верхнем уровне.
+function ozonAmount(value) {
+  if (value == null) return null;
+  const n = Number(typeof value === 'object' ? value.amount ?? value.value : value);
+  return Number.isFinite(n) ? n : null;
+}
+
+function ozonCheckoutCost(checkout) {
+  const posting = checkout?.posting || checkout?.postings?.[0] || checkout || {};
+  return ozonAmount(posting.estimated_delivery_cost ?? posting.delivery_cost ?? posting.price ?? checkout?.estimated_delivery_cost);
+}
+
+// Сумма доставки для покупателя: доставка Ozon + страховка (% от стоимости товаров).
+function ozonDeliveryPriceFor(order, deliveryCost) {
+  const percent = Number(String(getSetting('ozon_insurance_percent') || '0').replace(',', '.')) || 0;
+  const insurance = (Number(order.goods_total) || 0) * percent / 100;
+  return {
+    delivery: deliveryCost,
+    insurance: Math.round(insurance * 100) / 100,
+    percent,
+    total: Math.round((deliveryCost + insurance) * 100) / 100,
+  };
+}
+
 function ozonDimensions(order) {
   // Ozon принимает только целые числа (Int32) — дробные значения округляем.
   const dims = {
@@ -553,6 +601,7 @@ const server = http.createServer(async (req, res) => {
         client_id: getSetting('ozon_client_id'),
         has_secret: !!getSetting('ozon_client_secret'),
         shipment_method_id: getSetting('ozon_shipment_method_id'),
+        insurance_percent: getSetting('ozon_insurance_percent'),
       });
     }
 
@@ -561,7 +610,19 @@ const server = http.createServer(async (req, res) => {
       if (data.client_id != null) setSetting('ozon_client_id', String(data.client_id).trim());
       if (data.client_secret) setSetting('ozon_client_secret', String(data.client_secret).trim());
       if (data.shipment_method_id != null) setSetting('ozon_shipment_method_id', String(data.shipment_method_id).trim());
+      if (data.insurance_percent != null) setSetting('ozon_insurance_percent', String(data.insurance_percent).replace(',', '.').trim());
       return sendJson(res, 200, { ok: true });
+    }
+
+    if (pathname === '/api/ozon/box-templates' && req.method === 'GET') {
+      return sendJson(res, 200, { templates: readBoxTemplates() });
+    }
+
+    if (pathname === '/api/ozon/box-templates' && req.method === 'PUT') {
+      const data = await readBody(req);
+      const templates = cleanBoxTemplates(data.templates);
+      setSetting('ozon_box_templates', JSON.stringify(templates));
+      return sendJson(res, 200, { templates });
     }
 
     if (pathname === '/api/ozon/shipment-methods' && req.method === 'GET') {
@@ -632,8 +693,14 @@ const server = http.createServer(async (req, res) => {
           delivery: { delivery_point: { delivery_point_id: await ozonDeliveryPointId(order) } },
         };
         const result = await ozon.orderCheckout(payload);
+        const checkout = result.results?.[0] || result;
+        const cost = ozonCheckoutCost(checkout);
+        const price = cost != null ? ozonDeliveryPriceFor(order, cost) : null;
+        // Расчёт сразу проставляем в «Сумму доставки» заказа (доставка Ozon + страховка).
+        if (price) updateOrder(orderId, { delivery_price: price.total });
         const updated = patchOrderOzonShipment(orderId, {
-          checkout: result.results?.[0] || result,
+          checkout,
+          price,
           checked_out_at: new Date().toISOString(),
         });
         return sendJson(res, 200, updated);

@@ -34,6 +34,40 @@
   </div>
 
   <div class="card" style="margin-top:16px">
+    <h2>Шаблоны коробок</h2>
+    <p class="muted">Вес посылки с товаром и габариты коробки. В заказе шаблон выбирается из списка — поля заполнятся сами.</p>
+    <table class="items-table">
+      <thead>
+        <tr>
+          <th>Название</th>
+          <th style="width:110px">Вес, г</th>
+          <th style="width:110px">Длина, мм</th>
+          <th style="width:110px">Ширина, мм</th>
+          <th style="width:110px">Высота, мм</th>
+          <th style="width:50px"></th>
+        </tr>
+      </thead>
+      <tbody id="box-body"></tbody>
+    </table>
+    <div class="toolbar" style="margin-top:10px">
+      <button type="button" class="secondary small" id="box-add">+ Добавить шаблон</button>
+      <button type="button" id="box-save">Сохранить шаблоны</button>
+    </div>
+  </div>
+
+  <div class="card" style="margin-top:16px">
+    <h2>Сумма доставки</h2>
+    <p class="muted">При «Рассчитать доставку» в заказ записывается стоимость доставки Ozon плюс страховка — процент от стоимости товаров.</p>
+    <div class="toolbar">
+      <div class="field" style="margin:0">
+        <label>Страховка, % от стоимости товаров</label>
+        <input id="insurance-percent" type="number" min="0" step="0.01" style="max-width:160px">
+      </div>
+      <button type="button" id="insurance-save" style="align-self:end">Сохранить</button>
+    </div>
+  </div>
+
+  <div class="card" style="margin-top:16px">
     <h2>Подключение к Ozon</h2>
     <div id="creds-status" class="muted"></div>
     <div id="creds-form" hidden>
@@ -165,7 +199,67 @@ document.getElementById('save-creds').addEventListener('click', async () => {
   }
 });
 
-loadSettings().then(loadMethods).catch((err) => toast(err.message, 'error'));
+const boxBody = document.getElementById('box-body');
+
+function addBoxRow(t = {}) {
+  const row = el(`
+    <tr>
+      <td><input data-k="name" placeholder="Например: Лоадер ×1"></td>
+      <td><input data-k="weight_g" type="number" min="1" step="1"></td>
+      <td><input data-k="length_mm" type="number" min="1" step="1"></td>
+      <td><input data-k="width_mm" type="number" min="1" step="1"></td>
+      <td><input data-k="height_mm" type="number" min="1" step="1"></td>
+      <td><button type="button" class="secondary small" title="Удалить">✕</button></td>
+    </tr>
+  `);
+  for (const input of row.querySelectorAll('input')) input.value = t[input.dataset.k] ?? '';
+  row.querySelector('button').addEventListener('click', () => row.remove());
+  boxBody.appendChild(row);
+}
+
+async function loadBoxes() {
+  const { templates } = await api('/api/ozon/box-templates');
+  boxBody.innerHTML = '';
+  templates.forEach(addBoxRow);
+  if (!templates.length) addBoxRow();
+}
+
+document.getElementById('box-add').addEventListener('click', () => addBoxRow());
+
+document.getElementById('box-save').addEventListener('click', async () => {
+  const templates = [...boxBody.querySelectorAll('tr')].map((row) => {
+    const t = {};
+    for (const input of row.querySelectorAll('input')) t[input.dataset.k] = input.value.trim();
+    return t;
+  }).filter((t) => t.name);
+  const bad = templates.find((t) => ['weight_g', 'length_mm', 'width_mm', 'height_mm'].some((k) => !(Number(t[k]) >= 1)));
+  if (bad) { toast(`Заполните вес и габариты в шаблоне «${bad.name}»`, 'error'); return; }
+  try {
+    await api('/api/ozon/box-templates', { method: 'PUT', body: JSON.stringify({ templates }) });
+    toast('Шаблоны сохранены', 'success');
+    loadBoxes();
+  } catch (err) {
+    toast(err.message, 'error');
+  }
+});
+
+document.getElementById('insurance-save').addEventListener('click', async () => {
+  try {
+    await api('/api/ozon/settings', {
+      method: 'POST',
+      body: JSON.stringify({ insurance_percent: document.getElementById('insurance-percent').value.trim() || '0' }),
+    });
+    toast('Сохранено', 'success');
+  } catch (err) {
+    toast(err.message, 'error');
+  }
+});
+
+loadSettings()
+  .then(() => { document.getElementById('insurance-percent').value = settings.insurance_percent || ''; })
+  .then(loadMethods)
+  .catch((err) => toast(err.message, 'error'));
+loadBoxes().catch((err) => toast(err.message, 'error'));
 </script>
 </body>
 </html>

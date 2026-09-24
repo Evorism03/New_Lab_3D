@@ -6,7 +6,11 @@
 // редиректом 302/307 с Set-Cookie — нужно повторить тот же запрос по новому адресу с этой
 // cookie и переиспользовать её дальше. Значение cookie может меняться без предупреждения,
 // поэтому храним его в памяти процесса и обновляем при каждом редиректе.
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { getSetting } from '../db.js';
+import '../public/address.js'; // globalThis.LabAddress — разбор и сравнение адресов
 
 const AUTH_URL = 'https://xapi.ozon.ru/oauth/token';
 const API_BASE = 'https://api-delivery.ozon.ru';
@@ -294,8 +298,8 @@ async function loadAllPointIdsAndData() {
   const byId = new Map();
   let cursor;
   let offset = 0;
-  for (let page = 0; page < 500; page++) {
-    const pagination = { limit: 1000 };
+  for (let page = 0; page < 2000; page++) {
+    const pagination = { limit: 100 }; // Ozon: размер страницы от 1 до 100
     if (cursor) pagination.cursor = cursor;
     else if (offset) pagination.offset = offset;
     const res = await ozonRequest('/v1/delivery-point/list', { pagination });
@@ -333,18 +337,48 @@ async function fillAddresses(points) {
   return points.map((p) => infoById.get(String(pointId(p))) || p);
 }
 
+// Список ПВЗ большой (страницами по 100), поэтому кроме памяти храним его на диске —
+// после перезапуска сервера не нужно выкачивать заново.
+const POINTS_FILE = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'data', 'ozon-delivery-points.json');
+
+function prepare(points, loadedAt) {
+  const prepared = points.map((p) => {
+    const address = pointAddressText(p);
+    return { raw: p, id: String(pointId(p)), address, words: globalThis.LabAddress.normalizeWords(address) };
+  });
+  return { points: prepared, loadedAt, loading: null };
+}
+
+function readPointsFile() {
+  try {
+    const saved = JSON.parse(fs.readFileSync(POINTS_FILE, 'utf8'));
+    if (Array.isArray(saved.points) && Date.now() - saved.loadedAt < POINTS_TTL_MS) return saved;
+  } catch {
+    // файла нет или он повреждён — загрузим заново
+  }
+  return null;
+}
+
 async function getAllDeliveryPoints() {
   if (pointsCache.points && Date.now() - pointsCache.loadedAt < POINTS_TTL_MS) return pointsCache.points;
+  if (!pointsCache.points) {
+    const saved = readPointsFile();
+    if (saved) {
+      pointsCache = prepare(saved.points, saved.loadedAt);
+      return pointsCache.points;
+    }
+  }
   if (!pointsCache.loading) {
     pointsCache.loading = (async () => {
       const points = await fillAddresses(await loadAllPointIdsAndData());
-      const prepared = points.map((p) => ({
-        raw: p,
-        id: String(pointId(p)),
-        address: pointAddressText(p),
-      })).map((p) => ({ ...p, words: globalThis.LabAddress.normalizeWords(p.address) }));
-      pointsCache = { points: prepared, loadedAt: Date.now(), loading: null };
-      return prepared;
+      const loadedAt = Date.now();
+      try {
+        fs.writeFileSync(POINTS_FILE, JSON.stringify({ loadedAt, points }));
+      } catch {
+        // не удалось сохранить — останется только в памяти
+      }
+      pointsCache = prepare(points, loadedAt);
+      return pointsCache.points;
     })().catch((err) => {
       pointsCache.loading = null;
       throw err;
@@ -375,7 +409,6 @@ function scorePoint(point, query) {
 }
 
 export async function findDeliveryPointsByAddress(addressText, limit = 5) {
-  await import('../public/address.js');
   const { parseAddress, normalizeWords } = globalThis.LabAddress;
   const parts = parseAddress(addressText);
   const cityWords = normalizeWords(parts.city);
