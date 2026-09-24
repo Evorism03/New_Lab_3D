@@ -183,6 +183,11 @@ function pointResultRow(point, idField, kind) {
 
 document.getElementById('dropoff-search-btn').addEventListener('click', async () => {
   const wrap = document.getElementById('dropoff-results');
+  const address = document.getElementById('dropoff-search').value.trim();
+  if (!address) {
+    wrap.innerHTML = '<div style="color:var(--danger)">Введите адрес или город для поиска</div>';
+    return;
+  }
   wrap.innerHTML = '<div class="muted">Поиск…</div>';
   try {
     const data = await api('/api/ozon/dropoff-points/search', {
@@ -191,7 +196,7 @@ document.getElementById('dropoff-search-btn').addEventListener('click', async ()
         filters: {
           types: ['pvz'],
           is_bulky: document.getElementById('dropoff-bulky').checked,
-          address_search: document.getElementById('dropoff-search').value.trim(),
+          address_search: address,
           viewport: RUSSIA_VIEWPORT,
         },
         pagination: { limit: 20 },
@@ -208,13 +213,18 @@ document.getElementById('dropoff-search-btn').addEventListener('click', async ()
 
 document.getElementById('return-search-btn').addEventListener('click', async () => {
   const wrap = document.getElementById('return-results');
+  const address = document.getElementById('return-search').value.trim();
+  if (!address) {
+    wrap.innerHTML = '<div style="color:var(--danger)">Введите адрес или город для поиска</div>';
+    return;
+  }
   wrap.innerHTML = '<div class="muted">Поиск…</div>';
   try {
     const data = await api('/api/ozon/return-points/search', {
       method: 'POST',
       body: JSON.stringify({
         filters: {
-          address_search: document.getElementById('return-search').value.trim(),
+          address_search: address,
           viewport: RUSSIA_VIEWPORT,
         },
         pagination: { limit: 20 },
