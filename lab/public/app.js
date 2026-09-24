@@ -107,9 +107,11 @@ function initSidebar() {
   const toggle = document.getElementById('sidebar-toggle');
   if (!sidebar || !toggle) return;
   const KEY = 'sidebar-collapsed';
-  let collapsed = false;
+  // Пока пользователь сам не переключал: на узких/вертикальных мониторах — свёрнута.
+  let collapsed = window.innerWidth < 1280;
   try {
-    collapsed = localStorage.getItem(KEY) === '1';
+    const saved = localStorage.getItem(KEY);
+    if (saved === '1' || saved === '0') collapsed = saved === '1';
   } catch {
     // localStorage может быть недоступен — не критично, просто не запомним состояние
   }

@@ -89,13 +89,13 @@ function render() {
   for (const r of rows) {
     const row = el(`
       <tr>
-        <td><a href="/order.html?id=${r.order_id}">#${r.order_id}</a><br><span class="muted">${r.full_name || ''}</span></td>
+        <td style="min-width:150px"><a href="/order.html?id=${r.order_id}">#${r.order_id}</a><br><span class="muted">${r.full_name || ''}</span></td>
         <td>${r.product_name || ''}</td>
         <td>${modelLabel(r.model_id)}</td>
         <td>${r.quantity}</td>
         <td>${colorDot(r.color, catalog.colors)}${colorLabel(r.color)}</td>
         <td>${connectorDot(r.connector, catalog.connectors)}${connectorLabel(r.connector)}</td>
-        <td><code>${r.serial_number || '—'}</code></td>
+        <td class="nowrap"><code>${r.serial_number || '—'}</code></td>
         <td>${statusPill(r.status, statuses)}</td>
         <td><input type="date" value="${r.assembled_at || ''}" title="Пусто = подставится сегодняшняя дата при скачивании этикетки"></td>
         <td>${

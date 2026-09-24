@@ -386,9 +386,11 @@ table.orders-table tr:hover { background: var(--panel-2); }
 
 .board {
   display: grid;
-  grid-template-columns: repeat(5, minmax(220px, 1fr));
+  /* Колонки делят ширину поровну; если не помещаются (узкий/вертикальный монитор) —
+     переносятся на следующий ряд, а не уезжают за край экрана. */
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
   gap: 12px;
-  overflow-x: auto;
+  align-items: start;
 }
 
 .board-col {
@@ -529,4 +531,27 @@ table.orders-table tr:hover { background: var(--panel-2); }
 button:disabled {
   opacity: 0.45;
   cursor: not-allowed;
+}
+
+/* Узкие и вертикальные мониторы: таблицы не сжимаются в столбик, а прокручиваются по горизонтали. */
+.card:has(> table),
+.table-scroll {
+  overflow-x: auto;
+}
+table.orders-table { min-width: 860px; }
+.items-table { min-width: 900px; }
+/* Выпадающие списки в таблице товаров не сжимаются до нечитаемых «Авт…», «Ол…». */
+.items-table select[name="product_name"] { min-width: 170px; }
+.items-table select[name="color"], .items-table select[name="connector"] { min-width: 120px; }
+.items-table select[name="model_id"] { min-width: 70px; }
+.items-table input[name="quantity"] { min-width: 56px; }
+.items-table input[name="price"] { min-width: 90px; }
+.items-table input[name="serial_number"] { min-width: 140px; }
+.items-table input[type="date"] { min-width: 130px; }
+table.orders-table td.nowrap, table.orders-table th.nowrap, table.orders-table td.right { white-space: nowrap; }
+
+@media (max-width: 1280px) {
+  main { padding: 14px; }
+  table.orders-table th, table.orders-table td { padding: 8px 6px; font-size: 13px; }
+  .items-table th, .items-table td { padding: 4px; font-size: 12px; }
 }
