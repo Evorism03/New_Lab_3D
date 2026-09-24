@@ -70,7 +70,12 @@ $script:LabRoot = Join-Path $script:Root "lab"
 $script:LabServerScript = Join-Path $script:LabRoot "deploy\server.ps1"
 function Test-LabPresent { Test-Path $script:LabServerScript }
 function Invoke-Lab([string]$Cmd) {
-    if (Test-LabPresent) { & $script:LabServerScript $Cmd -Yes:$script:AssumeYes -NoElevate }
+    if (-not (Test-LabPresent)) { return }
+    # Скрипт «Заказов» делает Set-Location в свою папку, а текущая папка в PowerShell общая:
+    # без Push/Pop-Location последующие команды (npx prisma generate и т.п.) шли бы из lab\.
+    Push-Location $script:Root
+    try { & $script:LabServerScript $Cmd -Yes:$script:AssumeYes -NoElevate }
+    finally { Pop-Location }
 }
 
 function Format-Uptime($StartedAt) {
