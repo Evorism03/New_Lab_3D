@@ -475,10 +475,10 @@ export function setOrderOzonParams(id, { weight_g, length_mm, width_mm, height_m
   db.prepare(
     `UPDATE orders SET weight_g = ?, length_mm = ?, width_mm = ?, height_mm = ?, ozon_delivery_point_id = ? WHERE id = ?`
   ).run(
-    weight_g != null && weight_g !== '' ? Number(weight_g) : null,
-    length_mm != null && length_mm !== '' ? Number(length_mm) : null,
-    width_mm != null && width_mm !== '' ? Number(width_mm) : null,
-    height_mm != null && height_mm !== '' ? Number(height_mm) : null,
+    weight_g != null && weight_g !== '' ? Math.round(Number(weight_g)) : null,
+    length_mm != null && length_mm !== '' ? Math.round(Number(length_mm)) : null,
+    width_mm != null && width_mm !== '' ? Math.round(Number(width_mm)) : null,
+    height_mm != null && height_mm !== '' ? Math.round(Number(height_mm)) : null,
     ozon_delivery_point_id || '',
     id
   );

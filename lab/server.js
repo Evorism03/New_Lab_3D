@@ -256,16 +256,17 @@ function ozonDeclaredValue(order) {
 }
 
 function ozonDimensions(order) {
-  const { weight_g, length_mm, width_mm, height_mm } = order;
-  if (!weight_g || !length_mm || !width_mm || !height_mm) {
-    throw new Error('Заполните вес и габариты посылки (вес, длина, ширина, высота) в блоке «Ozon Доставка»');
-  }
-  return {
-    weight_g: Number(weight_g),
-    length_mm: Number(length_mm),
-    width_mm: Number(width_mm),
-    height_mm: Number(height_mm),
+  // Ozon принимает только целые числа (Int32) — дробные значения округляем.
+  const dims = {
+    weight_g: Math.round(Number(order.weight_g) || 0),
+    length_mm: Math.round(Number(order.length_mm) || 0),
+    width_mm: Math.round(Number(order.width_mm) || 0),
+    height_mm: Math.round(Number(order.height_mm) || 0),
   };
+  if (Object.values(dims).some((v) => v < 1)) {
+    throw new Error('Заполните вес (в граммах) и габариты посылки (в миллиметрах) в блоке «Ozon Доставка»');
+  }
+  return dims;
 }
 
 function ozonCutoffAt() {
