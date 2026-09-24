@@ -183,7 +183,9 @@ async function loadMethods() {
   }
   wrap.innerHTML = '<span class="muted">Загрузка…</span>';
   try {
-    const { shipment_methods: methods = [] } = await api('/api/ozon/shipment-methods');
+    const { shipment_methods: all = [] } = await api('/api/ozon/shipment-methods');
+    // Закрытые методы не нужны; выбранный показываем всегда, чтобы было видно, что он закрыт.
+    const methods = all.filter((m) => m.status !== 'closed' || String(m.shipment_method_id) === String(settings.shipment_method_id));
     if (!methods.length) {
       wrap.innerHTML = '<span class="muted">В кабинете Ozon нет методов отгрузки.</span>';
       return;

@@ -50,12 +50,36 @@ async function load() {
   render(orders);
 }
 
+// Порядок в колонке: ещё не двигавшиеся вручную (новые) — сверху, от новых к старым;
+// дальше — в том порядке, в каком их расставили перетаскиванием.
+function sortColumn(list) {
+  return list.slice().sort((a, b) => {
+    const pa = a.board_position, pb = b.board_position;
+    if (pa == null && pb == null) return b.id - a.id;
+    if (pa == null) return -1;
+    if (pb == null) return 1;
+    return pa - pb || b.id - a.id;
+  });
+}
+
+const placeholder = el('<div class="card-placeholder"></div>');
+
+// Карточка, перед которой нужно вставить перетаскиваемую (по положению курсора).
+function cardAfter(cardsWrap, y) {
+  const cards = [...cardsWrap.querySelectorAll('.order-card:not(.dragging)')];
+  return cards.find((c) => {
+    const r = c.getBoundingClientRect();
+    return y < r.top + r.height / 2;
+  }) || null;
+}
+
 function render(orders) {
   const board = document.getElementById('board');
   board.innerHTML = '';
+  const searching = Boolean(document.getElementById('search').value.trim());
   const visibleStatuses = statuses.filter((s) => s.id !== 'cancelled');
   for (const s of visibleStatuses) {
-    const colOrders = orders.filter((o) => o.status === s.id);
+    const colOrders = sortColumn(orders.filter((o) => o.status === s.id));
     const col = el(`
       <div class="board-col" data-status="${s.id}">
         <h3><span>${s.label}</span><span>${colOrders.length}</span></h3>
@@ -73,19 +97,58 @@ function render(orders) {
           <div class="total">${money(o.grand_total)}</div>
         </div>
       `);
-      card.addEventListener('dragstart', () => { draggedId = o.id; card.style.opacity = '0.5'; });
-      card.addEventListener('dragend', () => { card.style.opacity = '1'; });
+      card.addEventListener('dragstart', (e) => {
+        draggedId = o.id;
+        e.dataTransfer.effectAllowed = 'move';
+        placeholder.style.height = `${card.offsetHeight}px`;
+        requestAnimationFrame(() => card.classList.add('dragging'));
+      });
+      card.addEventListener('dragend', () => {
+        card.classList.remove('dragging');
+        placeholder.remove();
+        document.querySelectorAll('.board-col.dragover').forEach((c) => c.classList.remove('dragover'));
+      });
       card.addEventListener('click', () => { window.location.href = `/order.html?id=${o.id}`; });
       cardsWrap.appendChild(card);
     }
-    col.addEventListener('dragover', (e) => { e.preventDefault(); col.classList.add('dragover'); });
-    col.addEventListener('dragleave', () => col.classList.remove('dragover'));
+    col.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      col.classList.add('dragover');
+      // При поиске видна только часть карточек — порядок не меняем, только колонку.
+      if (searching) return;
+      const before = cardAfter(cardsWrap, e.clientY);
+      if (before) cardsWrap.insertBefore(placeholder, before);
+      else cardsWrap.appendChild(placeholder);
+    });
+    col.addEventListener('dragleave', (e) => {
+      if (!col.contains(e.relatedTarget)) {
+        col.classList.remove('dragover');
+        placeholder.remove();
+      }
+    });
     col.addEventListener('drop', async (e) => {
       e.preventDefault();
       col.classList.remove('dragover');
       if (draggedId == null) return;
-      await api(`/api/orders/${draggedId}`, { method: 'PATCH', body: JSON.stringify({ status: s.id }) });
+      const id = draggedId;
       draggedId = null;
+      try {
+        if (searching) {
+          await api(`/api/orders/${id}`, { method: 'PATCH', body: JSON.stringify({ status: s.id }) });
+        } else {
+          // Новый порядок колонки: все карточки кроме перетаскиваемой + она на месте плейсхолдера.
+          const ids = [];
+          for (const node of cardsWrap.children) {
+            if (node === placeholder) ids.push(id);
+            else if (node.dataset.id && Number(node.dataset.id) !== id) ids.push(Number(node.dataset.id));
+          }
+          if (!ids.includes(id)) ids.push(id);
+          placeholder.remove();
+          await api('/api/board/reorder', { method: 'POST', body: JSON.stringify({ status: s.id, ids }) });
+        }
+      } catch (err) {
+        toast(err.message, 'error');
+      }
       load();
     });
     board.appendChild(col);

@@ -86,6 +86,8 @@ for (const stmt of [
   'ALTER TABLE orders ADD COLUMN height_mm INTEGER',
   'ALTER TABLE orders ADD COLUMN ozon_delivery_point_id TEXT',
   'ALTER TABLE orders ADD COLUMN ozon_shipment TEXT',
+  // Ручной порядок карточек в колонке доски (NULL — ещё не двигали, такие идут сверху).
+  'ALTER TABLE orders ADD COLUMN board_position INTEGER',
   // Заказы 3D-печати из New_Lab_3d (приходят через /api/external/orders).
   "ALTER TABLE orders ADD COLUMN source TEXT DEFAULT 'manual'",
   'ALTER TABLE orders ADD COLUMN external_order_id TEXT',
@@ -368,11 +370,33 @@ export function updateOrder(id, data) {
     data.notes ?? existing.notes,
     id
   );
+  // Заказ ушёл в другую колонку — встаёт наверх новой колонки, пока его не передвинут вручную.
+  if (data.status && data.status !== existing.status) {
+    db.prepare('UPDATE orders SET board_position = NULL WHERE id = ?').run(id);
+  }
   if (data.items) {
     db.prepare('DELETE FROM items WHERE order_id = ?').run(id);
     insertItems(id, data.items);
   }
   return getOrder(id);
+}
+
+// Перетаскивание на доске: заказ встаёт в колонку status, порядок колонки — как в ids.
+export function reorderBoardColumn(status, ids) {
+  const now = new Date().toISOString();
+  const setStatus = db.prepare('UPDATE orders SET status = ?, updated_at = ? WHERE id = ? AND status != ?');
+  const setPos = db.prepare('UPDATE orders SET board_position = ? WHERE id = ?');
+  db.exec('BEGIN');
+  try {
+    ids.forEach((id, index) => {
+      setStatus.run(status, now, id, status);
+      setPos.run(index, id);
+    });
+    db.exec('COMMIT');
+  } catch (err) {
+    db.exec('ROLLBACK');
+    throw err;
+  }
 }
 
 export function deleteOrder(id) {

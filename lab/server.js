@@ -14,6 +14,7 @@ import {
   getOrder,
   createOrder,
   updateOrder,
+  reorderBoardColumn,
   deleteOrder,
   createOrUpdateExternalOrder,
   markExternalOrderPaid,
@@ -460,6 +461,15 @@ const server = http.createServer(async (req, res) => {
       } catch (err) {
         return sendJson(res, 400, { error: err.message });
       }
+    }
+
+    if (pathname === '/api/board/reorder' && req.method === 'POST') {
+      const data = await readBody(req);
+      const status = String(data.status || '');
+      const ids = Array.isArray(data.ids) ? data.ids.map(Number).filter((n) => Number.isInteger(n) && n > 0) : [];
+      if (!STATUSES.some((s) => s.id === status)) return sendJson(res, 400, { error: 'Неизвестный статус' });
+      reorderBoardColumn(status, ids);
+      return sendJson(res, 200, { ok: true });
     }
 
     if (pathname === '/api/orders' && req.method === 'GET') {

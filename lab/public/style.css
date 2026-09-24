@@ -422,6 +422,13 @@ table.orders-table tr:hover { background: var(--panel-2); }
 }
 
 .order-card:active { cursor: grabbing; }
+.order-card.dragging { display: none; }
+.card-placeholder {
+  border: 2px dashed var(--accent);
+  border-radius: 8px;
+  margin-bottom: 8px;
+  background: rgba(91, 140, 255, 0.08);
+}
 .order-card .name { font-weight: 600; margin-bottom: 4px; }
 .order-card .meta { color: var(--muted); font-size: 12px; margin-bottom: 2px; }
 .order-card .total { margin-top: 6px; font-weight: 700; color: var(--accent-2); }
