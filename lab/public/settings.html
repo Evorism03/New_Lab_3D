@@ -43,7 +43,7 @@
   <div class="card" style="margin-top:16px">
     <h2>Шаблоны коробок</h2>
     <p class="muted">Вес посылки с товаром и габариты коробки. В заказе шаблон выбирается из списка — поля заполнятся сами.</p>
-    <table class="items-table">
+    <table class="items-table" id="box-table">
       <thead>
         <tr>
           <th>Название</th>
@@ -328,7 +328,7 @@ function addBoxRow(t = {}) {
       <td><input data-k="length_mm" type="number" min="1" step="1"></td>
       <td><input data-k="width_mm" type="number" min="1" step="1"></td>
       <td><input data-k="height_mm" type="number" min="1" step="1"></td>
-      <td><button type="button" class="secondary small" title="Удалить">✕</button></td>
+      <td><button type="button" class="secondary small remove-item" title="Удалить">✕</button></td>
     </tr>
   `);
   for (const input of row.querySelectorAll('input')) input.value = t[input.dataset.k] ?? '';

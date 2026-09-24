@@ -650,12 +650,15 @@ table.orders-table td.nowrap, table.orders-table th.nowrap, table.orders-table t
 .items-table thead { display: none; }
 .items-table tbody { display: flex; flex-direction: column; gap: 10px; }
 .items-table tbody tr {
+  /* Фиксированная раскладка на 12 колонок:
+     1-я строка — товар · модель · кол-во · цена;
+     2-я строка — цвет · разъём · серийный номер · дата сборки · этикетка. */
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
-  gap: 10px 14px;
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  gap: 12px 14px;
   align-items: end;
   position: relative;
-  padding: 14px 52px 14px 16px;
+  padding: 14px 56px 14px 16px;
   background: var(--panel-2);
   border: 1px solid var(--border);
   border-radius: 12px;
@@ -668,8 +671,51 @@ table.orders-table td.nowrap, table.orders-table th.nowrap, table.orders-table t
   color: var(--muted);
   margin-bottom: 4px;
 }
-.items-table tbody td.wide { grid-column: span 2; }
+/* Порядок и ширина ячеек задаются по содержимому (разметка строки не меняется). */
+.items-table tbody td:first-child { order: 1; grid-column: span 5; }
+.items-table tbody td:has(> select[name="model_id"]), .items-table tbody td:has(> input[name="model_id"]) { order: 2; grid-column: span 3; }
+.items-table tbody td:has(> input[name="quantity"]) { order: 3; grid-column: span 2; }
+.items-table tbody td:has(> input[name="price"]) { order: 4; grid-column: span 2; }
+.items-table tbody td:has(select[name="color"]), .items-table tbody td:has(> input[name="color"]) { order: 5; grid-column: span 3; }
+.items-table tbody td:has(select[name="connector"]), .items-table tbody td:has(> input[name="connector"]) { order: 6; grid-column: span 3; }
+.items-table tbody td:has(input[name="serial_number"]) { order: 7; grid-column: span 3; }
+.items-table tbody td:has(> input[name="assembled_at"]) { order: 8; grid-column: span 2; }
+.items-table tbody td:has(.label-pdf), .items-table tbody td:has(button:not(.remove-item):not(.generate-serial)):not(:has(input)):not(:has(select)) { order: 9; grid-column: span 1; }
+/* Без даты сборки и этикетки (страница «Новый заказ») серийнику достаётся остаток строки. */
+.items-table tbody tr:not(:has(input[name="assembled_at"])) td:has(input[name="serial_number"]) { grid-column: span 6; }
+
 .items-table tbody td select, .items-table tbody td input:not([type="hidden"]):not([type="checkbox"]) { width: 100%; min-width: 0; }
+.items-table tbody td > div:has(> select), .items-table tbody td > div:has(> input) { display: flex; align-items: center; gap: 6px; }
+.items-table tbody td > div > select, .items-table tbody td > div > input { flex: 1; min-width: 0; }
+.items-table tbody td > div > .dot { margin: 0; flex-shrink: 0; }
 .items-table tbody td:has(> .remove-item) { position: absolute; top: 10px; right: 10px; }
+.items-table tbody td a > button, .items-table tbody td > button { width: 100%; white-space: nowrap; padding-left: 6px; padding-right: 6px; }
+.items-table tbody td > .remove-item { width: auto; }
+
+/* Узкая область (вертикальный монитор с меню, телефон): поля крупнее, строк больше. */
+@container main (max-width: 900px) {
+  .items-table tbody td:first-child { grid-column: span 12; }
+  .items-table tbody td:has(> select[name="model_id"]), .items-table tbody td:has(> input[name="model_id"]) { grid-column: span 4; }
+  .items-table tbody td:has(> input[name="quantity"]) { grid-column: span 4; }
+  .items-table tbody td:has(> input[name="price"]) { grid-column: span 4; }
+  .items-table tbody td:has(select[name="color"]), .items-table tbody td:has(> input[name="color"]),
+  .items-table tbody td:has(select[name="connector"]), .items-table tbody td:has(> input[name="connector"]) { grid-column: span 6; }
+  .items-table tbody td:has(input[name="serial_number"]) { grid-column: span 6; }
+  .items-table tbody td:has(> input[name="assembled_at"]) { grid-column: span 4; }
+  .items-table tbody td:has(button:not(.remove-item):not(.generate-serial)):not(:has(input)):not(:has(select)) { grid-column: span 2; }
+  .items-table tbody tr:not(:has(input[name="assembled_at"])) td:has(input[name="serial_number"]) { grid-column: span 12; }
+}
 
 .toolbar > select { width: auto; max-width: 240px; }
+
+/* Шаблоны коробок в Настройках: название шире, четыре числа поровну. */
+#box-table tbody tr { grid-template-columns: 2fr repeat(4, minmax(0, 1fr)); }
+#box-table tbody td { order: 0; grid-column: auto; }
+
+/* Одинаковая высота полей в карточке товара — подписи и нижние края на одной линии. */
+.items-table tbody td select,
+.items-table tbody td input:not([type="hidden"]):not([type="checkbox"]),
+.items-table tbody td button:not(.remove-item) {
+  height: 38px;
+  box-sizing: border-box;
+}
