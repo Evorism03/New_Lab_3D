@@ -496,6 +496,26 @@ async function saveOzonPoint(pointId) {
   });
 }
 
+document.getElementById('ozon-label-link').addEventListener('click', async (e) => {
+  e.preventDefault();
+  const link = e.currentTarget;
+  if (link.style.pointerEvents === 'none') return;
+  // Окно открываем сразу (иначе браузер заблокирует всплывающее окно), а содержимое — после ответа.
+  const win = window.open('', '_blank');
+  try {
+    const res = await fetch(link.href, { credentials: 'same-origin' });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error(data.error || `HTTP ${res.status}`);
+    }
+    const url = URL.createObjectURL(await res.blob());
+    if (win) win.location.href = url; else window.location.href = url;
+  } catch (err) {
+    if (win) win.close();
+    toast(err.message, 'error');
+  }
+});
+
 document.getElementById('ozon-find-point').addEventListener('click', async () => {
   const wrap = document.getElementById('ozon-point-candidates');
   const address = document.querySelector('[name="pvz_address"]').value.trim();
@@ -550,8 +570,8 @@ function renderOzonStatus(shipment) {
   ozonDraftCreated = true;
   const liveStatus = shipment.live_status || shipment.status;
   wrap.innerHTML = `
-    <div><strong>Заказ Ozon:</strong> ${shipment.order_number} <span class="pill">${ozonStatusLabel(liveStatus)}</span></div>
-    <div class="muted">Отправление: ${shipment.posting_number || '—'}</div>
+    <div><strong>Отправление (трек-номер):</strong> ${shipment.posting_number || '—'} <span class="pill">${ozonStatusLabel(liveStatus)}</span></div>
+    <div class="muted" title="Заказ в Ozon объединяет отправления; у нас в заказе одно отправление, по его номеру идёт отслеживание и он напечатан на этикетке">Номер заказа в Ozon: ${shipment.order_number}</div>
     ${checkoutLine(shipment.checkout, shipment.price)}
     ${shipment.estimated_delivery_days != null ? `<div class="muted">Срок доставки: ${shipment.estimated_delivery_days} дн.</div>` : ''}
     ${shipment.approved_at ? `<div class="muted">Подтверждено: ${new Date(shipment.approved_at).toLocaleString('ru-RU')}</div>` : ''}

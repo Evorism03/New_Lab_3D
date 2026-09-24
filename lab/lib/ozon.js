@@ -145,14 +145,19 @@ function errorMessage(data, status) {
   return text && text !== '{}' ? `${status} ${text}` : `HTTP ${status}`;
 }
 
-export async function ozonRequest(pathname, body = {}, { idempotencyKey } = {}) {
-  const extraHeaders = idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : undefined;
+async function authorizedRequest(pathname, body, extraHeaders) {
   let token = await getToken();
   let res = await rawRequest(pathname, body, token, extraHeaders);
   if (res.status === 401) {
     token = await getToken(true);
     res = await rawRequest(pathname, body, token, extraHeaders);
   }
+  return res;
+}
+
+export async function ozonRequest(pathname, body = {}, { idempotencyKey } = {}) {
+  const extraHeaders = idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : undefined;
+  const res = await authorizedRequest(pathname, body, extraHeaders);
   const text = await res.text();
   let data = {};
   if (text) {
@@ -248,8 +253,41 @@ export function postingInfo(postingNumbers) {
   return ozonRequest('/v1/posting/info', { posting_numbers: postingNumbers });
 }
 
-export function postingLabel(postingNumber) {
-  return ozonRequest('/v1/posting/label', { posting_number: postingNumber });
+// Этикетка: Ozon может отдать сам PDF (бинарно) или JSON с base64-содержимым либо ссылкой.
+// Возвращаем { buffer, contentType } или бросаем ошибку с тем, что Ozon ответил.
+export async function postingLabelFile(postingNumber) {
+  const pathname = '/v1/posting/label';
+  const res = await authorizedRequest(pathname, { posting_number: postingNumber });
+  const contentType = res.headers.get('content-type') || '';
+  const buffer = Buffer.from(await res.arrayBuffer());
+  const isPdf = buffer.subarray(0, 5).toString('latin1') === '%PDF-';
+  if (res.ok && (isPdf || /pdf|octet-stream|image\//i.test(contentType))) {
+    return { buffer, contentType: isPdf ? 'application/pdf' : contentType };
+  }
+  const text = buffer.toString('utf8');
+  let data = {};
+  try {
+    data = text ? JSON.parse(text) : {};
+  } catch {
+    data = { raw: text };
+  }
+  if (!res.ok) throw new Error(`Ozon API ${pathname}: ${errorMessage(data, res.status)}`);
+
+  const holder = data.result || data.label || data;
+  const base64 = holder.file_content || holder.fileContent || holder.content || holder.file || holder.data || holder.pdf;
+  if (typeof base64 === 'string' && base64.length > 100) {
+    const decoded = Buffer.from(base64, 'base64');
+    const decodedIsPdf = decoded.subarray(0, 5).toString('latin1') === '%PDF-';
+    return { buffer: decoded, contentType: decodedIsPdf ? 'application/pdf' : (holder.content_type || holder.file_type || 'application/pdf') };
+  }
+  const url = holder.url || holder.file_url || holder.label_url || holder.link;
+  if (typeof url === 'string' && /^https?:/i.test(url)) {
+    const fileRes = await fetch(url);
+    if (!fileRes.ok) throw new Error(`Не удалось скачать этикетку по ссылке Ozon (${fileRes.status})`);
+    return { buffer: Buffer.from(await fileRes.arrayBuffer()), contentType: fileRes.headers.get('content-type') || 'application/pdf' };
+  }
+  const shown = text.length > 300 ? `${text.slice(0, 300)}…` : text;
+  throw new Error(`Ozon не вернул этикетку. Обычно она появляется после «Подтвердить к отгрузке». Ответ Ozon: ${shown || 'пусто'}`);
 }
 
 export function postingCancel(postingNumber) {
@@ -289,7 +327,13 @@ function pointAddressText(p) {
     if (typeof v === 'string') parts.push(v);
     else if (v && typeof v === 'object') Object.values(v).forEach(walk);
   };
-  if (!p.full_address) walk(p.address);
+  if (!p.full_address) {
+    walk(p.address);
+    // Адрес может лежать под другим именем (location, address_details…) — берём всё, где есть «address».
+    if (!parts.length) {
+      for (const [k, v] of Object.entries(p)) if (/address|location/i.test(k)) walk(v);
+    }
+  }
   if (!parts.length && p.name) parts.push(p.name);
   return parts.join(', ');
 }
@@ -328,13 +372,26 @@ async function fillAddresses(points) {
   let next = 0;
   async function worker() {
     while (next < batches.length) {
-      const batch = batches[next++];
-      const res = await deliveryPointInfo(batch);
-      for (const p of pickArray(res, ['delivery_points', 'points', 'items']) || []) infoById.set(String(pointId(p)), p);
+      let batch = batches[next++];
+      // В общем списке встречаются уже закрытые ПВЗ — /info отвечает на них 404 со списком ID.
+      // Убираем такие ID и повторяем; если не получается — пропускаем пачку, а не весь поиск.
+      for (let attempt = 0; attempt < 3 && batch.length; attempt++) {
+        try {
+          const res = await deliveryPointInfo(batch);
+          for (const p of pickArray(res, ['delivery_points', 'points', 'items']) || []) infoById.set(String(pointId(p)), p);
+          break;
+        } catch (err) {
+          if (err.status !== 404) throw err;
+          const missing = new Set((String(err.message).match(/\d{4,}/g) || []).map(Number));
+          const rest = batch.filter((id) => !missing.has(id));
+          if (rest.length === batch.length) break;
+          batch = rest;
+        }
+      }
     }
   }
   await Promise.all(Array.from({ length: 5 }, worker));
-  return points.map((p) => infoById.get(String(pointId(p))) || p);
+  return points.map((p) => infoById.get(String(pointId(p))) || p).filter((p) => pointAddressText(p));
 }
 
 // Список ПВЗ большой (страницами по 100), поэтому кроме памяти храним его на диске —

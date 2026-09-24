@@ -793,14 +793,12 @@ const server = http.createServer(async (req, res) => {
       const postingNumber = order.ozon_shipment?.posting_number;
       if (!postingNumber) return sendJson(res, 400, { error: 'Сначала создайте черновик заказа в Ozon' });
       try {
-        const result = await ozon.postingLabel(postingNumber);
-        const fileContent = result.file_content || result.fileContent;
-        if (!fileContent) return sendJson(res, 502, { error: 'Ozon не вернул содержимое этикетки' });
-        const buffer = Buffer.from(fileContent, 'base64');
+        const { buffer, contentType } = await ozon.postingLabelFile(postingNumber);
         patchOrderOzonShipment(orderId, { label_downloaded_at: new Date().toISOString() });
+        const ext = /png/i.test(contentType) ? 'png' : /zpl|text/i.test(contentType) ? 'txt' : 'pdf';
         res.writeHead(200, {
-          'Content-Type': 'application/pdf',
-          'Content-Disposition': `attachment; filename="${postingNumber}.pdf"`,
+          'Content-Type': contentType,
+          'Content-Disposition': `inline; filename="${postingNumber}.${ext}"`,
         });
         return res.end(buffer);
       } catch (err) {
