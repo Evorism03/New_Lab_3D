@@ -42,6 +42,28 @@ $script:ServerScript = Join-Path $PSScriptRoot "server.ps1"
 $script:SettingsFile = Join-Path $PSScriptRoot "app-settings.json"
 $script:AppHash = (Get-FileHash -Path $PSCommandPath -Algorithm SHA256).Hash
 
+# lab («Заказы») живёт в подпапке lab/ этого же репозитория и управляется своими
+# deploy-скриптами - НЕ дот-сорсим lab/deploy/lib.ps1 (те же имена $script:Root и т.д.,
+# перезатрёт наши), просто читаем его файлы состояния напрямую по вычисленным путям.
+$script:LabRoot = Join-Path $script:Root "lab"
+$script:LabServerScript = Join-Path $script:LabRoot "deploy\server.ps1"
+$script:LabEnvFile = Join-Path $script:LabRoot ".env"
+$script:LabStateFile = Join-Path $script:LabRoot "deploy\state.json"
+$script:LabLogDir = Join-Path $script:LabRoot "deploy\logs"
+$script:LabTaskName = "Lab CRM Server"
+function Test-LabPresent { Test-Path $script:LabServerScript }
+
+function Read-LabState {
+    if (-not (Test-Path $script:LabStateFile)) { return $null }
+    try { return (Get-Content -Path $script:LabStateFile -Raw -Encoding UTF8 | ConvertFrom-Json) } catch { return $null }
+}
+function Get-LabServerState {
+    $state = Read-LabState
+    if ($state -and (Test-ProcAlive $state.supervisorPid $state.supervisorStart)) { return $state }
+    return $null
+}
+function Get-LabAutostartTask { return Get-ScheduledTask -TaskName $script:LabTaskName -ErrorAction SilentlyContinue }
+
 # ---------------------------------------------------------------- палитра
 function New-Color([int]$R, [int]$G, [int]$B) { return [Drawing.Color]::FromArgb($R, $G, $B) }
 $ColBg = New-Color 10 10 12
@@ -321,7 +343,7 @@ $sidebar.Controls.AddRange(@($logo, $brand, $brandSub))
 $script:Pages = @{}
 $script:NavButtons = @{}
 $navItems = @(
-    @("overview", "Обзор", (G 0xE80F)), @("logs", "Логи", (G 0xE8FD)), @("updates", "Обновления", (G 0xE895)),
+    @("overview", "Обзор", (G 0xE80F)), @("orders", "Заказы", (G 0xE7BF)), @("logs", "Логи", (G 0xE8FD)), @("updates", "Обновления", (G 0xE895)),
     @("settings", "Настройки", (G 0xE713)), @("cleanup", "Очистка", (G 0xE74D))
 )
 $navY = 108
@@ -479,13 +501,101 @@ $console = New-Console
 $pOverview.Controls.Add((New-ConsoleCard $console), 0, 5)
 Add-Page "overview" $pOverview
 
+# ---------------------------------------------------------------- страница: заказы (lab)
+$pOrders = New-Table @(80, 184, 120, 40, "*")
+$pOrders.Controls.Add((New-Heading "Заказы" "Приём и сборка заказов (lab) - состояние и быстрые действия"), 0, 0)
+
+$cardOrdersHero = New-Card $ColCard 18
+$cardOrdersHero.Dock = "Fill"
+$cardOrdersHero.Margin = New-Object Windows.Forms.Padding(0, 0, 0, 16)
+$dotOrders = New-Object Lab3D.StatusDot
+$dotOrders.SetBounds(24, 24, 34, 34)
+$lblOrdersState = New-Label "..." 22 $ColInk $true
+$lblOrdersState.Location = New-Object Drawing.Point(64, 20)
+$lblOrdersUptime = New-Label "" 10 $ColMuted
+$lblOrdersUptime.Location = New-Object Drawing.Point(66, 66)
+$cardOrdersHero.Controls.AddRange(@($dotOrders, $lblOrdersState, $lblOrdersUptime))
+
+$actionsOrders = New-Object Windows.Forms.FlowLayoutPanel
+$actionsOrders.Dock = "Bottom"
+$actionsOrders.Height = 74
+$actionsOrders.BackColor = [Drawing.Color]::Transparent
+$actionsOrders.Padding = New-Object Windows.Forms.Padding(22, 6, 0, 18)
+$btnOrdersStart = New-Button "Запустить" "primary" 156 (G 0xE768)
+$btnOrdersStop = New-Button "Остановить" "secondary" 158 (G 0xE71A)
+$btnOrdersRestart = New-Button "Перезапустить" "secondary" 176 (G 0xE72C)
+$btnOrdersOpen = New-Button "Открыть сайт" "secondary" 166 (G 0xE774)
+$actionsOrders.Controls.AddRange(@($btnOrdersStart, $btnOrdersStop, $btnOrdersRestart, $btnOrdersOpen))
+$cardOrdersHero.Controls.Add($actionsOrders)
+$pOrders.Controls.Add($cardOrdersHero, 0, 1)
+
+# плитки: адрес / процесс / автозапуск / диск
+$tilesOrders = New-Table @(100) 4
+$tilesOrders.Margin = New-Object Windows.Forms.Padding(0, 0, 0, 16)
+$script:OrdersFieldValues = @{}
+$col = 0
+foreach ($name in @("Адрес", "Процесс", "Автозапуск", "Диск")) {
+    $tile = New-Card $ColCard 14
+    $tile.Dock = "Fill"
+    $tile.Padding = New-Object Windows.Forms.Padding(18, 16, 12, 8)
+    $tile.Margin = New-Object Windows.Forms.Padding(0, 0, $(if ($col -lt 3) { 14 } else { 0 }), 0)
+    if ($name -eq "Адрес") {
+        $v = New-Object Windows.Forms.LinkLabel
+        $v.LinkColor = $ColBlue
+        $v.ActiveLinkColor = $ColAccent
+        $v.VisitedLinkColor = $ColBlue
+        $v.LinkBehavior = "HoverUnderline"
+        $v.Add_LinkClicked({ if ($script:LabSiteUrl) { Start-Process $script:LabSiteUrl } })
+    }
+    else { $v = New-Object Windows.Forms.Label; $v.ForeColor = $ColInk }
+    $v.AutoSize = $false
+    $v.AutoEllipsis = $true
+    $v.Dock = "Top"
+    $v.Height = 34
+    $v.BackColor = $ColCard
+    $v.Font = New-Font 12 $true
+    $v.Text = "-"
+    $k = New-Label $name 9 $ColMuted $false $ColCard
+    $k.AutoSize = $false
+    $k.Dock = "Top"
+    $k.Height = 22
+    $tile.Controls.Add($v)
+    $tile.Controls.Add($k)
+    $tilesOrders.Controls.Add($tile, $col, 0)
+    $script:OrdersFieldValues[$name] = $v
+    $col++
+}
+$pOrders.Controls.Add($tilesOrders, 0, 2)
+
+$journalHeadOrders = New-Object Windows.Forms.Panel
+$journalHeadOrders.Dock = "Fill"
+$journalHeadOrders.BackColor = $ColBg
+$consoleTitleOrders = New-Label "Журнал действий" 10 $ColMuted $false $ColBg
+$consoleTitleOrders.Location = New-Object Drawing.Point(2, 10)
+$btnOrdersClearJournal = New-Button "Очистить" "ghost" 110 (G 0xE74D)
+$btnOrdersClearJournal.Height = 30
+$btnOrdersClearJournal.Anchor = "Top,Right"
+$btnOrdersClearJournal.Location = New-Object Drawing.Point(($journalHeadOrders.Width - 100), 4)
+$journalHeadOrders.Add_Resize({ $btnOrdersClearJournal.Left = $journalHeadOrders.Width - $btnOrdersClearJournal.Width })
+$journalHeadOrders.Controls.AddRange(@($consoleTitleOrders, $btnOrdersClearJournal))
+$pOrders.Controls.Add($journalHeadOrders, 0, 3)
+$consoleOrders = New-Console
+$pOrders.Controls.Add((New-ConsoleCard $consoleOrders), 0, 4)
+Add-Page "orders" $pOrders
+
 # ---------------------------------------------------------------- страница: логи
 $pLogs = New-Table @(80, 52, "*")
 $pLogs.Controls.Add((New-Heading "Логи" "Живой вывод сайта, ошибок, HTTPS и событий сервера"), 0, 0)
 $logBar = New-Object Windows.Forms.FlowLayoutPanel
 $logBar.Dock = "Fill"
 $logBar.BackColor = $ColBg
-$logSources = [ordered]@{ "Сайт" = "next.log"; "Ошибки сайта" = "next-error.log"; "HTTPS (Caddy)" = "caddy-error.log"; "События сервера" = "supervisor.log"; "Журнал операций" = "gui-task-out.log" }
+# Значения - полные пути (не просто имена файлов): у "Заказы: ..." лог-каталог другой (lab/deploy/logs).
+$logSources = [ordered]@{
+    "Сайт" = (Join-Path $script:LogDir "next.log"); "Ошибки сайта" = (Join-Path $script:LogDir "next-error.log")
+    "HTTPS (Caddy)" = (Join-Path $script:LogDir "caddy-error.log"); "События сервера" = (Join-Path $script:LogDir "supervisor.log")
+    "Журнал операций" = (Join-Path $script:LogDir "gui-task-out.log")
+    "Заказы: сервер" = (Join-Path $script:LabLogDir "app.log"); "Заказы: ошибки" = (Join-Path $script:LabLogDir "app-error.log")
+}
 $script:LogChips = @{}
 $script:LogKey = "Сайт"
 foreach ($key in $logSources.Keys) {
@@ -513,7 +623,7 @@ function Reset-LogView {
     foreach ($key in $script:LogChips.Keys) { $script:LogChips[$key].SetActive(($key -eq $script:LogKey)) }
     $logView.Clear()
     $script:LogPos = 0
-    $path = Join-Path $script:LogDir $logSources[$script:LogKey]
+    $path = $logSources[$script:LogKey]
     if (Test-Path $path) {
         $length = (Get-Item $path).Length
         if ($length -gt 12000) { $script:LogPos = $length - 12000 }
@@ -737,6 +847,7 @@ $script:Busy = $false
 function Set-Busy([bool]$Value) {
     $script:Busy = $Value
     Update-Status
+    Update-LabStatus
 }
 
 function Add-Steps([object[]]$Steps, [scriptblock]$OnFinish = $null) {
@@ -752,11 +863,15 @@ function Start-NextStep {
     $step = $script:Queue.Dequeue()
     if ($step.When -and -not (& $step.When)) { Start-NextStep; return }
 
-    New-Item -ItemType Directory -Force -Path $script:LogDir | Out-Null
-    $out = Join-Path $script:LogDir "gui-task-out.log"
-    $err = Join-Path $script:LogDir "gui-task-err.log"
+    # Заказы (lab) задают свои Console/LogDir в New-LabServerStep, чтобы их журнал шёл на
+    # свою вкладку, а не смешивался с журналом основного сайта; для обычных шагов - фолбэк.
+    $stepConsole = if ($step.Console) { $step.Console } else { $console }
+    $logDir = if ($step.LogDir) { $step.LogDir } else { $script:LogDir }
+    New-Item -ItemType Directory -Force -Path $logDir | Out-Null
+    $out = Join-Path $logDir "gui-task-out.log"
+    $err = Join-Path $logDir "gui-task-err.log"
     Remove-Item $out, $err -ErrorAction SilentlyContinue
-    if (-not $step.Silent) { Add-ConsoleText $console ("`n► " + $step.Title + "`n") (New-Color 110 190 220) }
+    if (-not $step.Silent) { Add-ConsoleText $stepConsole ("`n► " + $step.Title + "`n") (New-Color 110 190 220) }
     $argLine = '-NoProfile -ExecutionPolicy Bypass -File "{0}" {1}' -f $step.Script, $step.Args
     $process = Start-Process -FilePath "powershell.exe" -ArgumentList $argLine -WorkingDirectory $script:Root -PassThru -WindowStyle Hidden `
         -RedirectStandardOutput $out -RedirectStandardError $err
@@ -774,13 +889,14 @@ function Complete-Steps([bool]$Ok) {
 }
 
 function Read-StepOutput($Current) {
+    $stepConsole = if ($Current.Step.Console) { $Current.Step.Console } else { $console }
     foreach ($name in @("Out", "Err")) {
         $position = [long]$Current["$($name)Pos"]
         $chunk = Read-Appended $Current[$name] ([ref]$position)
         $Current["$($name)Pos"] = $position
         if ($chunk) {
             [void]$Current.Text.Append($chunk)
-            if (-not $Current.Step.Silent) { Add-ColoredLines $console $chunk }
+            if (-not $Current.Step.Silent) { Add-ColoredLines $stepConsole $chunk }
         }
     }
 }
@@ -793,17 +909,18 @@ function Step-Tick {
     Read-StepOutput $current
     $code = $current.Process.ExitCode
     $step = $current.Step
+    $stepConsole = if ($step.Console) { $step.Console } else { $console }
     $text = $current.Text.ToString()
     $script:Current = $null
     if ($step.OnResult) { & $step.OnResult $text $code }
     if ($code -ne 0 -and -not $step.IgnoreFailure) {
-        if (-not $step.Silent) { Add-ConsoleText $console "× Операция завершилась с ошибкой.`n" $ColRed }
+        if (-not $step.Silent) { Add-ConsoleText $stepConsole "× Операция завершилась с ошибкой.`n" $ColRed }
         $failHook = $step.OnFail
         Complete-Steps $false
         if ($failHook) { & $failHook $text }
         return
     }
-    if (-not $step.Silent -and $script:Queue.Count -eq 0) { Add-ConsoleText $console "√ Готово.`n" $ColAccent }
+    if (-not $step.Silent -and $script:Queue.Count -eq 0) { Add-ConsoleText $stepConsole "√ Готово.`n" $ColAccent }
     Start-NextStep
 }
 
@@ -817,6 +934,9 @@ function New-ServerStep([string]$Title, [string]$Arguments, [hashtable]$Extra = 
 $script:SiteUrl = ""
 $script:DiskTick = 0
 $script:DiskText = "-"
+$script:LabSiteUrl = ""
+$script:LabDiskTick = 0
+$script:LabDiskText = "-"
 
 # update: есть новые коммиты; sync: коммитов нет, но файлы на диске отличаются от репозитория; none: делать нечего.
 function Get-UpdateMode {
@@ -889,6 +1009,78 @@ function Update-Status {
     $label = $(if ($mode -eq "sync") { "Синхронизировать файлы" } else { "Обновить и перезапустить" })
     if ($btnUpdate.Text -ne $label) { $btnUpdate.Text = $label }
     $btnBanner.Enabled = $free -and ($mode -eq "update")
+}
+
+# Заказы (lab) - тот же паттерн, что Update-Status, но источники данных свои (lab не делит
+# скоуп с root, см. Read-LabState/Get-LabServerState выше) и без баннера обновлений/git-кнопок,
+# у lab своих нет - апдейт lab идёт вместе с основным сайтом через server.bat update.
+function Update-LabStatus {
+    if (-not (Test-LabPresent)) {
+        $lblOrdersState.Text = "Не найден"
+        $lblOrdersState.ForeColor = $ColMuted
+        $dotOrders.DotColor = $ColMuted; $dotOrders.Pulse = $false
+        $lblOrdersUptime.Text = ""
+        $script:LabSiteUrl = ""
+        $script:OrdersFieldValues["Адрес"].Text = "-"
+        $script:OrdersFieldValues["Процесс"].Text = "-"
+        $script:OrdersFieldValues["Автозапуск"].Text = "-"
+        $script:OrdersFieldValues["Диск"].Text = "-"
+        $btnOrdersStart.Enabled = $false; $btnOrdersStop.Enabled = $false; $btnOrdersRestart.Enabled = $false; $btnOrdersOpen.Enabled = $false
+        return
+    }
+
+    $installed = Test-Path $script:LabEnvFile
+    $config = Read-EnvFile $script:LabEnvFile
+    $state = Get-LabServerState
+
+    if (-not $installed) {
+        $lblOrdersState.Text = "Не установлен"
+        $lblOrdersState.ForeColor = $ColYellow
+        $dotOrders.DotColor = $ColYellow; $dotOrders.Pulse = $false
+        $lblOrdersUptime.Text = "Установите через консоль: server.bat setup"
+        $script:LabSiteUrl = ""
+    }
+    elseif ($state -and $state.ready) {
+        $lblOrdersState.Text = "Работает"
+        $lblOrdersState.ForeColor = $ColAccent
+        $dotOrders.DotColor = $ColAccent; $dotOrders.Pulse = $false
+        $span = (Get-Date).ToUniversalTime() - (ConvertTo-Utc $state.startedAt)
+        $up = if ($span.TotalDays -ge 1) { "{0} д {1} ч" -f [int]$span.TotalDays, $span.Hours } elseif ($span.TotalHours -ge 1) { "{0} ч {1} мин" -f [int]$span.TotalHours, $span.Minutes } else { "{0} мин {1} с" -f $span.Minutes, $span.Seconds }
+        $lblOrdersUptime.Text = "аптайм $up - продолжает работать, даже если закрыть это окно"
+        $script:LabSiteUrl = $state.url
+    }
+    elseif ($state) {
+        $lblOrdersState.Text = "Запускается..."
+        $lblOrdersState.ForeColor = $ColYellow
+        $dotOrders.DotColor = $ColYellow; $dotOrders.Pulse = $true
+        $lblOrdersUptime.Text = ""
+        $script:LabSiteUrl = $state.url
+    }
+    else {
+        $lblOrdersState.Text = "Остановлен"
+        $lblOrdersState.ForeColor = $ColRed
+        $dotOrders.DotColor = $ColRed; $dotOrders.Pulse = $false
+        $lblOrdersUptime.Text = ""
+        $script:LabSiteUrl = if ($config["DEPLOY_DOMAIN"]) { "https://" + $config["DEPLOY_DOMAIN"] } else { "" }
+    }
+
+    $script:OrdersFieldValues["Адрес"].Text = $(if ($script:LabSiteUrl) { $script:LabSiteUrl } else { "-" })
+    $script:OrdersFieldValues["Процесс"].Text = $(if ($state) { "процесс PID {0}" -f $state.appPid } else { "-" })
+    $script:OrdersFieldValues["Автозапуск"].Text = $(if (Get-LabAutostartTask) { "включён" } else { "выключен" })
+
+    $script:LabDiskTick++
+    if ($script:LabDiskTick -ge 15 -or $script:LabDiskText -eq "-") {
+        $script:LabDiskTick = 0
+        $script:LabDiskText = "данные " + (Format-Size (Get-FolderSize (Join-Path $script:LabRoot "data")))
+    }
+    $script:OrdersFieldValues["Диск"].Text = $script:LabDiskText
+
+    $running = [bool]$state
+    $free = -not $script:Busy
+    $btnOrdersStart.Enabled = $free -and $installed -and -not $running
+    $btnOrdersStop.Enabled = $free -and $running
+    $btnOrdersRestart.Enabled = $free -and $installed
+    $btnOrdersOpen.Enabled = [bool]$script:LabSiteUrl
 }
 
 # ---------------------------------------------------------------- обновления из git
@@ -1016,6 +1208,15 @@ $btnStop.Add_Click({ Add-Steps @((New-ServerStep "Остановка серве�
 $btnRestart.Add_Click({ Add-Steps @((New-ServerStep "Перезапуск сервера" "restart")) })
 $btnOpen.Add_Click({ if ($script:SiteUrl) { Start-Process $script:SiteUrl } })
 $btnClearJournal.Add_Click({ $console.Clear() })
+
+function New-LabServerStep([string]$Title, [string]$Arguments) {
+    return @{ Title = $Title; Script = $script:LabServerScript; Args = "$Arguments -NoElevate"; Silent = $false; Console = $consoleOrders; LogDir = $script:LabLogDir }
+}
+$btnOrdersStart.Add_Click({ Add-Steps @((New-LabServerStep "Запуск «Заказы»" "start")) })
+$btnOrdersStop.Add_Click({ Add-Steps @((New-LabServerStep "Остановка «Заказы»" "stop")) })
+$btnOrdersRestart.Add_Click({ Add-Steps @((New-LabServerStep "Перезапуск «Заказы»" "restart")) })
+$btnOrdersOpen.Add_Click({ if ($script:LabSiteUrl) { Start-Process $script:LabSiteUrl } })
+$btnOrdersClearJournal.Add_Click({ $consoleOrders.Clear() })
 $btnCheck.Add_Click({ Start-GitCheck $true })
 $btnUpdate.Add_Click({ Start-Update })
 $btnBanner.Add_Click({ Start-Update })
@@ -1109,14 +1310,14 @@ $pump.Interval = 400
 $pump.Add_Tick({
     Step-Tick
     if ($script:CurrentPage -eq "logs") {
-        $path = Join-Path $script:LogDir $logSources[$script:LogKey]
+        $path = $logSources[$script:LogKey]
         $chunk = Read-Appended $path ([ref]$script:LogPos)
         if ($chunk) { Add-ColoredLines $logView $chunk }
     }
 })
 $statusTimer = New-Object Windows.Forms.Timer
 $statusTimer.Interval = 2000
-$statusTimer.Add_Tick({ Update-Status })
+$statusTimer.Add_Tick({ Update-Status; Update-LabStatus })
 $updateTimer = New-Object Windows.Forms.Timer
 $updateTimer.Interval = 30 * 60 * 1000
 $updateTimer.Add_Tick({ if ([bool](Get-Settings).autoCheck) { Start-GitCheck } })
@@ -1131,6 +1332,7 @@ $form.Add_FormClosing({
 $form.Add_Shown({
     try { $dark = 1; [void][Native.Win]::DwmSetWindowAttribute($form.Handle, 20, [ref]$dark, 4) } catch { }
     Update-Status
+    Update-LabStatus
     Show-Page "overview"
     $pump.Start()
     $statusTimer.Start()
