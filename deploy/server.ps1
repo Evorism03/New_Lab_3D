@@ -375,6 +375,19 @@ function Invoke-Setup {
     if ((Test-LabPresent) -and ($script:AssumeYes -or (Read-Confirm "Настроить и «Заказы» (lab)?"))) {
         Write-Host ""
         Invoke-Lab setup
+
+        # Сайт шлёт заказы в lab напрямую на localhost - оба на одном сервере, так надёжнее
+        # и быстрее, чем идти через публичный домен и Caddy туда-обратно.
+        $labEnvFile = Join-Path $script:LabRoot ".env"
+        if (Test-Path $labEnvFile) {
+            $labConfig = Read-EnvFile $labEnvFile
+            if ($labConfig["PORT"]) {
+                $siteConfig = Read-EnvFile $script:EnvFile
+                $siteConfig["LAB_API_URL"] = "http://127.0.0.1:$($labConfig['PORT'])"
+                Write-EnvFile $script:EnvFile $siteConfig
+                Write-Ok "LAB_API_URL -> http://127.0.0.1:$($labConfig['PORT'])"
+            }
+        }
     }
 
     if ($wasRunning) { Invoke-Start }
