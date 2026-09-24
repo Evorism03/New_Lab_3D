@@ -485,6 +485,11 @@ export function setOrderOzonParams(id, { weight_g, length_mm, width_mm, height_m
   return getOrder(id);
 }
 
+export function setOrderOzonDeliveryPoint(id, deliveryPointId) {
+  db.prepare('UPDATE orders SET ozon_delivery_point_id = ? WHERE id = ?').run(String(deliveryPointId || ''), id);
+  return getOrder(id);
+}
+
 // Черновик/статус отправления Ozon Delivery хранится как JSON в orders.ozon_shipment —
 // отдельной схемы под каждый метод не заводим, копим туда всё, что вернул API по заказу.
 export function setOrderOzonShipment(id, data) {

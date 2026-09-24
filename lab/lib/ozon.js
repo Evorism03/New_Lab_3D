@@ -259,3 +259,147 @@ export function postingStatusHistory(postingNumber) {
 export function postingSearch(filters, pagination) {
   return ozonRequest('/v1/posting/search', { filters, pagination });
 }
+
+// --- Поиск ПВЗ по адресу -------------------------------------------------------------------
+// Отдельного поиска ПВЗ по адресу в Ozon Delivery API нет, поэтому один раз выкачиваем полный
+// список (/v1/delivery-point/list, при необходимости дополняя адреса через /info), держим его
+// в памяти и сравниваем адрес локально. Формат ответа Ozon разбираем осторожно — поля ищем
+// под несколькими возможными именами.
+const POINTS_TTL_MS = 12 * 60 * 60 * 1000;
+let pointsCache = { points: null, loadedAt: 0, loading: null };
+
+function pickArray(obj, keys) {
+  for (const k of keys) if (Array.isArray(obj?.[k])) return obj[k];
+  return null;
+}
+
+function pointId(p) {
+  return p?.delivery_point_id ?? p?.id ?? p?.point_id ?? null;
+}
+
+// Все строковые поля адреса одной строкой — чтобы не зависеть от того, как Ozon его разбил.
+function pointAddressText(p) {
+  const parts = [];
+  if (p.full_address) parts.push(p.full_address);
+  const walk = (v) => {
+    if (typeof v === 'string') parts.push(v);
+    else if (v && typeof v === 'object') Object.values(v).forEach(walk);
+  };
+  if (!p.full_address) walk(p.address);
+  if (!parts.length && p.name) parts.push(p.name);
+  return parts.join(', ');
+}
+
+async function loadAllPointIdsAndData() {
+  const byId = new Map();
+  let cursor;
+  let offset = 0;
+  for (let page = 0; page < 500; page++) {
+    const pagination = { limit: 1000 };
+    if (cursor) pagination.cursor = cursor;
+    else if (offset) pagination.offset = offset;
+    const res = await ozonRequest('/v1/delivery-point/list', { pagination });
+    const list = pickArray(res, ['delivery_points', 'points', 'items', 'result']) || [];
+    let added = 0;
+    for (const item of list) {
+      const p = typeof item === 'object' ? item : { delivery_point_id: item };
+      const id = pointId(p);
+      if (id != null && !byId.has(String(id))) { byId.set(String(id), p); added++; }
+    }
+    const next = res?.pagination?.cursor ?? res?.cursor ?? res?.next_cursor ?? res?.pagination?.next_cursor;
+    const hasNext = res?.has_next ?? res?.pagination?.has_next ?? Boolean(next);
+    if (!added || !hasNext) break;
+    if (next) cursor = next; else offset += list.length;
+  }
+  if (!byId.size) throw new Error('Ozon вернул пустой список ПВЗ (/v1/delivery-point/list)');
+  return [...byId.values()];
+}
+
+async function fillAddresses(points) {
+  const missing = points.filter((p) => !pointAddressText(p));
+  if (!missing.length) return points;
+  const infoById = new Map();
+  const batches = [];
+  for (let i = 0; i < missing.length; i += 100) batches.push(missing.slice(i, i + 100).map((p) => Number(pointId(p))));
+  let next = 0;
+  async function worker() {
+    while (next < batches.length) {
+      const batch = batches[next++];
+      const res = await deliveryPointInfo(batch);
+      for (const p of pickArray(res, ['delivery_points', 'points', 'items']) || []) infoById.set(String(pointId(p)), p);
+    }
+  }
+  await Promise.all(Array.from({ length: 5 }, worker));
+  return points.map((p) => infoById.get(String(pointId(p))) || p);
+}
+
+async function getAllDeliveryPoints() {
+  if (pointsCache.points && Date.now() - pointsCache.loadedAt < POINTS_TTL_MS) return pointsCache.points;
+  if (!pointsCache.loading) {
+    pointsCache.loading = (async () => {
+      const points = await fillAddresses(await loadAllPointIdsAndData());
+      const prepared = points.map((p) => ({
+        raw: p,
+        id: String(pointId(p)),
+        address: pointAddressText(p),
+      })).map((p) => ({ ...p, words: globalThis.LabAddress.normalizeWords(p.address) }));
+      pointsCache = { points: prepared, loadedAt: Date.now(), loading: null };
+      return prepared;
+    })().catch((err) => {
+      pointsCache.loading = null;
+      throw err;
+    });
+  }
+  return pointsCache.loading;
+}
+
+function wordMatches(a, b) {
+  return a === b || (a.length >= 4 && b.length >= 4 && (a.startsWith(b) || b.startsWith(a)));
+}
+
+// Оценка совпадения: город и улица обязательны, номер дома — решающий.
+function scorePoint(point, query) {
+  const has = (w) => point.words.some((pw) => wordMatches(pw, w));
+  const cityOk = !query.city.length || query.city.every(has);
+  if (!cityOk) return 0;
+  const streetHits = query.street.filter(has).length;
+  if (query.street.length && !streetHits) return 0;
+  let score = 1 + streetHits * 2;
+  if (query.house.length) {
+    const houseNum = query.house[0];
+    if (point.words.includes(houseNum)) score += 5;
+    else if (point.words.some((w) => w.replace(/[^\d]/g, '') === houseNum.replace(/[^\d]/g, ''))) score += 2;
+  }
+  score += query.extra.filter(has).length * 0.5;
+  return score;
+}
+
+export async function findDeliveryPointsByAddress(addressText, limit = 5) {
+  await import('../public/address.js');
+  const { parseAddress, normalizeWords } = globalThis.LabAddress;
+  const parts = parseAddress(addressText);
+  const cityWords = normalizeWords(parts.city);
+  const query = {
+    // Регион в сравнении не участвует — берём только последний кусок (сам город).
+    city: normalizeWords(String(parts.city).split(',').pop()),
+    street: normalizeWords(parts.street),
+    house: normalizeWords(parts.house),
+    extra: normalizeWords(parts.extra),
+  };
+  if (!query.city.length && !query.street.length && !cityWords.length) {
+    throw new Error('Не удалось разобрать адрес ПВЗ — укажите хотя бы город и улицу');
+  }
+  const points = await getAllDeliveryPoints();
+  return points
+    .map((p) => ({ p, score: scorePoint(p, query) }))
+    .filter((x) => x.score > 0)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, limit)
+    .map(({ p, score }) => ({
+      delivery_point_id: p.id,
+      full_address: p.address,
+      name: p.raw.name || '',
+      type: p.raw.type || '',
+      score,
+    }));
+}

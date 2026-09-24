@@ -31,6 +31,7 @@ import {
   getSetting,
   setSetting,
   setOrderOzonParams,
+  setOrderOzonDeliveryPoint,
   patchOrderOzonShipment,
   listUsers,
   findUserById,
@@ -279,9 +280,18 @@ function ozonShipmentMethodId() {
   return Number(id);
 }
 
-function ozonDeliveryPointId(order) {
-  if (!order.ozon_delivery_point_id) throw new Error('Укажите ID ПВЗ Ozon в блоке «Ozon Доставка» этого заказа');
-  return Number(order.ozon_delivery_point_id);
+// ID ПВЗ: введённый вручную, иначе — подбирается по адресу ПВЗ заказа и сохраняется в заказ.
+async function ozonDeliveryPointId(order) {
+  if (order.ozon_delivery_point_id) return Number(order.ozon_delivery_point_id);
+  if (!order.pvz_address) throw new Error('Укажите адрес ПВЗ заказа или ID ПВЗ Ozon');
+  const found = await ozon.findDeliveryPointsByAddress(order.pvz_address, 2);
+  if (!found.length) throw new Error(`ПВЗ Ozon по адресу «${order.pvz_address}» не найден — проверьте адрес или укажите ID ПВЗ вручную`);
+  const [best, second] = found;
+  if (second && second.score >= best.score) {
+    throw new Error('По адресу подходит несколько ПВЗ Ozon — нажмите «Найти ПВЗ по адресу» и выберите нужный');
+  }
+  setOrderOzonDeliveryPoint(order.id, best.delivery_point_id);
+  return Number(best.delivery_point_id);
 }
 
 function serveStatic(req, res, pathname) {
@@ -574,6 +584,16 @@ const server = http.createServer(async (req, res) => {
       }
     }
 
+    if (pathname === '/api/ozon/delivery-points/find' && req.method === 'POST') {
+      const data = await readBody(req);
+      try {
+        const points = await ozon.findDeliveryPointsByAddress(String(data.address || ''), 5);
+        return sendJson(res, 200, { delivery_points: points });
+      } catch (err) {
+        return sendJson(res, 502, { error: err.message });
+      }
+    }
+
     if (pathname === '/api/ozon/delivery-point/info' && req.method === 'POST') {
       const data = await readBody(req);
       try {
@@ -609,7 +629,7 @@ const server = http.createServer(async (req, res) => {
               dimensions: ozonDimensions(order),
             },
           ],
-          delivery: { delivery_point: { delivery_point_id: ozonDeliveryPointId(order) } },
+          delivery: { delivery_point: { delivery_point_id: await ozonDeliveryPointId(order) } },
         };
         const result = await ozon.orderCheckout(payload);
         const updated = patchOrderOzonShipment(orderId, {
@@ -631,7 +651,7 @@ const server = http.createServer(async (req, res) => {
         const payload = {
           order_external_id: `order-${order.id}`,
           recipient: { phone_number: normalizePhone(order.phone), full_name: order.full_name || '' },
-          delivery: { delivery_point: { delivery_point_id: ozonDeliveryPointId(order) } },
+          delivery: { delivery_point: { delivery_point_id: await ozonDeliveryPointId(order) } },
           postings: [
             {
               request_id: order.id,

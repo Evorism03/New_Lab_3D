@@ -49,10 +49,17 @@
           <input name="phone" required>
         </div>
       </div>
-      <div class="field">
-        <label>Адрес ПВЗ</label>
-        <input name="pvz_address" required>
+      <div class="field" style="margin-bottom:8px">
+        <label>Адрес ПВЗ <span class="muted" style="font-weight:normal">— вставьте целиком из ВК, части заполнятся сами</span></label>
+        <input name="pvz_address" required placeholder="г. Москва, ул. Примерная, д. 1">
       </div>
+      <div class="address-parts" id="address-parts">
+        <div class="field"><label>Город</label><input data-part="city" placeholder="г. Москва"></div>
+        <div class="field"><label>Улица</label><input data-part="street" placeholder="ул. Ленина"></div>
+        <div class="field"><label>Дом</label><input data-part="house" placeholder="5"></div>
+        <div class="field"><label>Дополнительно</label><input data-part="extra" placeholder="ТЦ, ПВЗ №…"></div>
+      </div>
+      <div style="margin-bottom:12px"></div>
       <div class="field">
         <label>Сумма доставки, ₽</label>
         <input name="delivery_price" type="number" step="0.01" min="0" style="max-width:200px">
@@ -112,14 +119,16 @@
         <input id="ozon-height" type="number" min="1" step="1">
       </div>
       <div class="field">
-        <label>ID ПВЗ Ozon (delivery_point_id)</label>
-        <input id="ozon-delivery-point" placeholder="узнать на странице «Ozon Доставка»">
+        <label>ID ПВЗ Ozon <span class="muted" style="font-weight:normal">— необязательно</span></label>
+        <input id="ozon-delivery-point" placeholder="подберётся по адресу ПВЗ">
       </div>
-      <div class="field" style="align-self:end">
-        <button type="button" class="secondary" id="ozon-check-point">Проверить адрес ПВЗ</button>
+      <div class="field" style="align-self:end;display:flex;gap:8px;flex-wrap:wrap">
+        <button type="button" class="secondary" id="ozon-find-point">Найти ПВЗ по адресу</button>
+        <button type="button" class="secondary" id="ozon-check-point">Проверить ID</button>
       </div>
     </div>
     <div id="ozon-point-info" class="muted" style="margin-bottom:10px"></div>
+    <div id="ozon-point-candidates" style="margin-bottom:10px"></div>
     <button type="button" class="secondary small" id="ozon-save-params">Сохранить габариты и ПВЗ</button>
 
     <div id="ozon-status" style="margin-top:16px"></div>
@@ -144,6 +153,7 @@
 </main>
 </div>
 <script src="/app.js"></script>
+<script src="/address.js"></script>
 <script>
 const id = new URLSearchParams(window.location.search).get('id');
 const itemsBody = document.getElementById('items-body');
@@ -386,6 +396,17 @@ dropzone.addEventListener('drop', (e) => {
   if (files.length) uploadReceipts(files);
 });
 
+const addressFields = LabAddress.bindAddressFields(document.querySelector('[name="pvz_address"]'), document.getElementById('address-parts'));
+let ozonDraftCreated = false;
+// Адрес ПВЗ изменился — выбранный ранее ПВЗ Ozon больше не подходит (пока черновик не создан).
+document.querySelector('[name="pvz_address"]').addEventListener('change', () => {
+  const pointInput = document.getElementById('ozon-delivery-point');
+  if (ozonDraftCreated || !pointInput.value) return;
+  pointInput.value = '';
+  document.getElementById('ozon-point-info').textContent = 'Адрес изменён — ПВЗ Ozon подберётся заново по новому адресу.';
+});
+document.querySelector('[name="pvz_address"]').addEventListener('input', (e) => e.target.dispatchEvent(new Event('change')));
+
 function ozonStatusLabel(status) {
   return {
     created: 'создано', approved: 'подтверждено к отгрузке',
@@ -397,20 +418,100 @@ function ozonStatusLabel(status) {
   }[status] || status;
 }
 
+// Ozon отдаёт сумму объектом { amount: "123.00", currency_code: "RUB" } (иногда — числом/строкой),
+// а сам расчёт может лежать в posting, в postings[0] или на верхнем уровне.
+function ozonAmount(value) {
+  if (value == null) return null;
+  const n = Number(typeof value === 'object' ? value.amount ?? value.value : value);
+  return Number.isFinite(n) ? n : null;
+}
+
+function checkoutLine(checkout) {
+  if (!checkout) return '';
+  const posting = checkout.posting || checkout.postings?.[0] || checkout;
+  const cost = ozonAmount(posting.estimated_delivery_cost ?? posting.delivery_cost ?? posting.price ?? checkout.estimated_delivery_cost);
+  const days = posting.estimated_delivery_days ?? checkout.estimated_delivery_days;
+  const parts = [cost != null ? money(cost) : null, days != null ? `${days} дн.` : null].filter(Boolean);
+  return parts.length ? `<div class="muted">Расчёт: ${parts.join(', ')}</div>` : '';
+}
+
+function escapeText(value) {
+  const div = document.createElement('div');
+  div.textContent = value == null ? '' : String(value);
+  return div.innerHTML;
+}
+
+async function saveOzonPoint(pointId) {
+  document.getElementById('ozon-delivery-point').value = pointId;
+  await api(`/api/orders/${id}/ozon`, {
+    method: 'PATCH',
+    body: JSON.stringify({
+      weight_g: document.getElementById('ozon-weight').value,
+      length_mm: document.getElementById('ozon-length').value,
+      width_mm: document.getElementById('ozon-width').value,
+      height_mm: document.getElementById('ozon-height').value,
+      ozon_delivery_point_id: String(pointId),
+    }),
+  });
+}
+
+document.getElementById('ozon-find-point').addEventListener('click', async () => {
+  const wrap = document.getElementById('ozon-point-candidates');
+  const address = document.querySelector('[name="pvz_address"]').value.trim();
+  if (!address) { toast('Заполните адрес ПВЗ в заказе', 'error'); return; }
+  wrap.innerHTML = '<div class="muted">Поиск… (первый поиск может занять до минуты — загружается список ПВЗ Ozon)</div>';
+  try {
+    const { delivery_points: points } = await api('/api/ozon/delivery-points/find', {
+      method: 'POST',
+      body: JSON.stringify({ address }),
+    });
+    if (!points.length) {
+      wrap.innerHTML = '<div style="color:var(--danger)">ПВЗ Ozon по этому адресу не найден. Проверьте адрес или укажите ID вручную.</div>';
+      return;
+    }
+    wrap.innerHTML = '';
+    points.forEach((p) => {
+      const row = el(`
+        <div style="display:flex;align-items:center;gap:12px;padding:8px 0;border-bottom:1px solid var(--border)">
+          <div style="flex:1">
+            <div>${escapeText(p.full_address)}</div>
+            <div class="muted" style="font-size:12px">${escapeText([p.name, p.type, `ID ${p.delivery_point_id}`].filter(Boolean).join(' · '))}</div>
+          </div>
+          <button type="button" class="secondary small">Выбрать</button>
+        </div>
+      `);
+      row.querySelector('button').addEventListener('click', async () => {
+        try {
+          await saveOzonPoint(p.delivery_point_id);
+          wrap.innerHTML = '';
+          document.getElementById('ozon-point-info').textContent = `Выбран ПВЗ: ${p.full_address}`;
+          toast('ПВЗ выбран', 'success');
+        } catch (err) {
+          toast(err.message, 'error');
+        }
+      });
+      wrap.appendChild(row);
+    });
+  } catch (err) {
+    wrap.innerHTML = `<div style="color:var(--danger)">${escapeText(err.message)}</div>`;
+  }
+});
+
 function renderOzonStatus(shipment) {
   const wrap = document.getElementById('ozon-status');
   if (!shipment || !shipment.order_number) {
-    wrap.innerHTML = '<span class="muted">Черновик в Ozon ещё не создан.</span>';
+    wrap.innerHTML = `<span class="muted">Черновик в Ozon ещё не создан.</span>${checkoutLine(shipment?.checkout)}`;
     document.getElementById('ozon-approve').disabled = true;
     document.getElementById('ozon-label-link').style.pointerEvents = 'none';
     document.getElementById('ozon-label-link').style.opacity = '0.5';
     return;
   }
+  ozonDraftCreated = true;
   const liveStatus = shipment.live_status || shipment.status;
   wrap.innerHTML = `
     <div><strong>Заказ Ozon:</strong> ${shipment.order_number} <span class="pill">${ozonStatusLabel(liveStatus)}</span></div>
     <div class="muted">Отправление: ${shipment.posting_number || '—'}</div>
-    ${shipment.checkout ? `<div class="muted">Расчёт: ${money(shipment.checkout.posting?.estimated_delivery_cost || 0)}, ${shipment.checkout.posting?.estimated_delivery_days ?? '—'} дн.</div>` : ''}
+    ${checkoutLine(shipment.checkout)}
     ${shipment.estimated_delivery_days != null ? `<div class="muted">Срок доставки: ${shipment.estimated_delivery_days} дн.</div>` : ''}
     ${shipment.approved_at ? `<div class="muted">Подтверждено: ${new Date(shipment.approved_at).toLocaleString('ru-RU')}</div>` : ''}
   `;
@@ -459,6 +560,7 @@ document.getElementById('ozon-save-params').addEventListener('click', async () =
 document.getElementById('ozon-checkout').addEventListener('click', async () => {
   try {
     const order = await api(`/api/orders/${id}/ozon/checkout`, { method: 'POST' });
+    document.getElementById('ozon-delivery-point').value = order.ozon_delivery_point_id || '';
     renderOzonStatus(order.ozon_shipment);
     toast('Расчёт получен', 'success');
   } catch (err) {
@@ -470,6 +572,7 @@ document.getElementById('ozon-create').addEventListener('click', async () => {
   if (!(await confirmDialog('Создать черновик отправления в Ozon для этого заказа?', { danger: false, okLabel: 'Создать' }))) return;
   try {
     const order = await api(`/api/orders/${id}/ozon/create`, { method: 'POST' });
+    document.getElementById('ozon-delivery-point').value = order.ozon_delivery_point_id || '';
     renderOzonStatus(order.ozon_shipment);
     toast('Черновик создан в Ozon', 'success');
   } catch (err) {
@@ -528,6 +631,7 @@ async function load() {
   form.full_name.value = order.full_name || '';
   form.phone.value = order.phone || '';
   form.pvz_address.value = order.pvz_address || '';
+  addressFields.refresh();
   form.delivery_price.value = order.delivery_price || 0;
   form.notes.value = order.notes || '';
   order.items.forEach((it) => addItemRow(it));
@@ -561,6 +665,8 @@ document.getElementById('order-form').addEventListener('submit', async (e) => {
   };
   try {
     const order = await api(`/api/orders/${id}`, { method: 'PATCH', body: JSON.stringify(data) });
+    const pointId = document.getElementById('ozon-delivery-point').value.trim();
+    if (pointId !== (order.ozon_delivery_point_id || '')) await saveOzonPoint(pointId);
     itemsBody.innerHTML = '';
     order.items.forEach((it) => addItemRow(it));
     if (!order.items.length) addItemRow();

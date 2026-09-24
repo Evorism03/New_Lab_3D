@@ -211,8 +211,18 @@ input:focus, select:focus, textarea:focus {
   gap: 12px;
 }
 
+/* Части адреса ПВЗ: город / улица / дом / дополнительно */
+.address-parts {
+  display: grid;
+  grid-template-columns: 2fr 2fr 1fr 2fr;
+  gap: 12px;
+}
+.address-parts .field { margin-bottom: 0; }
+.address-parts label { font-size: 12px; }
+
 @media (max-width: 720px) {
   .grid-2, .grid-3 { grid-template-columns: 1fr; }
+  .address-parts { grid-template-columns: 1fr 1fr; }
 }
 
 button {

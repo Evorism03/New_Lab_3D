@@ -44,10 +44,17 @@
         </div>
       </div>
 
-      <div class="field">
-        <label>Адрес ПВЗ</label>
-        <input name="pvz_address" required placeholder="г. Москва, ул. Примерная, д. 1, ПВЗ №123">
+      <div class="field" style="margin-bottom:8px">
+        <label>Адрес ПВЗ <span class="muted" style="font-weight:normal">— вставьте целиком из ВК, части заполнятся сами</span></label>
+        <input name="pvz_address" required placeholder="г. Москва, ул. Примерная, д. 1">
       </div>
+      <div class="address-parts" id="address-parts">
+        <div class="field"><label>Город</label><input data-part="city" placeholder="г. Москва"></div>
+        <div class="field"><label>Улица</label><input data-part="street" placeholder="ул. Ленина"></div>
+        <div class="field"><label>Дом</label><input data-part="house" placeholder="5"></div>
+        <div class="field"><label>Дополнительно</label><input data-part="extra" placeholder="ТЦ, ПВЗ №…"></div>
+      </div>
+      <div style="margin-bottom:12px"></div>
 
       <div class="field">
         <label>Сумма доставки, ₽</label>
@@ -88,6 +95,7 @@
 </main>
 </div>
 <script src="/app.js"></script>
+<script src="/address.js"></script>
 <script>
 const itemsBody = document.getElementById('items-body');
 const addItemBtn = document.getElementById('add-item');
@@ -193,6 +201,8 @@ addItemBtn.addEventListener('click', () => addItemRow());
   }
   addItemRow();
 })();
+
+LabAddress.bindAddressFields(document.querySelector('[name="pvz_address"]'), document.getElementById('address-parts'));
 
 document.getElementById('order-form').addEventListener('submit', async (e) => {
   e.preventDefault();
