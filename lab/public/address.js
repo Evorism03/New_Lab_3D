@@ -19,7 +19,7 @@
     'поселение', 'пос-е', 'округ', 'городской', 'муниципальный', 'мо', 'го', 'мр-н',
     'снт', 'днт', 'тсн', 'кп', 'нп', 'территория',
   ];
-  const HOUSE_TYPES = ['дом', 'д', 'владение', 'вл'];
+  const HOUSE_TYPES = ['дом', 'д', 'владение', 'вл', 'участок', 'уч'];
   const BUILDING_TYPES = ['корпус', 'корп', 'к', 'строение', 'стр', 'литера', 'лит'];
 
   const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\-]/g, '\\$&');
@@ -36,6 +36,9 @@
   const REGION_ANY = new RegExp(`(^|\\s)(?:${wordsRe(REGION_WORDS)})\\.?(\\s|$)`, 'i');
   // Номер дома: «5», «5А», «5/2», «5к2», «5 к 2», «5 стр. 1».
   const HOUSE_NUMBER = /^\d+[а-яa-z]?(?:\s*\/\s*\d+[а-яa-z]?)?(?:\s*(?:к|корп|корпус|с|стр|строение|лит|литера)\.?\s*\d*[а-яa-z]?)*$/i;
+
+  // Служебные пометки, а не улица: «ТЦ Мега», «ПВЗ Ozon», «вход со двора», «2 этаж», «офис 5».
+  const SERVICE_RE = /^(тц|трц|тк|пвз|ozon|озон|сдэк|вход|этаж|офис|оф|пом|помещение|кв|\d+\s*этаж)(?![а-яё])/i;
 
   function clean(s) {
     return String(s || '').replace(/\s+/g, ' ').replace(/^[\s,.;]+|[\s,;]+$/g, '').trim();
@@ -67,6 +70,11 @@
       if (HOUSE_PREFIX.test(seg) && /\d/.test(seg.replace(HOUSE_PREFIX, '').slice(0, 1))) {
         if (!parts.house) { parts.house = clean(seg.replace(HOUSE_PREFIX, '')); continue; }
       }
+      // «ул. поселение Десёновское» — на самом деле поселение/округ/СНТ, «ул.» лишнее.
+      if (STREET_PREFIX.test(seg) && REGION_ANY.test(seg.replace(STREET_PREFIX, '')) && !parts.street) {
+        localities.push(clean(seg.replace(STREET_PREFIX, '')));
+        continue;
+      }
       if (STREET_PREFIX.test(seg) || STREET_SUFFIX.test(seg)) {
         if (!parts.street) {
           // «ул. Ленина 5» — номер дома в том же сегменте.
@@ -81,6 +89,7 @@
       if ((CITY_PREFIX.test(seg) || village) && !parts.street) { localities.push(seg); hasCity = true; continue; }
       if (REGION_ANY.test(seg) && !parts.street) { localities.push(seg); continue; }
       if (HOUSE_NUMBER.test(seg) && !parts.house) { parts.house = seg; continue; }
+      if (SERVICE_RE.test(seg)) { extra.push(seg); continue; }
 
       // Сегмент без маркеров: сначала город, потом улица (с возможным номером дома в конце).
       if (!hasCity && !parts.street) {
@@ -106,6 +115,12 @@
       extra.push(seg);
     }
     parts.city = localities.join(', ');
+    // Улица не нашлась, а в «дополнительно» есть похожее на улицу (не ТЦ/ПВЗ/номер) — это она:
+    // «…, д. 3, 2-я Нововатутинская».
+    if (!parts.street && extra.length) {
+      const idx = extra.findIndex((e) => !SERVICE_RE.test(e) && /[а-яё]{3,}/i.test(e));
+      if (idx >= 0) parts.street = extra.splice(idx, 1)[0];
+    }
     parts.extra = extra.join(', ');
     return parts;
   }

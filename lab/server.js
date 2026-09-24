@@ -481,7 +481,10 @@ function serveStatic(req, res, pathname) {
       return res.end('Не найдено');
     }
     const ext = path.extname(filePath);
-    res.writeHead(200, { 'Content-Type': MIME[ext] || 'application/octet-stream' });
+    // Страницы, скрипты и стили не кэшируем: после обновления браузер сразу берёт новую версию.
+    const headers = { 'Content-Type': MIME[ext] || 'application/octet-stream' };
+    if (['.html', '.js', '.css', '.webmanifest'].includes(ext)) headers['Cache-Control'] = 'no-cache';
+    res.writeHead(200, headers);
     res.end(data);
   });
 }
