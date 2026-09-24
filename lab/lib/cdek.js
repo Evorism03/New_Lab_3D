@@ -8,6 +8,12 @@ import { addressQuery, addressWords, rankByAddress } from './address-match.js';
 const PROD_BASE = 'https://api.cdek.ru/v2';
 const TEST_BASE = 'https://api.edu.cdek.ru/v2';
 
+// Без User-Agent/Accept запросы от Node.js выглядят как бот, и фильтр СДЭК отвечает 403.
+const BASE_HEADERS = {
+  'User-Agent': 'Mozilla/5.0 (compatible; Lab3D-Orders/1.0; +https://github.com/Evorism03/New_Lab_3D)',
+  Accept: 'application/json',
+};
+
 let tokenCache = { key: '', value: '', expiresAt: 0 };
 
 function config() {
@@ -29,7 +35,20 @@ function cdekErrorText(data, status) {
   if (errors.length) return errors.map((e) => [e.code, e.message].filter(Boolean).join(': ')).join('; ');
   if (data?.error_description || data?.error) return data.error_description || data.error;
   if (data?.message) return data.message;
-  if (data?.raw) return String(data.raw).slice(0, 300);
+  if (data?.raw) {
+    const raw = String(data.raw);
+    // Страница антибот-фильтра СДЭК (HTML «Forbidden») — показываем суть, а не разметку.
+    if (/<html|<!doctype/i.test(raw)) {
+      const text = raw.replace(/<style[\s\S]*?<\/style>|<script[\s\S]*?<\/script>/gi, ' ')
+        .replace(/<[^>]+>/g, ' ').replace(/&nbsp;/g, ' ').replace(/\s+/g, ' ').trim();
+      const ip = text.match(/IP:\s*([\d.:a-f]+)/i)?.[1];
+      const title = text.split(' ').slice(0, 3).join(' ');
+      return `${status} ${/forbidden/i.test(text) ? 'Forbidden' : title} — СДЭК заблокировал запрос на уровне защиты сети`
+        + `${ip ? ` (IP сервера ${ip})` : ''}. Если ошибка повторяется, напишите в поддержку СДЭК (integrator@cdek.ru) с этим IP.`
+        + ` Полный ответ: ${text.slice(0, 200)}`;
+    }
+    return raw.slice(0, 300);
+  }
   return `HTTP ${status}`;
 }
 
@@ -39,11 +58,13 @@ async function getToken(force) {
   if (!force && tokenCache.key === key && tokenCache.value && Date.now() < tokenCache.expiresAt - 60_000) {
     return tokenCache.value;
   }
-  // По спецификации параметры передаются в query-строке.
+  // По спецификации параметры — в query-строке; дублируем их в теле формы, как делают
+  // остальные клиенты СДЭК: пустой POST антибот-фильтр СДЭК может отклонить.
   const params = new URLSearchParams({ grant_type: 'client_credentials', client_id: clientId, client_secret: clientSecret });
   const res = await fetch(`${base}/oauth/token?${params}`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    headers: { ...BASE_HEADERS, 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: params.toString(),
   });
   const text = await res.text();
   let data = {};
@@ -61,7 +82,7 @@ async function getToken(force) {
 
 async function authorizedFetch(url, init = {}) {
   let token = await getToken();
-  const doFetch = () => fetch(url, { ...init, headers: { ...(init.headers || {}), Authorization: `Bearer ${token}` } });
+  const doFetch = () => fetch(url, { ...init, headers: { ...BASE_HEADERS, ...(init.headers || {}), Authorization: `Bearer ${token}` } });
   let res = await doFetch();
   if (res.status === 401) {
     token = await getToken(true);
