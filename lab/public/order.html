@@ -1,0 +1,583 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Заказ — Order Automation</title>
+<link rel="stylesheet" href="/style.css">
+<link rel="manifest" href="/manifest.webmanifest">
+<meta name="theme-color" content="#171d2b">
+</head>
+<body>
+<div class="layout">
+<aside class="sidebar" id="sidebar">
+  <div class="sidebar-top">
+    <span class="brand">📦 Заказы</span>
+    <button type="button" class="sidebar-toggle" id="sidebar-toggle" title="Свернуть/развернуть меню">☰</button>
+  </div>
+  <a href="/" class="new-order-btn"><span class="nav-icon">➕</span><span class="label">Новый заказ</span></a>
+  <nav class="sidebar-nav">
+    <a href="/board.html"><span class="nav-icon">🗂</span><span class="label">Доска</span></a>
+    <a href="/assembly.html"><span class="nav-icon">🔧</span><span class="label">Сборка</span></a>
+    <a href="/orders.html"><span class="nav-icon">📋</span><span class="label">Все заказы</span></a>
+    <a href="/serials.html"><span class="nav-icon">#️⃣</span><span class="label">Серийные номера</span></a>
+    <a href="/ozon.html"><span class="nav-icon">🚚</span><span class="label">Ozon Доставка</span></a>
+  </nav>
+  <div class="sidebar-bottom" id="sidebar-user"></div>
+</aside>
+<main>
+  <div class="card">
+    <div class="toolbar">
+      <h2 id="title" style="margin:0">Заказ</h2>
+      <div class="spacer"></div>
+      <select id="status-select" style="max-width:200px"></select>
+      <button type="button" class="danger" id="delete-btn">Удалить</button>
+    </div>
+    <div id="external-info" class="muted" style="margin-bottom:10px"></div>
+    <form id="order-form">
+      <div class="grid-3">
+        <div class="field">
+          <label>Транспортная компания</label>
+          <select name="delivery_service" id="delivery-service"></select>
+        </div>
+        <div class="field">
+          <label>ФИО получателя</label>
+          <input name="full_name" required>
+        </div>
+        <div class="field">
+          <label>Номер телефона</label>
+          <input name="phone" required>
+        </div>
+      </div>
+      <div class="field">
+        <label>Адрес ПВЗ</label>
+        <input name="pvz_address" required>
+      </div>
+      <div class="field">
+        <label>Сумма доставки, ₽</label>
+        <input name="delivery_price" type="number" step="0.01" min="0" style="max-width:200px">
+      </div>
+
+      <h3>Товары и серийные номера</h3>
+      <table class="items-table" id="items-table">
+        <thead>
+          <tr>
+            <th>Товар</th>
+            <th>Модель</th>
+            <th>Цвет</th>
+            <th>Разъём</th>
+            <th style="width:70px">Кол-во</th>
+            <th style="width:110px">Цена, ₽</th>
+            <th style="width:190px">Серийный номер</th>
+            <th style="width:130px">Дата сборки</th>
+            <th style="width:100px"></th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody id="items-body"></tbody>
+      </table>
+      <button type="button" class="secondary small" id="add-item">+ Добавить товар</button>
+
+      <div class="field" style="margin-top:16px">
+        <label>Заметка</label>
+        <textarea name="notes" rows="2"></textarea>
+      </div>
+
+      <div class="field" style="max-width:260px">
+        <label>Итого товары + доставка</label>
+        <div id="preview-total" class="pill" style="font-size:16px;padding:8px 14px">0,00 ₽</div>
+      </div>
+
+      <button type="submit">Сохранить изменения</button>
+    </form>
+  </div>
+
+  <div class="card" style="margin-top:16px">
+    <h2>🚚 Ozon Доставка</h2>
+    <div class="grid-3">
+      <div class="field">
+        <label>Вес, г</label>
+        <input id="ozon-weight" type="number" min="0">
+      </div>
+      <div class="field">
+        <label>Длина, мм</label>
+        <input id="ozon-length" type="number" min="0">
+      </div>
+      <div class="field">
+        <label>Ширина, мм</label>
+        <input id="ozon-width" type="number" min="0">
+      </div>
+      <div class="field">
+        <label>Высота, мм</label>
+        <input id="ozon-height" type="number" min="0">
+      </div>
+      <div class="field">
+        <label>ID ПВЗ Ozon (delivery_point_id)</label>
+        <input id="ozon-delivery-point" placeholder="узнать на странице «Ozon Доставка»">
+      </div>
+      <div class="field" style="align-self:end">
+        <button type="button" class="secondary" id="ozon-check-point">Проверить адрес ПВЗ</button>
+      </div>
+    </div>
+    <div id="ozon-point-info" class="muted" style="margin-bottom:10px"></div>
+    <button type="button" class="secondary small" id="ozon-save-params">Сохранить габариты и ПВЗ</button>
+
+    <div id="ozon-status" style="margin-top:16px"></div>
+
+    <div class="toolbar" style="margin-top:10px">
+      <button type="button" class="secondary" id="ozon-checkout">Рассчитать доставку</button>
+      <button type="button" id="ozon-create">Создать черновик в Ozon</button>
+      <button type="button" class="secondary" id="ozon-refresh-status">Обновить статус</button>
+      <button type="button" class="secondary" id="ozon-approve">Подтвердить к отгрузке</button>
+      <a href="#" id="ozon-label-link" target="_blank"><button type="button" class="secondary">🏷 Этикетка Ozon PDF</button></a>
+    </div>
+  </div>
+
+  <div class="card" style="margin-top:16px">
+    <h2>Чеки</h2>
+    <div id="receipts-list"></div>
+    <div id="receipt-dropzone" class="dropzone" style="margin-top:10px">
+      <div class="muted">Перетащите файл сюда или</div>
+      <input type="file" id="receipt-file" accept="image/*,.pdf" multiple>
+    </div>
+  </div>
+</main>
+</div>
+<script src="/app.js"></script>
+<script>
+const id = new URLSearchParams(window.location.search).get('id');
+const itemsBody = document.getElementById('items-body');
+const previewTotal = document.getElementById('preview-total');
+const deliveryInput = document.querySelector('[name="delivery_price"]');
+let statuses = [];
+let catalog = { models: [], colors: [], connectors: [], products: [] };
+
+// Заказы 3D-печати (item_kind === 'print', прилетают из New_Lab_3d) не привязаны к каталогу
+// модель/цвет/разъём и не печатают этикетку с серийником — только материал/финиш/файл, пришедшие как есть.
+function addItemRow(values = {}) {
+  const isPrint = values.item_kind === 'print';
+  const hidden = (name, value) => `<input type="hidden" name="${name}" value="${value || ''}">`;
+
+  let productOptions = catalog.products
+    .map((p) => `<option value="${p.label}" ${values.product_name === p.label ? 'selected' : ''}>${p.label}</option>`)
+    .join('');
+  if (values.product_name && !catalog.products.some((p) => p.label === values.product_name)) {
+    productOptions = `<option value="${values.product_name}" selected>${values.product_name}</option>` + productOptions;
+  }
+  const modelOptions = catalog.models
+    .map((m) => `<option value="${m.id}" ${values.model_id === m.id ? 'selected' : ''}>${m.label}</option>`)
+    .join('');
+  const colorOptions = catalog.colors
+    .map((c) => `<option value="${c.letter}" ${values.color === c.letter ? 'selected' : ''}>${c.label}</option>`)
+    .join('');
+  const connectorOptions = catalog.connectors
+    .map((c) => `<option value="${c.letter}" ${values.connector === c.letter ? 'selected' : ''}>${c.label}</option>`)
+    .join('');
+
+  const fileLabel = values.source_file || 'файл';
+  const fileLine = values.source_file_url
+    ? `<div><a href="${values.source_file_url}" target="_blank" rel="noopener">📄 ${fileLabel} ⬇</a></div>`
+    : values.source_file
+      ? `<div class="muted">📄 ${values.source_file}</div>`
+      : '';
+  const productCell = isPrint
+    ? `<td>
+        <div><strong>${values.material || values.product_name || 'Товар'}</strong>${values.finish ? ` — ${values.finish}` : ''}</div>
+        ${fileLine}
+        ${hidden('product_name', values.product_name)}${hidden('item_kind', values.item_kind)}
+        ${hidden('material', values.material)}${hidden('finish', values.finish)}${hidden('source_file', values.source_file)}
+        ${hidden('external_ref', values.external_ref)}${hidden('source_file_url', values.source_file_url)}
+      </td>
+      <td class="muted">—${hidden('model_id', '')}</td>
+      <td class="muted">${values.color || '—'}${hidden('color', values.color)}</td>
+      <td class="muted">—${hidden('connector', '')}</td>`
+    : `<td><select name="product_name">${productOptions}</select>${hidden('item_kind', 'hardware')}</td>
+      <td><select name="model_id">${modelOptions}</select></td>
+      <td><div style="display:flex;align-items:center"><span class="dot color-dot"></span><select name="color">${colorOptions}</select></div></td>
+      <td><div style="display:flex;align-items:center"><span class="dot connector-dot"></span><select name="connector">${connectorOptions}</select></div></td>`;
+
+  const serialCell = isPrint
+    ? `<td class="muted">не применимо${hidden('serial_number', '')}</td>`
+    : `<td>
+        <div style="display:flex;gap:4px">
+          <input name="serial_number" placeholder="AL1R03TT0043" value="${values.serial_number || ''}">
+          <button type="button" class="secondary small generate-serial" title="Сгенерировать серийник (буквы можно менять без потери номера, пока он не сохранён в заказе)">⚡</button>
+        </div>
+      </td>`;
+
+  const labelCell = isPrint
+    ? `<td><button type="button" class="secondary small" disabled title="Этикетка с серийником — только для физического товара">🏷 PDF</button></td>`
+    : `<td>${
+        values.id
+          ? `<a href="/api/items/${values.id}/label.pdf" target="_blank"><button type="button" class="secondary small">🏷 PDF</button></a>`
+          : `<button type="button" class="secondary small" disabled title="Сначала сохраните заказ">🏷 PDF</button>`
+      }</td>`;
+
+  const row = el(`
+    <tr>
+      ${productCell}
+      <td><input name="quantity" type="number" min="1" value="${values.quantity || 1}"></td>
+      <td><input name="price" type="number" step="0.01" min="0" value="${values.price || 0}"></td>
+      ${serialCell}
+      <td><input name="assembled_at" type="date" value="${values.assembled_at || ''}" title="Пусто = сегодняшняя дата на момент печати этикетки"></td>
+      ${labelCell}
+      <td><button type="button" class="secondary small remove-item">✕</button></td>
+    </tr>
+  `);
+
+  if (!isPrint) {
+    const colorSelect = row.querySelector('[name="color"]');
+    const connectorSelect = row.querySelector('[name="connector"]');
+    const colorDot = row.querySelector('.color-dot');
+    const connectorDotEl = row.querySelector('.connector-dot');
+    const updateDots = () => {
+      colorDot.style.background = catalog.colors.find((c) => c.letter === colorSelect.value)?.swatch || '#6b7280';
+      connectorDotEl.style.background = catalog.connectors.find((c) => c.letter === connectorSelect.value)?.swatch || '#6b7280';
+    };
+    colorSelect.addEventListener('change', updateDots);
+    connectorSelect.addEventListener('change', updateDots);
+    updateDots();
+
+    row.querySelector('.generate-serial').addEventListener('click', async () => {
+      const modelId = row.querySelector('[name="model_id"]').value;
+      const color = row.querySelector('[name="color"]').value;
+      const connector = row.querySelector('[name="connector"]').value;
+      const currentSerial = row.querySelector('[name="serial_number"]').value.trim();
+      try {
+        const { serial } = await api('/api/serial', {
+          method: 'POST',
+          body: JSON.stringify({ model_id: modelId, color, connector, current_serial: currentSerial }),
+        });
+        row.querySelector('[name="serial_number"]').value = serial;
+      } catch (err) {
+        toast(err.message, 'error');
+      }
+    });
+  }
+
+  row.querySelector('.remove-item').addEventListener('click', () => { row.remove(); updatePreview(); });
+  row.querySelectorAll('input').forEach((i) => i.addEventListener('input', updatePreview));
+  itemsBody.appendChild(row);
+  updatePreview();
+}
+
+function readItems() {
+  return [...itemsBody.querySelectorAll('tr')].map((row) => {
+    const get = (n) => row.querySelector(`[name="${n}"]`)?.value || '';
+    return {
+      product_name: get('product_name'),
+      model_id: get('model_id'),
+      color: get('color'),
+      connector: get('connector'),
+      quantity: Number(get('quantity')) || 1,
+      price: Number(get('price')) || 0,
+      serial_number: get('serial_number'),
+      assembled_at: get('assembled_at'),
+      item_kind: get('item_kind') || 'hardware',
+      material: get('material'),
+      finish: get('finish'),
+      source_file: get('source_file'),
+      external_ref: get('external_ref'),
+      source_file_url: get('source_file_url'),
+    };
+  });
+}
+
+function updatePreview() {
+  const goods = readItems().reduce((sum, it) => sum + it.price * it.quantity, 0);
+  const delivery = Number(deliveryInput.value) || 0;
+  previewTotal.textContent = money(goods + delivery);
+}
+
+document.getElementById('add-item').addEventListener('click', () => addItemRow());
+deliveryInput.addEventListener('input', updatePreview);
+
+function renderReceipts(receipts) {
+  const wrap = document.getElementById('receipts-list');
+  wrap.innerHTML = '';
+  if (!receipts.length) {
+    wrap.appendChild(el('<div class="muted" style="padding:6px 0">Чеков пока нет</div>'));
+    return;
+  }
+  const grid = el('<div class="receipt-grid"></div>');
+  for (const r of receipts) {
+    const isImage = (r.mime_type || '').startsWith('image/');
+    const card = el(
+      isImage
+        ? `
+      <div class="receipt-card">
+        <a href="/api/receipts/${r.id}/file" target="_blank">
+          <img class="receipt-thumb" src="/api/receipts/${r.id}/file" alt="${r.original_name}">
+        </a>
+        <div class="receipt-card-foot">
+          <span class="name" title="${r.original_name}">${r.original_name}</span>
+          <button type="button" class="secondary small delete-receipt">✕</button>
+        </div>
+      </div>
+    `
+        : `
+      <div class="receipt-card">
+        <a class="receipt-file-icon" href="/api/receipts/${r.id}/file" target="_blank">📄</a>
+        <div class="receipt-card-foot">
+          <a class="name" href="/api/receipts/${r.id}/file" target="_blank" title="${r.original_name}">${r.original_name}</a>
+          <button type="button" class="secondary small delete-receipt">✕</button>
+        </div>
+      </div>
+    `
+    );
+    card.querySelector('.delete-receipt').addEventListener('click', async () => {
+      if (!(await confirmDialog('Удалить чек?'))) return;
+      await api(`/api/receipts/${r.id}`, { method: 'DELETE' });
+      card.remove();
+      if (!grid.children.length) renderReceipts([]);
+      toast('Чек удалён', 'success');
+    });
+    grid.appendChild(card);
+  }
+  wrap.appendChild(grid);
+}
+
+function readFileAsBase64(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result.split(',')[1]);
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
+async function uploadReceipts(files) {
+  for (const file of files) {
+    try {
+      const dataBase64 = await readFileAsBase64(file);
+      await api(`/api/orders/${id}/receipts`, {
+        method: 'POST',
+        body: JSON.stringify({ filename: file.name, mimeType: file.type, dataBase64 }),
+      });
+    } catch (err) {
+      toast(`${file.name}: ${err.message}`, 'error');
+    }
+  }
+  const order = await api(`/api/orders/${id}`);
+  renderReceipts(order.receipts || []);
+}
+
+document.getElementById('receipt-file').addEventListener('change', (e) => {
+  const files = [...e.target.files];
+  e.target.value = '';
+  uploadReceipts(files);
+});
+
+const dropzone = document.getElementById('receipt-dropzone');
+['dragenter', 'dragover'].forEach((evt) =>
+  dropzone.addEventListener(evt, (e) => {
+    e.preventDefault();
+    dropzone.classList.add('dragover');
+  })
+);
+['dragleave', 'drop'].forEach((evt) =>
+  dropzone.addEventListener(evt, (e) => {
+    e.preventDefault();
+    dropzone.classList.remove('dragover');
+  })
+);
+dropzone.addEventListener('drop', (e) => {
+  const files = [...(e.dataTransfer?.files || [])];
+  if (files.length) uploadReceipts(files);
+});
+
+function ozonStatusLabel(status) {
+  return {
+    created: 'создано', approved: 'подтверждено к отгрузке',
+    unknown: 'неизвестно', forming: 'формируется', forming_failed: 'ошибка формирования',
+    ready_for_shipping: 'готово к отгрузке', in_container: 'в грузоместе',
+    acceptance_in_progress: 'идёт приёмка', on_way: 'в пути',
+    not_accepted_to_delivery: 'не принято в доставку', in_delivery_point: 'в пункте выдачи',
+    in_courier_service: 'у курьера', delivered: 'доставлено', canceled: 'отменено',
+  }[status] || status;
+}
+
+function renderOzonStatus(shipment) {
+  const wrap = document.getElementById('ozon-status');
+  if (!shipment || !shipment.order_number) {
+    wrap.innerHTML = '<span class="muted">Черновик в Ozon ещё не создан.</span>';
+    document.getElementById('ozon-approve').disabled = true;
+    document.getElementById('ozon-label-link').style.pointerEvents = 'none';
+    document.getElementById('ozon-label-link').style.opacity = '0.5';
+    return;
+  }
+  const liveStatus = shipment.live_status || shipment.status;
+  wrap.innerHTML = `
+    <div><strong>Заказ Ozon:</strong> ${shipment.order_number} <span class="pill">${ozonStatusLabel(liveStatus)}</span></div>
+    <div class="muted">Отправление: ${shipment.posting_number || '—'}</div>
+    ${shipment.checkout ? `<div class="muted">Расчёт: ${money(shipment.checkout.posting?.estimated_delivery_cost || 0)}, ${shipment.checkout.posting?.estimated_delivery_days ?? '—'} дн.</div>` : ''}
+    ${shipment.estimated_delivery_days != null ? `<div class="muted">Срок доставки: ${shipment.estimated_delivery_days} дн.</div>` : ''}
+    ${shipment.approved_at ? `<div class="muted">Подтверждено: ${new Date(shipment.approved_at).toLocaleString('ru-RU')}</div>` : ''}
+  `;
+  document.getElementById('ozon-approve').disabled = false;
+  document.getElementById('ozon-label-link').style.pointerEvents = '';
+  document.getElementById('ozon-label-link').style.opacity = '';
+  document.getElementById('ozon-label-link').href = `/api/orders/${id}/ozon/label.pdf`;
+}
+
+document.getElementById('ozon-check-point').addEventListener('click', async () => {
+  const infoEl = document.getElementById('ozon-point-info');
+  const pointId = document.getElementById('ozon-delivery-point').value.trim();
+  if (!pointId) { toast('Введите ID ПВЗ', 'error'); return; }
+  infoEl.textContent = 'Проверка…';
+  try {
+    const { delivery_point } = await api('/api/ozon/delivery-point/info', {
+      method: 'POST',
+      body: JSON.stringify({ delivery_point_id: pointId }),
+    });
+    infoEl.textContent = delivery_point ? `${delivery_point.full_address || ''} (${delivery_point.type || ''})` : 'ПВЗ не найден';
+  } catch (err) {
+    infoEl.textContent = '';
+    toast(err.message, 'error');
+  }
+});
+
+document.getElementById('ozon-save-params').addEventListener('click', async () => {
+  try {
+    const order = await api(`/api/orders/${id}/ozon`, {
+      method: 'PATCH',
+      body: JSON.stringify({
+        weight_g: document.getElementById('ozon-weight').value,
+        length_mm: document.getElementById('ozon-length').value,
+        width_mm: document.getElementById('ozon-width').value,
+        height_mm: document.getElementById('ozon-height').value,
+        ozon_delivery_point_id: document.getElementById('ozon-delivery-point').value.trim(),
+      }),
+    });
+    toast('Сохранено', 'success');
+    renderOzonStatus(order.ozon_shipment);
+  } catch (err) {
+    toast(err.message, 'error');
+  }
+});
+
+document.getElementById('ozon-checkout').addEventListener('click', async () => {
+  try {
+    const order = await api(`/api/orders/${id}/ozon/checkout`, { method: 'POST' });
+    renderOzonStatus(order.ozon_shipment);
+    toast('Расчёт получен', 'success');
+  } catch (err) {
+    toast(err.message, 'error');
+  }
+});
+
+document.getElementById('ozon-create').addEventListener('click', async () => {
+  if (!(await confirmDialog('Создать черновик отправления в Ozon для этого заказа?', { danger: false, okLabel: 'Создать' }))) return;
+  try {
+    const order = await api(`/api/orders/${id}/ozon/create`, { method: 'POST' });
+    renderOzonStatus(order.ozon_shipment);
+    toast('Черновик создан в Ozon', 'success');
+  } catch (err) {
+    toast(err.message, 'error');
+  }
+});
+
+document.getElementById('ozon-refresh-status').addEventListener('click', async () => {
+  try {
+    const order = await api(`/api/orders/${id}/ozon/status`, { method: 'POST' });
+    renderOzonStatus(order.ozon_shipment);
+  } catch (err) {
+    toast(err.message, 'error');
+  }
+});
+
+document.getElementById('ozon-approve').addEventListener('click', async () => {
+  if (!(await confirmDialog('Подтвердить отправление к отгрузке в Ozon?', { danger: false, okLabel: 'Подтвердить' }))) return;
+  try {
+    const order = await api(`/api/orders/${id}/ozon/approve`, { method: 'POST' });
+    renderOzonStatus(order.ozon_shipment);
+    toast('Подтверждено', 'success');
+  } catch (err) {
+    toast(err.message, 'error');
+  }
+});
+
+async function load() {
+  [statuses, catalog] = await Promise.all([api('/api/statuses'), api('/api/catalog')]);
+  const sel = document.getElementById('status-select');
+  for (const s of statuses) sel.appendChild(el(`<option value="${s.id}">${s.label}</option>`));
+
+  const deliverySelect = document.getElementById('delivery-service');
+  for (const s of catalog.delivery_services) {
+    deliverySelect.appendChild(el(`<option value="${s.label}">${s.label}</option>`));
+  }
+
+  const order = await api(`/api/orders/${id}`);
+  document.getElementById('title').textContent = `Заказ #${order.id}`;
+  const infoEl = document.getElementById('external-info');
+  if (order.source === 'new_lab_3d') {
+    const paidPill = order.payment_status === 'paid'
+      ? '<span class="pill delivered">Оплачен</span>'
+      : '<span class="pill new">Не оплачен</span>';
+    infoEl.innerHTML = `
+      Из New_Lab_3d ${paidPill}
+      ${order.customer_email ? ` · ${order.customer_email}` : ''}
+      ${order.shipping_address ? ` · ${order.shipping_address}` : ''}
+    `;
+  } else {
+    infoEl.innerHTML = '';
+  }
+  sel.value = order.status;
+  const form = document.getElementById('order-form');
+  form.delivery_service.value = order.delivery_service || 'СДЭК';
+  form.full_name.value = order.full_name || '';
+  form.phone.value = order.phone || '';
+  form.pvz_address.value = order.pvz_address || '';
+  form.delivery_price.value = order.delivery_price || 0;
+  form.notes.value = order.notes || '';
+  order.items.forEach((it) => addItemRow(it));
+  if (!order.items.length) addItemRow();
+  updatePreview();
+  renderReceipts(order.receipts || []);
+
+  document.getElementById('ozon-weight').value = order.weight_g || '';
+  document.getElementById('ozon-length').value = order.length_mm || '';
+  document.getElementById('ozon-width').value = order.width_mm || '';
+  document.getElementById('ozon-height').value = order.height_mm || '';
+  document.getElementById('ozon-delivery-point').value = order.ozon_delivery_point_id || '';
+  renderOzonStatus(order.ozon_shipment);
+
+  sel.addEventListener('change', async () => {
+    await api(`/api/orders/${id}`, { method: 'PATCH', body: JSON.stringify({ status: sel.value }) });
+  });
+}
+
+document.getElementById('order-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const form = e.target;
+  const data = {
+    delivery_service: form.delivery_service.value,
+    full_name: form.full_name.value,
+    phone: form.phone.value,
+    pvz_address: form.pvz_address.value,
+    delivery_price: Number(form.delivery_price.value) || 0,
+    notes: form.notes.value,
+    items: readItems(),
+  };
+  try {
+    const order = await api(`/api/orders/${id}`, { method: 'PATCH', body: JSON.stringify(data) });
+    itemsBody.innerHTML = '';
+    order.items.forEach((it) => addItemRow(it));
+    if (!order.items.length) addItemRow();
+    updatePreview();
+    toast('Сохранено', 'success');
+  } catch (err) {
+    toast(err.message, 'error');
+  }
+});
+
+document.getElementById('delete-btn').addEventListener('click', async () => {
+  if (!(await confirmDialog('Удалить заказ безвозвратно?'))) return;
+  await api(`/api/orders/${id}`, { method: 'DELETE' });
+  window.location.href = '/orders.html';
+});
+
+load();
+</script>
+</body>
+</html>

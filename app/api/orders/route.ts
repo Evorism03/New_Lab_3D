@@ -4,6 +4,7 @@ import { z } from "zod";
 import { auth } from "@/auth";
 import { prisma } from "@/lib/db";
 import { OrderStatus } from "@/lib/generated/prisma/client";
+import { pushOrderToLab } from "@/lib/labClient";
 import { computePrice, PricingError } from "@/lib/pricing/engine";
 import { serializeOrder } from "@/lib/serializers";
 
@@ -108,7 +109,10 @@ export async function POST(request: NextRequest) {
     include: { items: { include: { file: true, material: true, color: true, finish: true } } },
   });
 
-  return NextResponse.json({ order: serializeOrder(order) }, { status: 201 });
+  const serialized = serializeOrder(order);
+  await pushOrderToLab(serialized);
+
+  return NextResponse.json({ order: serialized }, { status: 201 });
 }
 
 export async function GET(request: NextRequest) {

@@ -75,12 +75,6 @@ export default async function HomePage() {
                     >
                       {home.cta}
                     </Link>
-                    <Link
-                      href="/order/track"
-                      className="btn border-white/50 bg-black/15 text-white backdrop-blur-sm hover:bg-black/25"
-                    >
-                      {home.ctaSecondary}
-                    </Link>
                   </div>
                 </Reveal>
               </ScrollParallax>
@@ -252,7 +246,7 @@ export default async function HomePage() {
         <div className="divider" />
 
         <section className="px-6 py-[130px]">
-          <div className="mx-auto grid max-w-[1120px] grid-cols-1 gap-5 md:grid-cols-3">
+          <div className="mx-auto grid max-w-md grid-cols-1 gap-5">
             {home.teasers.map((teaser, i) => (
               <Reveal key={teaser.href} delayMs={i * 100}>
                 <Link

@@ -24,7 +24,7 @@ export async function Header() {
           <Link href="/order/upload" className="whitespace-nowrap transition-colors hover:text-accent">
             {dict.header.getQuote}
           </Link>
-          <Link href="/admin/orders" className="whitespace-nowrap transition-colors hover:text-accent">
+          <Link href="/admin/showcase" className="whitespace-nowrap transition-colors hover:text-accent">
             {dict.header.admin}
           </Link>
           <LanguageSwitcher locale={locale} />

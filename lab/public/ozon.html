@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ozon Доставка — Order Automation</title>
+<link rel="stylesheet" href="/style.css">
+<link rel="manifest" href="/manifest.webmanifest">
+<meta name="theme-color" content="#171d2b">
+</head>
+<body>
+<div class="layout">
+<aside class="sidebar" id="sidebar">
+  <div class="sidebar-top">
+    <span class="brand">📦 Заказы</span>
+    <button type="button" class="sidebar-toggle" id="sidebar-toggle" title="Свернуть/развернуть меню">☰</button>
+  </div>
+  <a href="/" class="new-order-btn"><span class="nav-icon">➕</span><span class="label">Новый заказ</span></a>
+  <nav class="sidebar-nav">
+    <a href="/board.html"><span class="nav-icon">🗂</span><span class="label">Доска</span></a>
+    <a href="/assembly.html"><span class="nav-icon">🔧</span><span class="label">Сборка</span></a>
+    <a href="/orders.html"><span class="nav-icon">📋</span><span class="label">Все заказы</span></a>
+    <a href="/serials.html"><span class="nav-icon">#️⃣</span><span class="label">Серийные номера</span></a>
+    <a href="/ozon.html" class="active"><span class="nav-icon">🚚</span><span class="label">Ozon Доставка</span></a>
+  </nav>
+  <div class="sidebar-bottom" id="sidebar-user"></div>
+</aside>
+<main>
+  <div class="card">
+    <h2>Настройки API</h2>
+    <p class="muted">Client ID и Client Secret из личного кабинета Ozon Delivery:
+      Настройки → Управление частными приложениями (<code>seller.ozon.ru/app/settings/private-apps</code>).</p>
+    <div class="grid-3">
+      <div class="field">
+        <label>Client ID</label>
+        <input id="client-id" placeholder="Client ID">
+      </div>
+      <div class="field">
+        <label>Client Secret <span id="secret-status" class="muted"></span></label>
+        <input id="client-secret" type="password" placeholder="Оставьте пустым, чтобы не менять">
+      </div>
+      <div class="field">
+        <label>ID метода отгрузки (shipment_method_id)</label>
+        <input id="shipment-method-id" placeholder="Заполняется автоматически после создания">
+      </div>
+    </div>
+    <button type="button" id="save-settings">Сохранить настройки</button>
+  </div>
+
+  <div class="card" style="margin-top:16px">
+    <h2>Текущий метод отгрузки</h2>
+    <div id="method-info" class="muted">Загрузка…</div>
+  </div>
+
+  <div class="card" style="margin-top:16px">
+    <h2>1. Найти точку dropoff и точку возврата</h2>
+    <p class="muted">Метод отгрузки в Ozon создаётся один раз и привязывается к конкретному складу/точке dropoff — оттуда Ozon забирает отправления.</p>
+    <div class="grid-2">
+      <div>
+        <div class="toolbar">
+          <input type="text" id="dropoff-search" placeholder="Адрес dropoff-точки (например, Москва)">
+          <button type="button" class="secondary" id="dropoff-search-btn">Найти dropoff</button>
+        </div>
+        <div id="dropoff-results"></div>
+      </div>
+      <div>
+        <div class="toolbar">
+          <input type="text" id="return-search" placeholder="Адрес точки возврата">
+          <button type="button" class="secondary" id="return-search-btn">Найти точку возврата</button>
+        </div>
+        <div id="return-results"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card" style="margin-top:16px">
+    <h2>2. Создать метод отгрузки</h2>
+    <div class="grid-3">
+      <div class="field">
+        <label>Название</label>
+        <input id="method-name" placeholder="Склад Москва — dropoff">
+      </div>
+      <div class="field">
+        <label>Контактный телефон</label>
+        <input id="method-phone" placeholder="+79000000000">
+      </div>
+      <div class="field">
+        <label><input type="checkbox" id="method-bulky" style="width:auto;display:inline-block;margin-right:6px">Крупногабаритные товары</label>
+      </div>
+      <div class="field">
+        <label>ID dropoff-точки</label>
+        <input id="method-dropoff-id" placeholder="выбрать из списка слева или ввести вручную">
+      </div>
+      <div class="field">
+        <label>ID точки возврата</label>
+        <input id="method-return-id" placeholder="выбрать из списка слева или ввести вручную">
+      </div>
+    </div>
+    <button type="button" id="create-method">Создать метод отгрузки</button>
+    <p class="muted" style="margin-top:10px">Признак «крупногабаритные товары» после создания изменить нельзя — при ошибке создайте метод заново.</p>
+  </div>
+</main>
+</div>
+<script src="/app.js"></script>
+<script>
+async function loadSettings() {
+  const s = await api('/api/ozon/settings');
+  document.getElementById('client-id').value = s.client_id || '';
+  document.getElementById('shipment-method-id').value = s.shipment_method_id || '';
+  document.getElementById('secret-status').textContent = s.has_secret ? '(уже сохранён)' : '(не задан)';
+}
+
+document.getElementById('save-settings').addEventListener('click', async () => {
+  try {
+    await api('/api/ozon/settings', {
+      method: 'POST',
+      body: JSON.stringify({
+        client_id: document.getElementById('client-id').value.trim(),
+        client_secret: document.getElementById('client-secret').value.trim(),
+        shipment_method_id: document.getElementById('shipment-method-id').value.trim(),
+      }),
+    });
+    document.getElementById('client-secret').value = '';
+    toast('Настройки сохранены', 'success');
+    loadSettings();
+    loadMethodInfo();
+  } catch (err) {
+    toast(err.message, 'error');
+  }
+});
+
+function statusLabel(status) {
+  return {
+    unknown: 'неизвестно', forming: 'создаётся', active: 'активен', blocked: 'заблокирован',
+    closed: 'закрыт', error: 'ошибка',
+  }[status] || status || '—';
+}
+
+async function loadMethodInfo() {
+  const wrap = document.getElementById('method-info');
+  wrap.textContent = 'Загрузка…';
+  try {
+    const { shipment_method } = await api('/api/ozon/shipment-method');
+    if (!shipment_method) {
+      wrap.innerHTML = '<span class="muted">Метод отгрузки ещё не создан — заполните форму ниже.</span>';
+      return;
+    }
+    const m = shipment_method;
+    wrap.innerHTML = `
+      <div><strong>${m.name || '—'}</strong> <span class="pill">${statusLabel(m.status)}</span></div>
+      <div class="muted">ID: ${m.shipment_method_id} · Телефон: ${m.phone_number || '—'}</div>
+      <div class="muted">${m.full_address || ''}</div>
+      ${m.error ? `<div style="color:var(--danger)">Ошибка: ${m.error}</div>` : ''}
+    `;
+  } catch (err) {
+    wrap.innerHTML = `<span style="color:var(--danger)">${err.message}</span>`;
+  }
+}
+
+// Большой охват по умолчанию (вся территория РФ) — точечного поиска по карте в этом MVP нет,
+// но можно сузить область через address_search.
+const RUSSIA_VIEWPORT = {
+  left_bottom: { latitude: 41, longitude: 19 },
+  right_top: { latitude: 82, longitude: 180 },
+};
+
+function pointResultRow(point, idField, kind) {
+  const row = el(`
+    <div class="receipt-card" style="width:auto;padding:8px 10px;margin-bottom:8px">
+      <div><strong>${point.name || ('#' + (point.dropoff_point_id || point.return_point_id))}</strong></div>
+      <div class="muted" style="font-size:12px">${point.full_address || ''}</div>
+      <div class="muted" style="font-size:12px">ID: ${point.dropoff_point_id || point.return_point_id}</div>
+      <button type="button" class="secondary small" style="margin-top:6px">Использовать как ${kind}</button>
+    </div>
+  `);
+  row.querySelector('button').addEventListener('click', () => {
+    document.getElementById(idField).value = point.dropoff_point_id || point.return_point_id;
+    toast('ID подставлен в форму создания метода', 'success');
+  });
+  return row;
+}
+
+document.getElementById('dropoff-search-btn').addEventListener('click', async () => {
+  const wrap = document.getElementById('dropoff-results');
+  wrap.innerHTML = '<div class="muted">Поиск…</div>';
+  try {
+    const data = await api('/api/ozon/dropoff-points/search', {
+      method: 'POST',
+      body: JSON.stringify({
+        filters: {
+          types: ['pvz'],
+          address_search: document.getElementById('dropoff-search').value.trim(),
+          viewport: RUSSIA_VIEWPORT,
+        },
+        pagination: { limit: 20 },
+      }),
+    });
+    wrap.innerHTML = '';
+    const points = data.dropoff_points || [];
+    if (!points.length) { wrap.innerHTML = '<div class="muted">Ничего не найдено</div>'; return; }
+    points.forEach((p) => wrap.appendChild(pointResultRow(p, 'method-dropoff-id', 'dropoff')));
+  } catch (err) {
+    wrap.innerHTML = `<div style="color:var(--danger)">${err.message}</div>`;
+  }
+});
+
+document.getElementById('return-search-btn').addEventListener('click', async () => {
+  const wrap = document.getElementById('return-results');
+  wrap.innerHTML = '<div class="muted">Поиск…</div>';
+  try {
+    const data = await api('/api/ozon/return-points/search', {
+      method: 'POST',
+      body: JSON.stringify({
+        filters: {
+          address_search: document.getElementById('return-search').value.trim(),
+          viewport: RUSSIA_VIEWPORT,
+        },
+        pagination: { limit: 20 },
+      }),
+    });
+    wrap.innerHTML = '';
+    const points = data.return_points || [];
+    if (!points.length) { wrap.innerHTML = '<div class="muted">Ничего не найдено</div>'; return; }
+    points.forEach((p) => wrap.appendChild(pointResultRow(p, 'method-return-id', 'return')));
+  } catch (err) {
+    wrap.innerHTML = `<div style="color:var(--danger)">${err.message}</div>`;
+  }
+});
+
+document.getElementById('create-method').addEventListener('click', async () => {
+  try {
+    const result = await api('/api/ozon/shipment-method/create', {
+      method: 'POST',
+      body: JSON.stringify({
+        name: document.getElementById('method-name').value.trim(),
+        phone_number: document.getElementById('method-phone').value.trim(),
+        is_bulky: document.getElementById('method-bulky').checked,
+        dropoff_point_id: document.getElementById('method-dropoff-id').value.trim(),
+        return_point_id: document.getElementById('method-return-id').value.trim(),
+      }),
+    });
+    if (result?.shipment_method?.error) {
+      toast(`Ozon вернул ошибку: ${result.shipment_method.error}`, 'error');
+    } else {
+      toast('Метод отгрузки создаётся — статус станет "активен" через некоторое время', 'success');
+    }
+    loadSettings();
+    loadMethodInfo();
+  } catch (err) {
+    toast(err.message, 'error');
+  }
+});
+
+loadSettings();
+loadMethodInfo();
+</script>
+</body>
+</html>

@@ -48,7 +48,7 @@ export async function POST(request: NextRequest) {
       },
     })),
     metadata: { orderId: order.id },
-    success_url: `${appUrl}/order/${order.id}/status?checkout=success`,
+    success_url: `${appUrl}/order/thank-you?orderId=${order.id}`,
     cancel_url: `${appUrl}/order/checkout?orderId=${order.id}&checkout=cancelled`,
   });
 

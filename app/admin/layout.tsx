@@ -9,7 +9,7 @@ export default async function AdminLayout({ children }: { children: React.ReactN
   const session = await auth();
 
   if (!session?.user) {
-    redirect("/login?callbackUrl=/admin/orders");
+    redirect("/login?callbackUrl=/admin/showcase");
   }
   if (session.user.role !== "ADMIN") {
     redirect("/");
@@ -21,9 +21,6 @@ export default async function AdminLayout({ children }: { children: React.ReactN
   return (
     <div className="mx-auto max-w-6xl px-6 py-10">
       <nav className="mb-8 flex gap-4 border-b border-border pb-4 text-sm">
-        <Link href="/admin/orders" className="text-muted transition-colors hover:text-accent">
-          {t.ordersTitle}
-        </Link>
         <Link href="/admin/showcase" className="text-muted transition-colors hover:text-accent">
           {t.showcaseTitle}
         </Link>

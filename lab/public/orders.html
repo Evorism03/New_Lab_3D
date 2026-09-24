@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Все заказы — Order Automation</title>
+<link rel="stylesheet" href="/style.css">
+<link rel="manifest" href="/manifest.webmanifest">
+<meta name="theme-color" content="#171d2b">
+</head>
+<body>
+<div class="layout">
+<aside class="sidebar" id="sidebar">
+  <div class="sidebar-top">
+    <span class="brand">📦 Заказы</span>
+    <button type="button" class="sidebar-toggle" id="sidebar-toggle" title="Свернуть/развернуть меню">☰</button>
+  </div>
+  <a href="/" class="new-order-btn"><span class="nav-icon">➕</span><span class="label">Новый заказ</span></a>
+  <nav class="sidebar-nav">
+    <a href="/board.html"><span class="nav-icon">🗂</span><span class="label">Доска</span></a>
+    <a href="/assembly.html"><span class="nav-icon">🔧</span><span class="label">Сборка</span></a>
+    <a href="/orders.html" class="active"><span class="nav-icon">📋</span><span class="label">Все заказы</span></a>
+    <a href="/serials.html"><span class="nav-icon">#️⃣</span><span class="label">Серийные номера</span></a>
+    <a href="/ozon.html"><span class="nav-icon">🚚</span><span class="label">Ozon Доставка</span></a>
+  </nav>
+  <div class="sidebar-bottom" id="sidebar-user"></div>
+</aside>
+<main>
+  <div class="toolbar">
+    <input type="search" id="search" placeholder="Поиск: ФИО, телефон, товар, серийник...">
+    <select id="status-filter">
+      <option value="">Все статусы</option>
+    </select>
+    <div class="spacer"></div>
+    <a href="/api/export/orders.csv"><button class="secondary" type="button">⬇ Экспорт в CSV (для Google Таблиц)</button></a>
+  </div>
+  <div class="card">
+    <table class="orders-table" id="table">
+      <thead>
+        <tr>
+          <th>№</th>
+          <th>Дата</th>
+          <th>Клиент</th>
+          <th>ТК / ПВЗ</th>
+          <th>Товары</th>
+          <th class="right">Товары, ₽</th>
+          <th class="right">Доставка, ₽</th>
+          <th class="right">Итого, ₽</th>
+          <th>Статус</th>
+        </tr>
+      </thead>
+      <tbody id="tbody"></tbody>
+    </table>
+    <div id="empty" class="empty-state" style="display:none">Заказов пока нет. Добавьте первый на странице «Новый заказ».</div>
+  </div>
+</main>
+</div>
+<script src="/app.js"></script>
+<script>
+let statuses = [];
+let catalog = { delivery_services: [] };
+
+async function load() {
+  const q = document.getElementById('search').value.trim();
+  const status = document.getElementById('status-filter').value;
+  if (!statuses.length) {
+    [statuses, catalog] = await Promise.all([api('/api/statuses'), api('/api/catalog')]);
+    const sel = document.getElementById('status-filter');
+    for (const s of statuses) {
+      sel.appendChild(el(`<option value="${s.id}">${s.label}</option>`));
+    }
+  }
+  const params = new URLSearchParams();
+  if (q) params.set('q', q);
+  if (status) params.set('status', status);
+  const orders = await api('/api/orders' + (params.toString() ? `?${params}` : ''));
+  render(orders);
+}
+
+function render(orders) {
+  const tbody = document.getElementById('tbody');
+  tbody.innerHTML = '';
+  document.getElementById('empty').style.display = orders.length ? 'none' : 'block';
+  for (const o of orders) {
+    const itemsSummary = summarizeItems(o.items) || '—';
+    const date = new Date(o.created_at).toLocaleDateString('ru-RU');
+    const row = el(`
+      <tr style="cursor:pointer">
+        <td>#${o.id}${o.receipts_count ? ` <span title="${o.receipts_count} чек(ов) прикреплено">📎${o.receipts_count}</span>` : ''}</td>
+        <td>${date}</td>
+        <td>${o.full_name || ''}<br><span class="muted">${o.phone || ''}</span></td>
+        <td>${deliveryDot(o.delivery_service, catalog.delivery_services)}${o.delivery_service || ''}<br><span class="muted">${o.pvz_address || ''}</span></td>
+        <td>${itemsSummary}</td>
+        <td class="right">${money(o.goods_total)}</td>
+        <td class="right">${money(o.delivery_price)}</td>
+        <td class="right"><strong>${money(o.grand_total)}</strong></td>
+        <td>${statusPill(o.status, statuses)}</td>
+      </tr>
+    `);
+    row.addEventListener('click', () => { window.location.href = `/order.html?id=${o.id}`; });
+    tbody.appendChild(row);
+  }
+}
+
+document.getElementById('search').addEventListener('input', load);
+document.getElementById('status-filter').addEventListener('change', load);
+load();
+</script>
+</body>
+</html>

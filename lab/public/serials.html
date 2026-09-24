@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Серийные номера — Order Automation</title>
+<link rel="stylesheet" href="/style.css">
+<link rel="manifest" href="/manifest.webmanifest">
+<meta name="theme-color" content="#171d2b">
+</head>
+<body>
+<div class="layout">
+<aside class="sidebar" id="sidebar">
+  <div class="sidebar-top">
+    <span class="brand">📦 Заказы</span>
+    <button type="button" class="sidebar-toggle" id="sidebar-toggle" title="Свернуть/развернуть меню">☰</button>
+  </div>
+  <a href="/" class="new-order-btn"><span class="nav-icon">➕</span><span class="label">Новый заказ</span></a>
+  <nav class="sidebar-nav">
+    <a href="/board.html"><span class="nav-icon">🗂</span><span class="label">Доска</span></a>
+    <a href="/assembly.html"><span class="nav-icon">🔧</span><span class="label">Сборка</span></a>
+    <a href="/orders.html"><span class="nav-icon">📋</span><span class="label">Все заказы</span></a>
+    <a href="/serials.html" class="active"><span class="nav-icon">#️⃣</span><span class="label">Серийные номера</span></a>
+    <a href="/ozon.html"><span class="nav-icon">🚚</span><span class="label">Ozon Доставка</span></a>
+  </nav>
+  <div class="sidebar-bottom" id="sidebar-user"></div>
+</aside>
+<main>
+  <div class="toolbar">
+    <input type="search" id="search" placeholder="Поиск по товару, серийнику, клиенту...">
+    <div class="spacer"></div>
+    <a href="/api/export/serials.csv"><button class="secondary" type="button">⬇ Экспорт в CSV (для Google Таблиц)</button></a>
+  </div>
+  <div class="card">
+    <table class="orders-table" id="table">
+      <thead>
+        <tr>
+          <th>№ заказа</th>
+          <th>Модель</th>
+          <th>Товар</th>
+          <th>Цвет / Разъём</th>
+          <th>Кол-во</th>
+          <th>Серийный номер</th>
+          <th>Клиент</th>
+          <th>Статус</th>
+        </tr>
+      </thead>
+      <tbody id="tbody"></tbody>
+    </table>
+    <div id="empty" class="empty-state" style="display:none">Серийных номеров пока нет.</div>
+  </div>
+</main>
+</div>
+<script src="/app.js"></script>
+<script>
+let statuses = [];
+let catalog = { models: [], colors: [], connectors: [] };
+let all = [];
+
+function modelLabel(id) { return catalog.models.find((m) => m.id === id)?.label || id || ''; }
+function colorLabel(letter) { return catalog.colors.find((c) => c.letter === letter)?.label || letter || ''; }
+function connectorLabel(letter) { return catalog.connectors.find((c) => c.letter === letter)?.label || letter || ''; }
+
+async function load() {
+  [statuses, catalog, all] = await Promise.all([api('/api/statuses'), api('/api/catalog'), api('/api/serials')]);
+  render();
+}
+
+function render() {
+  const q = document.getElementById('search').value.trim().toLowerCase();
+  const rows = q
+    ? all.filter((r) =>
+        [r.product_name, r.serial_number, r.full_name, r.phone, colorLabel(r.color), connectorLabel(r.connector), modelLabel(r.model_id)]
+          .join(' ')
+          .toLowerCase()
+          .includes(q)
+      )
+    : all;
+  const tbody = document.getElementById('tbody');
+  tbody.innerHTML = '';
+  document.getElementById('empty').style.display = rows.length ? 'none' : 'block';
+  for (const r of rows) {
+    const row = el(`
+      <tr style="cursor:pointer">
+        <td>#${r.order_id}</td>
+        <td>${modelLabel(r.model_id)}</td>
+        <td>${r.product_name || ''}</td>
+        <td>${colorDot(r.color, catalog.colors)}${colorLabel(r.color)} / ${connectorDot(r.connector, catalog.connectors)}${connectorLabel(r.connector)}</td>
+        <td>${r.quantity}</td>
+        <td><code>${r.serial_number || '—'}</code></td>
+        <td>${r.full_name || ''}<br><span class="muted">${r.phone || ''}</span></td>
+        <td>${statusPill(r.status, statuses)}</td>
+      </tr>
+    `);
+    row.addEventListener('click', () => { window.location.href = `/order.html?id=${r.order_id}`; });
+    tbody.appendChild(row);
+  }
+}
+
+document.getElementById('search').addEventListener('input', render);
+load();
+</script>
+</body>
+</html>

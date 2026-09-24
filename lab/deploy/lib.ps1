@@ -1,14 +1,14 @@
-﻿# Shared helpers for the Windows server scripts (dot-sourced by setup/start/autostart).
+﻿# Общие хелперы для скриптов сервера (dot-source из setup/start/server/autostart).
+# Основано на deploy/lib.ps1 New_Lab_3d - тот же проверенный паттерн, упрощено:
+# нет своей сборки/Next.js/Prisma и нет собственного Caddy (используем общий у New_Lab_3d).
 $ErrorActionPreference = "Stop"
 
-# Child processes whose output the app captures must speak UTF-8 (no BOM); git must never wait for a password.
 try { [Console]::OutputEncoding = New-Object Text.UTF8Encoding($false) } catch { }
 $env:GIT_TERMINAL_PROMPT = "0"
 $env:GCM_INTERACTIVE = "never"
 
 $script:Root = Split-Path -Parent $PSScriptRoot
-$script:EnvFile = Join-Path $script:Root ".env.production"
-$script:CaddyFile = Join-Path $PSScriptRoot "Caddyfile"
+$script:EnvFile = Join-Path $script:Root ".env"
 $script:LogDir = Join-Path $PSScriptRoot "logs"
 
 function Write-Step([string]$Message) { Write-Host "==> $Message" -ForegroundColor Cyan }
@@ -42,7 +42,6 @@ function Write-EnvFile([string]$Path, $Values) {
     [IO.File]::WriteAllLines($Path, $lines, (New-Object Text.UTF8Encoding($false)))
 }
 
-# Puts every value into the process environment so child processes (node, prisma) see it.
 function Import-EnvFile([string]$Path) {
     $values = Read-EnvFile $Path
     foreach ($key in $values.Keys) { Set-Item -Path "Env:$key" -Value $values[$key] }
@@ -57,7 +56,6 @@ function New-Secret([int]$Bytes = 32) {
     return [Convert]::ToBase64String($buffer).TrimEnd('=').Replace('+', '-').Replace('/', '_')
 }
 
-# The IPv4 address of the interface that carries the default route.
 function Get-LocalIp {
     $route = Get-NetRoute -DestinationPrefix "0.0.0.0/0" -ErrorAction SilentlyContinue |
         Sort-Object { $_.RouteMetric + $_.InterfaceMetric } | Select-Object -First 1
@@ -69,12 +67,7 @@ function Get-LocalIp {
     $fallback = Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue |
         Where-Object { $_.IPAddress -notlike "127.*" -and $_.IPAddress -notlike "169.254.*" } | Select-Object -First 1
     if ($fallback) { return $fallback.IPAddress }
-    throw "Could not detect this computer's IP address. Pass it explicitly with -Ip."
-}
-
-# Best effort only - used to warn when the machine sits behind a router.
-function Get-PublicIp {
-    try { return (Invoke-RestMethod -Uri "https://api.ipify.org" -TimeoutSec 5).ToString().Trim() } catch { return $null }
+    throw "Не удалось определить IP этого компьютера."
 }
 
 function Find-Executable([string]$Name, [string[]]$ExtraPaths = @()) {
@@ -92,7 +85,6 @@ function Find-Caddy {
     )
 }
 
-# Returns a description of whatever already listens on the port, or $null when it is free.
 function Get-PortOwner([int]$Port) {
     $connection = Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1
     if (-not $connection) { return $null }
@@ -101,27 +93,15 @@ function Get-PortOwner([int]$Port) {
     return "PID $($connection.OwningProcess)"
 }
 
-# Другие приложения на этом же сервере (например lab/deploy/setup.ps1) подключаются сюда своим
-# site-блоком, не трогая этот файл - см. lab/deploy/setup.ps1. Пустая папка ничего не меняет.
-$script:ExtraSitesDir = Join-Path $PSScriptRoot "sites.d"
-
-# Caddy config: a real domain gets a trusted Let's Encrypt certificate automatically;
-# a bare IP gets a certificate from Caddy's own CA (browsers show a warning for it).
-function New-CaddyfileText([string]$Domain, [string]$Ip, [int]$AppPort) {
-    New-Item -ItemType Directory -Force -Path $script:ExtraSitesDir | Out-Null
-    $importLine = "import " + (Join-Path $script:ExtraSitesDir "*.caddy")
-    $common = @"
+# lab не запускает свой Caddy - он использует уже работающий у New_Lab_3d (общий 80/443 на
+# этом сервере). Свой site-блок кладём в его deploy/sites.d/, который тот сам импортирует
+# (см. New_Lab_3d/deploy/lib.ps1, New-CaddyfileText) - на его стороне ничего больше не меняем.
+function New-LabCaddySiteText([string]$Domain, [string]$Ip, [int]$AppPort) {
+    return @"
+$Domain {
 	bind $Ip
 	encode zstd gzip
-	request_body {
-		max_size 600MB
-	}
 	reverse_proxy 127.0.0.1:$AppPort
-"@
-    if ($Domain) {
-        return @"
-$Domain {
-$common
 	header {
 		Strict-Transport-Security "max-age=31536000"
 		X-Content-Type-Options nosniff
@@ -129,38 +109,20 @@ $common
 		-Server
 	}
 }
-
-$importLine
-"@
-    }
-    return @"
-{
-	local_certs
-	default_sni $Ip
-}
-
-https://$Ip {
-	tls internal
-$common
-}
-
-$importLine
 "@
 }
 
 # ---------------------------------------------------------------------------
-# Background server state: start.ps1 (the supervisor) records what it runs here,
-# so any terminal - even one opened much later - can find, inspect and stop it.
+# Background server state: start.ps1 (the supervisor) records what it runs here.
 # ---------------------------------------------------------------------------
 $script:StateFile = Join-Path $PSScriptRoot "state.json"
 $script:StopFlag = Join-Path $PSScriptRoot "stop.flag"
-$script:TaskName = "Lab3D Server"
+$script:TaskName = "Lab CRM Server"
 
 function Get-ProcStart([int]$ProcessId) {
     try { return (Get-Process -Id $ProcessId -ErrorAction Stop).StartTime.ToUniversalTime().ToString("o") } catch { return $null }
 }
 
-# A PID alone can be reused by Windows; the start time makes the match exact.
 function Test-ProcAlive($ProcessId, $StartedAt) {
     if (-not $ProcessId) { return $false }
     $actual = Get-ProcStart ([int]$ProcessId)
@@ -177,7 +139,6 @@ function Read-State {
     try { return (Get-Content -Path $script:StateFile -Raw -Encoding UTF8 | ConvertFrom-Json) } catch { return $null }
 }
 
-# The state of the running server, or $null when it is not running.
 function Get-ServerState {
     $state = Read-State
     if ($state -and (Test-ProcAlive $state.supervisorPid $state.supervisorStart)) { return $state }
@@ -189,20 +150,15 @@ function ConvertTo-Utc($Value) {
     return [DateTimeOffset]::Parse([string]$Value, [Globalization.CultureInfo]::InvariantCulture).UtcDateTime
 }
 
-# Starts a hidden process that belongs to nobody's console or job, so closing the
-# terminal that launched it (or logging off the launching tool) does not kill it.
 function Start-Detached([string]$CommandLine, [string]$WorkDir) {
     $startup = New-CimInstance -ClassName Win32_ProcessStartup -ClientOnly -Property @{ ShowWindow = [uint16]0 }
     $result = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{
         CommandLine = $CommandLine; CurrentDirectory = $WorkDir; ProcessStartupInformation = $startup
     }
-    if ($result.ReturnValue -ne 0) { throw "Windows could not start the background process (code $($result.ReturnValue))." }
+    if ($result.ReturnValue -ne 0) { throw "Windows не смог запустить фоновый процесс (код $($result.ReturnValue))." }
     return [int]$result.ProcessId
 }
 
-# Native tools print status/warnings to stderr. Under $ErrorActionPreference = "Stop", Windows PowerShell 5.1
-# turns any redirected stderr line into a terminating error, so native calls that we expect to "fail" or be
-# noisy (caddy validate, taskkill, rmdir) go through here. Returns the exit code and the output lines.
 function Invoke-Native([scriptblock]$Command) {
     $previous = $ErrorActionPreference
     $ErrorActionPreference = "Continue"
@@ -217,7 +173,6 @@ function Stop-ProcessTree($ProcessId) {
     if ($ProcessId) { [void](Invoke-Native { & taskkill /PID $ProcessId /T /F }) }
 }
 
-# Stops the site: asks the supervisor to shut down cleanly, then forces it if it hangs.
 function Stop-Server([int]$GraceSeconds = 15) {
     $state = Read-State
     if (-not $state) { return }
@@ -227,14 +182,11 @@ function Stop-Server([int]$GraceSeconds = 15) {
         $deadline = (Get-Date).AddSeconds($GraceSeconds)
         while ((Get-Date) -lt $deadline -and (Test-ProcAlive $state.supervisorPid $state.supervisorStart)) { Start-Sleep -Milliseconds 300 }
         if (Test-ProcAlive $state.supervisorPid $state.supervisorStart) {
-            # Stopping the task first keeps Task Scheduler from restarting it after the kill.
             Stop-ScheduledTask -TaskName $script:TaskName -ErrorAction SilentlyContinue
             Stop-ProcessTree $state.supervisorPid
         }
     }
-    foreach ($child in @(@($state.nextPid, $state.nextStart), @($state.caddyPid, $state.caddyStart))) {
-        if (Test-ProcAlive $child[0] $child[1]) { Stop-ProcessTree $child[0] }
-    }
+    if (Test-ProcAlive $state.appPid $state.appStart) { Stop-ProcessTree $state.appPid }
     Remove-Item $script:StopFlag, $script:StateFile -ErrorAction SilentlyContinue
 }
 
@@ -255,9 +207,8 @@ function Get-FolderSize([string]$Path) {
 }
 
 # ---------------------------------------------------------------------------
-# Git: the site is updated by pulling from the repository it was cloned from.
+# Git: обновление - git pull в своей папке (без сборки/миграций, их тут просто нет).
 # ---------------------------------------------------------------------------
-# Runs git in the project folder. Output lines are returned; the exit code is left in $script:GitExit.
 function Invoke-Git {
     $git = Find-Executable "git"
     if (-not $git) { throw "git не установлен (winget install Git.Git)." }

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import type Stripe from "stripe";
 
 import { prisma } from "@/lib/db";
+import { markOrderPaidInLab } from "@/lib/labClient";
 import { stripe } from "@/lib/stripe";
 
 export async function POST(request: NextRequest) {
@@ -26,10 +27,13 @@ export async function POST(request: NextRequest) {
     const session = event.data.object as Stripe.Checkout.Session;
     const orderId = session.metadata?.orderId;
     if (orderId) {
-      await prisma.order.updateMany({
+      const result = await prisma.order.updateMany({
         where: { id: orderId, status: "AWAITING_PAYMENT" },
         data: { status: "PAID" },
       });
+      if (result.count > 0) {
+        await markOrderPaidInLab(orderId);
+      }
     }
   }
 

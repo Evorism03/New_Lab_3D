@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Новый заказ — Order Automation</title>
+<link rel="stylesheet" href="/style.css">
+<link rel="manifest" href="/manifest.webmanifest">
+<meta name="theme-color" content="#171d2b">
+</head>
+<body>
+<div class="layout">
+<aside class="sidebar" id="sidebar">
+  <div class="sidebar-top">
+    <span class="brand">📦 Заказы</span>
+    <button type="button" class="sidebar-toggle" id="sidebar-toggle" title="Свернуть/развернуть меню">☰</button>
+  </div>
+  <a href="/" class="new-order-btn active"><span class="nav-icon">➕</span><span class="label">Новый заказ</span></a>
+  <nav class="sidebar-nav">
+    <a href="/board.html"><span class="nav-icon">🗂</span><span class="label">Доска</span></a>
+    <a href="/assembly.html"><span class="nav-icon">🔧</span><span class="label">Сборка</span></a>
+    <a href="/orders.html"><span class="nav-icon">📋</span><span class="label">Все заказы</span></a>
+    <a href="/serials.html"><span class="nav-icon">#️⃣</span><span class="label">Серийные номера</span></a>
+    <a href="/ozon.html"><span class="nav-icon">🚚</span><span class="label">Ozon Доставка</span></a>
+  </nav>
+  <div class="sidebar-bottom" id="sidebar-user"></div>
+</aside>
+<main>
+  <div class="card">
+    <h2>Внести заказ (из ВК, после оплаты)</h2>
+    <form id="order-form">
+      <div class="grid-3">
+        <div class="field">
+          <label>Транспортная компания</label>
+          <select name="delivery_service" id="delivery-service"></select>
+        </div>
+        <div class="field">
+          <label>ФИО получателя</label>
+          <input name="full_name" required placeholder="Иванов Иван Иванович">
+        </div>
+        <div class="field">
+          <label>Номер телефона</label>
+          <input name="phone" required placeholder="+7 900 000-00-00">
+        </div>
+      </div>
+
+      <div class="field">
+        <label>Адрес ПВЗ</label>
+        <input name="pvz_address" required placeholder="г. Москва, ул. Примерная, д. 1, ПВЗ №123">
+      </div>
+
+      <div class="field">
+        <label>Сумма доставки, ₽</label>
+        <input name="delivery_price" type="number" step="0.01" min="0" value="0" style="max-width:200px">
+      </div>
+
+      <h3>Товары и серийные номера</h3>
+      <table class="items-table" id="items-table">
+        <thead>
+          <tr>
+            <th>Товар</th>
+            <th>Модель</th>
+            <th>Цвет</th>
+            <th>Разъём</th>
+            <th style="width:70px">Кол-во</th>
+            <th style="width:110px">Цена, ₽</th>
+            <th style="width:190px">Серийный номер</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody id="items-body"></tbody>
+      </table>
+      <button type="button" class="secondary small" id="add-item">+ Добавить товар</button>
+
+      <div class="field" style="margin-top:16px">
+        <label>Заметка (необязательно)</label>
+        <textarea name="notes" rows="2" placeholder="Например: ссылка на переписку ВК, особые пожелания"></textarea>
+      </div>
+
+      <div class="field" style="max-width:260px">
+        <label>Итого товары + доставка</label>
+        <div id="preview-total" class="pill" style="font-size:16px;padding:8px 14px">0,00 ₽</div>
+      </div>
+
+      <button type="submit">Сохранить заказ</button>
+    </form>
+  </div>
+</main>
+</div>
+<script src="/app.js"></script>
+<script>
+const itemsBody = document.getElementById('items-body');
+const addItemBtn = document.getElementById('add-item');
+const previewTotal = document.getElementById('preview-total');
+const deliveryInput = document.querySelector('[name="delivery_price"]');
+let catalog = { models: [], colors: [], connectors: [], products: [] };
+
+function addItemRow(values = {}) {
+  const productOptions = catalog.products
+    .map((p) => `<option value="${p.label}" ${values.product_name === p.label ? 'selected' : ''}>${p.label}</option>`)
+    .join('');
+  const modelOptions = catalog.models
+    .map((m) => `<option value="${m.id}" ${values.model_id === m.id ? 'selected' : ''}>${m.label}</option>`)
+    .join('');
+  const colorOptions = catalog.colors
+    .map((c) => `<option value="${c.letter}" ${values.color === c.letter ? 'selected' : ''}>${c.label}</option>`)
+    .join('');
+  const connectorOptions = catalog.connectors
+    .map((c) => `<option value="${c.letter}" ${values.connector === c.letter ? 'selected' : ''}>${c.label}</option>`)
+    .join('');
+  const row = el(`
+    <tr>
+      <td><select name="product_name">${productOptions}</select></td>
+      <td><select name="model_id">${modelOptions}</select></td>
+      <td><div style="display:flex;align-items:center"><span class="dot color-dot"></span><select name="color">${colorOptions}</select></div></td>
+      <td><div style="display:flex;align-items:center"><span class="dot connector-dot"></span><select name="connector">${connectorOptions}</select></div></td>
+      <td><input name="quantity" type="number" min="1" value="${values.quantity || 1}"></td>
+      <td><input name="price" type="number" step="0.01" min="0" value="${values.price || 0}"></td>
+      <td>
+        <div style="display:flex;gap:4px">
+          <input name="serial_number" placeholder="AL1R03TT0043" value="${values.serial_number || ''}">
+          <button type="button" class="secondary small generate-serial" title="Сгенерировать серийник (буквы можно менять без потери номера, пока он не сохранён в заказе)">⚡</button>
+        </div>
+      </td>
+      <td><button type="button" class="secondary small remove-item">✕</button></td>
+    </tr>
+  `);
+  const colorSelect = row.querySelector('[name="color"]');
+  const connectorSelect = row.querySelector('[name="connector"]');
+  const colorDot = row.querySelector('.color-dot');
+  const connectorDotEl = row.querySelector('.connector-dot');
+  const updateDots = () => {
+    colorDot.style.background = catalog.colors.find((c) => c.letter === colorSelect.value)?.swatch || '#6b7280';
+    connectorDotEl.style.background = catalog.connectors.find((c) => c.letter === connectorSelect.value)?.swatch || '#6b7280';
+  };
+  colorSelect.addEventListener('change', updateDots);
+  connectorSelect.addEventListener('change', updateDots);
+  updateDots();
+
+  row.querySelector('.remove-item').addEventListener('click', () => {
+    row.remove();
+    updatePreview();
+  });
+  row.querySelector('.generate-serial').addEventListener('click', async () => {
+    const modelId = row.querySelector('[name="model_id"]').value;
+    const color = row.querySelector('[name="color"]').value;
+    const connector = row.querySelector('[name="connector"]').value;
+    const currentSerial = row.querySelector('[name="serial_number"]').value.trim();
+    try {
+      const { serial } = await api('/api/serial', {
+        method: 'POST',
+        body: JSON.stringify({ model_id: modelId, color, connector, current_serial: currentSerial }),
+      });
+      row.querySelector('[name="serial_number"]').value = serial;
+    } catch (err) {
+      toast(err.message, 'error');
+    }
+  });
+  row.querySelectorAll('input').forEach((i) => i.addEventListener('input', updatePreview));
+  itemsBody.appendChild(row);
+  updatePreview();
+}
+
+function readItems() {
+  return [...itemsBody.querySelectorAll('tr')].map((row) => {
+    const get = (n) => row.querySelector(`[name="${n}"]`).value;
+    return {
+      product_name: get('product_name'),
+      model_id: get('model_id'),
+      color: get('color'),
+      connector: get('connector'),
+      quantity: Number(get('quantity')) || 1,
+      price: Number(get('price')) || 0,
+      serial_number: get('serial_number'),
+    };
+  });
+}
+
+function updatePreview() {
+  const goods = readItems().reduce((sum, it) => sum + it.price * it.quantity, 0);
+  const delivery = Number(deliveryInput.value) || 0;
+  previewTotal.textContent = money(goods + delivery);
+}
+
+deliveryInput.addEventListener('input', updatePreview);
+addItemBtn.addEventListener('click', () => addItemRow());
+
+(async () => {
+  catalog = await api('/api/catalog');
+  const deliverySelect = document.getElementById('delivery-service');
+  for (const s of catalog.delivery_services) {
+    deliverySelect.appendChild(el(`<option value="${s.label}">${s.label}</option>`));
+  }
+  addItemRow();
+})();
+
+document.getElementById('order-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const form = e.target;
+  const data = {
+    delivery_service: form.delivery_service.value,
+    full_name: form.full_name.value,
+    phone: form.phone.value,
+    pvz_address: form.pvz_address.value,
+    delivery_price: Number(form.delivery_price.value) || 0,
+    notes: form.notes.value,
+    items: readItems(),
+  };
+  try {
+    const order = await api('/api/orders', { method: 'POST', body: JSON.stringify(data) });
+    window.location.href = `/order.html?id=${order.id}`;
+  } catch (err) {
+    toast(err.message, 'error');
+  }
+});
+</script>
+</body>
+</html>

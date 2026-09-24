@@ -64,6 +64,15 @@ $script:StartScript = Join-Path $PSScriptRoot "start.ps1"
 $script:AssumeYes = [bool]$Yes
 $script:HadError = $false
 
+# lab (заказы/сборка/отправка) живёт в подпапке lab/ этого же репозитория и управляется
+# собственными deploy-скриптами - здесь их просто перевызываем, ничего не дублируя.
+$script:LabRoot = Join-Path $script:Root "lab"
+$script:LabServerScript = Join-Path $script:LabRoot "deploy\server.ps1"
+function Test-LabPresent { Test-Path $script:LabServerScript }
+function Invoke-Lab([string]$Cmd) {
+    if (Test-LabPresent) { & $script:LabServerScript $Cmd -Yes:$script:AssumeYes -NoElevate }
+}
+
 function Format-Uptime($StartedAt) {
     $span = (Get-Date).ToUniversalTime() - (ConvertTo-Utc $StartedAt)
     if ($span.TotalDays -ge 1) { return ("{0} д {1} ч" -f [int]$span.TotalDays, $span.Hours) }
@@ -108,12 +117,23 @@ function Show-Status {
     Write-Field "Диск" "загрузки $uploads · логи $logs" "Gray"
 }
 
+# lab печатает свой собственный статус (та же Show-Status/Write-Field из его server.ps1) -
+# просто зовём как отдельный процесс и не парсим вывод.
+function Show-LabStatus {
+    if (-not (Test-LabPresent)) { return }
+    Write-Host ""
+    Write-Rule
+    Write-Host "  Заказы (lab)" -ForegroundColor Cyan
+    & $script:LabServerScript status -NoElevate
+}
+
 function Show-Screen {
     Clear-Host
     Write-Host ""
     Show-Header
     Write-Host ""
     Show-Status
+    Show-LabStatus
     Write-Host ""
     Write-Rule
 }
@@ -126,7 +146,7 @@ function Test-Installed {
 
 function Invoke-Start {
     if (-not (Test-Installed)) { return }
-    if (Get-ServerState) { Write-Info "Сервер уже запущен."; return }
+    if (Get-ServerState) { Write-Info "Сервер уже запущен."; Invoke-Lab start; return }
 
     $config = Import-EnvFile $script:EnvFile
     $caddy = if ($config["DEPLOY_CADDY"] -and (Test-Path $config["DEPLOY_CADDY"])) { $config["DEPLOY_CADDY"] } else { Find-Caddy }
@@ -156,13 +176,16 @@ function Invoke-Start {
         $log = Join-Path $script:LogDir "supervisor.log"
         if (Test-Path $log) { Get-Content -Path $log -Tail 8 -Encoding UTF8 | ForEach-Object { Write-Dim $_ } }
     }
+    Invoke-Lab start
 }
 
 function Invoke-Stop {
-    if (-not (Read-State)) { Write-Info "Сервер и так остановлен."; return }
+    $wasRunning = [bool](Read-State)
+    if (-not $wasRunning) { Write-Info "Сервер и так остановлен."; Invoke-Lab stop; return }
     Write-Info "Останавливаю сервер..."
     Stop-Server
     Write-Good "Сервер остановлен."
+    Invoke-Lab stop
 }
 
 function Invoke-Restart {
@@ -180,6 +203,10 @@ function Invoke-Logs {
         Write-MenuItem "2" "Ошибки сайта" "next-error.log"
         Write-MenuItem "3" "HTTPS (Caddy)" "сертификаты, запросы"
         Write-MenuItem "4" "События сервера" "запуски, падения, перезапуски"
+        if (Test-LabPresent) {
+            Write-MenuItem "5" "Заказы (lab)" "вывод приложения"
+            Write-MenuItem "6" "Заказы: ошибки" "app-error.log"
+        }
         Write-MenuItem "0" "Назад"
         Write-Host ""
         Write-Host "  Выбор: " -NoNewline -ForegroundColor Gray
@@ -188,6 +215,8 @@ function Invoke-Logs {
             "2" { Show-LogTail (Join-Path $script:LogDir "next-error.log") "Ошибки сайта" }
             "3" { Show-LogTail (Join-Path $script:LogDir "caddy-error.log") "HTTPS (Caddy)" }
             "4" { Show-LogTail (Join-Path $script:LogDir "supervisor.log") "События сервера" }
+            "5" { if (Test-LabPresent) { Show-LogTail (Join-Path $script:LabRoot "deploy\logs\app.log") "Заказы (lab)" } }
+            "6" { if (Test-LabPresent) { Show-LogTail (Join-Path $script:LabRoot "deploy\logs\app-error.log") "Заказы: ошибки" } }
             default { return }
         }
     }
@@ -240,6 +269,14 @@ function Invoke-Update {
     if ((Test-Path (Join-Path $script:Root ".git")) -and ($script:AssumeYes -or (Read-Confirm "Скачать свежий код (git pull)?"))) {
         if (-not (Update-FromGit)) { if ($wasRunning) { Invoke-Start }; return }
     }
+
+    if (Test-LabPresent) {
+        Write-Step "Зависимости «Заказы» (lab)"
+        Push-Location $script:LabRoot
+        try { & npm install --no-audit --no-fund; if ($LASTEXITCODE -ne 0) { Write-Bad "npm install в lab не удался." } }
+        finally { Pop-Location }
+    }
+
     if (-not $installed) {
         Write-Good "Код обновлён. Сервер здесь не установлен, поэтому зависимости, сборка и перезапуск пропущены."
         return
@@ -334,6 +371,12 @@ function Invoke-Setup {
     Write-Host ""
     try { & (Join-Path $PSScriptRoot "setup.ps1") @setupArgs }
     catch { Write-Bad $_.Exception.Message; return }
+
+    if ((Test-LabPresent) -and ($script:AssumeYes -or (Read-Confirm "Настроить и «Заказы» (lab)?"))) {
+        Write-Host ""
+        Invoke-Lab setup
+    }
+
     if ($wasRunning) { Invoke-Start }
     else { Write-Host ""; Write-Info "Запустите сервер пунктом [1]." }
 }
@@ -350,6 +393,7 @@ function Invoke-Autostart {
             & (Join-Path $PSScriptRoot "install-autostart.ps1")
         }
     }
+    if ((Test-LabPresent) -and (Test-Path (Join-Path $script:LabRoot ".env"))) { Invoke-Lab autostart }
 }
 
 function Remove-Folder([string]$Path) {
@@ -489,7 +533,7 @@ try {
         "start" { Invoke-Start }
         "stop" { Invoke-Stop }
         "restart" { Invoke-Restart }
-        "status" { Write-Host ""; Show-Header; Write-Host ""; Show-Status }
+        "status" { Write-Host ""; Show-Header; Write-Host ""; Show-Status; Show-LabStatus }
         "logs" { Invoke-Logs }
         "update" { Invoke-Update }
         "setup" { Invoke-Setup }

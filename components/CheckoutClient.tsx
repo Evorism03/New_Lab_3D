@@ -1,6 +1,6 @@
 "use client";
 
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useState } from "react";
 
 import type { Dictionary } from "@/lib/i18n/translations";
@@ -9,13 +9,13 @@ import type { QuoteDTO } from "@/lib/types";
 
 function CheckoutForm({ dict }: { dict: Dictionary }) {
   const t = dict.checkout;
+  const router = useRouter();
   const searchParams = useSearchParams();
   const fileId = searchParams.get("fileId") ?? "";
   const materialId = searchParams.get("materialId") ?? "";
   const colorId = searchParams.get("colorId") ?? undefined;
   const finishId = searchParams.get("finishId") ?? undefined;
   const quantity = Number(searchParams.get("quantity") ?? 1);
-  const cancelled = searchParams.get("checkout") === "cancelled";
 
   const [quote, setQuote] = useState<QuoteDTO | null>(null);
   const [form, setForm] = useState({
@@ -65,15 +65,8 @@ function CheckoutForm({ dict }: { dict: Dictionary }) {
       const orderData = await orderRes.json();
       if (!orderRes.ok) throw new Error(orderData.error?.formErrors?.[0] ?? orderData.error ?? "Failed to create order");
 
-      const checkoutRes = await fetch("/api/checkout/session", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ orderId: orderData.order.id }),
-      });
-      const checkoutData = await checkoutRes.json();
-      if (!checkoutRes.ok) throw new Error(checkoutData.error ?? "Failed to start payment");
-
-      window.location.href = checkoutData.url;
+      // Payment is disabled for now — the order is pushed to lab on creation and handled from there.
+      router.push(`/order/thank-you?orderId=${orderData.order.id}`);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Something went wrong");
       setIsSubmitting(false);
@@ -83,12 +76,6 @@ function CheckoutForm({ dict }: { dict: Dictionary }) {
   return (
     <div className="mx-auto max-w-xl px-6 py-16">
       <h1 className="text-2xl font-bold text-text">{t.title}</h1>
-
-      {cancelled && (
-        <p className="mt-4 rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-2 text-sm text-amber-300">
-          {t.cancelledNotice}
-        </p>
-      )}
 
       <div className="card mt-6 flex items-baseline justify-between p-4">
         <span className="text-sm text-muted">{t.orderTotal}</span>

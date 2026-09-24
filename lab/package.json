@@ -1,0 +1,19 @@
+{
+  "name": "order-automation-site",
+  "version": "1.0.0",
+  "description": "Легкий сайт для автоматизации заказов: приём заказа, канбан-доска сборки/отправки, суммы и серийные номера, экспорт в CSV для Google Таблиц.",
+  "type": "module",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=22.5.0"
+  },
+  "dependencies": {
+    "bcryptjs": "^3.0.3",
+    "bwip-js": "^4.11.4",
+    "pdfkit": "^0.20.2",
+    "svg-to-pdfkit": "^0.1.8"
+  }
+}
