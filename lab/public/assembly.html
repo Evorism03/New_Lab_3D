@@ -21,17 +21,13 @@
     <a href="/assembly.html" class="active"><span class="nav-icon">🔧</span><span class="label">Сборка</span></a>
     <a href="/orders.html"><span class="nav-icon">📋</span><span class="label">Все заказы</span></a>
     <a href="/serials.html"><span class="nav-icon">#️⃣</span><span class="label">Серийные номера</span></a>
-    <a href="/ozon.html"><span class="nav-icon">🚚</span><span class="label">Ozon Доставка</span></a>
+    <a href="/settings.html"><span class="nav-icon">⚙️</span><span class="label">Настройки</span></a>
   </nav>
   <div class="sidebar-bottom" id="sidebar-user"></div>
 </aside>
 <main>
   <div class="toolbar">
     <input type="search" id="search" placeholder="Поиск: товар, серийник, клиент...">
-    <select id="status-filter">
-      <option value="pending">Нужно собрать (не собрано)</option>
-      <option value="">Все статусы</option>
-    </select>
     <div class="spacer"></div>
   </div>
   <div class="card">
@@ -62,7 +58,8 @@ let statuses = [];
 let catalog = { models: [], colors: [], connectors: [] };
 let all = [];
 
-const PENDING_STATUSES = ['new', 'to_collect'];
+// На «Сборке» — только заказы из колонки «Собрать» на доске.
+const ASSEMBLY_STATUS = 'to_collect';
 
 function modelLabel(id) { return catalog.models.find((m) => m.id === id)?.label || id || ''; }
 function colorLabel(letter) { return catalog.colors.find((c) => c.letter === letter)?.label || letter || ''; }
@@ -70,21 +67,12 @@ function connectorLabel(letter) { return catalog.connectors.find((c) => c.letter
 
 async function load() {
   [statuses, catalog, all] = await Promise.all([api('/api/statuses'), api('/api/catalog'), api('/api/serials')]);
-  const sel = document.getElementById('status-filter');
-  for (const s of statuses) sel.appendChild(el(`<option value="${s.id}">${s.label}</option>`));
   render();
 }
 
 function render() {
   const q = document.getElementById('search').value.trim().toLowerCase();
-  const statusFilter = document.getElementById('status-filter').value;
-
-  let rows = all;
-  if (statusFilter === 'pending') {
-    rows = rows.filter((r) => PENDING_STATUSES.includes(r.status));
-  } else if (statusFilter) {
-    rows = rows.filter((r) => r.status === statusFilter);
-  }
+  let rows = all.filter((r) => r.status === ASSEMBLY_STATUS);
   if (q) {
     rows = rows.filter((r) =>
       [r.product_name, r.serial_number, r.full_name, r.phone, colorLabel(r.color), connectorLabel(r.connector), modelLabel(r.model_id)]
@@ -153,7 +141,6 @@ function render() {
 }
 
 document.getElementById('search').addEventListener('input', render);
-document.getElementById('status-filter').addEventListener('change', render);
 load();
 </script>
 </body>

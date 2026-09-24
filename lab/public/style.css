@@ -499,3 +499,22 @@ table.orders-table tr:hover { background: var(--panel-2); }
   justify-content: flex-end;
   gap: 10px;
 }
+
+/* Вкладки на странице «Настройки» */
+.settings-tabs {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+}
+.settings-tabs button {
+  background: var(--panel, transparent);
+  color: var(--muted);
+  border: 1px solid var(--border);
+}
+.settings-tabs button.active {
+  background: var(--accent);
+  color: white;
+  border-color: var(--accent);
+}
+.settings-tabs button[hidden] { display: none; }

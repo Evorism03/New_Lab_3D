@@ -125,8 +125,7 @@ function initSidebar() {
 }
 initSidebar();
 
-// Текущий сотрудник + кнопка "Выйти" внизу сайдбара, ссылка "Пользователи" — только для админа.
-// Сама защита — на сервере; тут только показываем/прячем пункт меню.
+// Текущий сотрудник + кнопка "Выйти" внизу сайдбара (пользователи — в Настройках, только для админа).
 async function initSidebarUser() {
   const mount = document.getElementById('sidebar-user');
   if (!mount) return;
@@ -148,12 +147,6 @@ async function initSidebarUser() {
     window.location.href = '/login.html';
   });
 
-  if (me.role === 'admin') {
-    const nav = document.querySelector('.sidebar-nav');
-    if (nav && !nav.querySelector('a[href="/users.html"]')) {
-      nav.appendChild(el('<a href="/users.html"><span class="nav-icon">👤</span><span class="label">Пользователи</span></a>'));
-    }
-  }
 }
 initSidebarUser();
 

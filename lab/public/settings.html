@@ -1,0 +1,378 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Настройки — Order Automation</title>
+<link rel="stylesheet" href="/style.css">
+<link rel="manifest" href="/manifest.webmanifest">
+<meta name="theme-color" content="#171d2b">
+</head>
+<body>
+<div class="layout">
+<aside class="sidebar" id="sidebar">
+  <div class="sidebar-top">
+    <span class="brand">📦 Заказы</span>
+    <button type="button" class="sidebar-toggle" id="sidebar-toggle" title="Свернуть/развернуть меню">☰</button>
+  </div>
+  <a href="/" class="new-order-btn"><span class="nav-icon">➕</span><span class="label">Новый заказ</span></a>
+  <nav class="sidebar-nav">
+    <a href="/board.html"><span class="nav-icon">🗂</span><span class="label">Доска</span></a>
+    <a href="/assembly.html"><span class="nav-icon">🔧</span><span class="label">Сборка</span></a>
+    <a href="/orders.html"><span class="nav-icon">📋</span><span class="label">Все заказы</span></a>
+    <a href="/serials.html"><span class="nav-icon">#️⃣</span><span class="label">Серийные номера</span></a>
+    <a href="/settings.html" class="active"><span class="nav-icon">⚙️</span><span class="label">Настройки</span></a>
+  </nav>
+  <div class="sidebar-bottom" id="sidebar-user"></div>
+</aside>
+<main>
+  <div class="settings-tabs" role="tablist">
+    <button type="button" data-tab="ozon" class="active">🚚 Ozon Доставка</button>
+    <button type="button" data-tab="users" hidden>👤 Пользователи</button>
+  </div>
+
+  <section data-panel="ozon">
+  <div class="card">
+    <h2>Метод отгрузки</h2>
+    <p class="muted">Выберите метод отгрузки, который уже создан в личном кабинете Ozon. Через него будут оформляться все отправления.</p>
+    <div id="methods" class="muted">Загрузка…</div>
+    <button type="button" class="secondary" id="reload-methods" style="margin-top:10px">Обновить список</button>
+  </div>
+
+  <div class="card" style="margin-top:16px">
+    <h2>Шаблоны коробок</h2>
+    <p class="muted">Вес посылки с товаром и габариты коробки. В заказе шаблон выбирается из списка — поля заполнятся сами.</p>
+    <table class="items-table">
+      <thead>
+        <tr>
+          <th>Название</th>
+          <th style="width:110px">Вес, г</th>
+          <th style="width:110px">Длина, мм</th>
+          <th style="width:110px">Ширина, мм</th>
+          <th style="width:110px">Высота, мм</th>
+          <th style="width:50px"></th>
+        </tr>
+      </thead>
+      <tbody id="box-body"></tbody>
+    </table>
+    <div class="toolbar" style="margin-top:10px">
+      <button type="button" class="secondary small" id="box-add">+ Добавить шаблон</button>
+      <button type="button" id="box-save">Сохранить шаблоны</button>
+    </div>
+  </div>
+
+  <div class="card" style="margin-top:16px">
+    <h2>Сумма доставки</h2>
+    <p class="muted">При «Рассчитать доставку» в заказ записывается стоимость доставки Ozon плюс страховка — процент от стоимости товаров.</p>
+    <div class="toolbar">
+      <div class="field" style="margin:0">
+        <label>Страховка, % от стоимости товаров</label>
+        <input id="insurance-percent" type="number" min="0" step="0.01" style="max-width:160px">
+      </div>
+      <button type="button" id="insurance-save" style="align-self:end">Сохранить</button>
+    </div>
+  </div>
+
+  <div class="card" style="margin-top:16px">
+    <h2>Подключение к Ozon</h2>
+    <div id="creds-status" class="muted"></div>
+    <div id="creds-form" hidden>
+      <p class="muted">Client ID и Client Secret из личного кабинета Ozon:
+        Настройки → Управление частными приложениями (<code>seller.ozon.ru/app/settings/private-apps</code>).
+        Вводятся один раз.</p>
+      <div class="grid-3">
+        <div class="field">
+          <label>Client ID</label>
+          <input id="client-id" placeholder="Client ID">
+        </div>
+        <div class="field">
+          <label>Client Secret</label>
+          <input id="client-secret" type="password" placeholder="Client Secret">
+        </div>
+      </div>
+      <button type="button" id="save-creds">Сохранить</button>
+    </div>
+    <button type="button" class="secondary" id="edit-creds" hidden>Изменить ключи</button>
+  </div>
+  </section>
+
+  <section data-panel="users" hidden>
+  <div class="toolbar">
+    <h2 style="margin:0">Сотрудники</h2>
+    <div class="spacer"></div>
+    <button type="button" id="add-user">+ Добавить сотрудника</button>
+  </div>
+  <div class="card">
+    <table class="orders-table" id="table">
+      <thead>
+        <tr>
+          <th>Логин</th>
+          <th>Роль</th>
+          <th>Создан</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody id="tbody"></tbody>
+    </table>
+  </div>
+  </section>
+</main>
+</div>
+<script src="/app.js"></script>
+<script>
+// Вкладки настроек; активная запоминается в адресе (#ozon, #users).
+function showTab(name) {
+  const btn = document.querySelector(`.settings-tabs [data-tab="${name}"]`);
+  if (!btn || btn.hidden) name = 'ozon';
+  document.querySelectorAll('.settings-tabs [data-tab]').forEach((b) => b.classList.toggle('active', b.dataset.tab === name));
+  document.querySelectorAll('[data-panel]').forEach((p) => { p.hidden = p.dataset.panel !== name; });
+}
+document.querySelectorAll('.settings-tabs [data-tab]').forEach((b) => b.addEventListener('click', () => {
+  history.replaceState(null, '', `#${b.dataset.tab}`);
+  showTab(b.dataset.tab);
+}));
+showTab(location.hash.slice(1) || 'ozon');
+
+// ---- Ozon Доставка ----
+let settings = {};
+
+function statusLabel(status) {
+  return {
+    unknown: 'неизвестно', forming: 'создаётся', active: 'активен', blocked: 'заблокирован',
+    closed: 'закрыт', error: 'ошибка',
+  }[status] || status || '—';
+}
+
+function escapeText(value) {
+  const div = document.createElement('div');
+  div.textContent = value == null ? '' : String(value);
+  return div.innerHTML;
+}
+
+function renderCreds() {
+  const connected = settings.client_id && settings.has_secret;
+  document.getElementById('creds-status').innerHTML = connected
+    ? `Подключено · Client ID: <code>${escapeText(settings.client_id)}</code>`
+    : 'Ключи ещё не введены.';
+  document.getElementById('creds-form').hidden = connected;
+  document.getElementById('edit-creds').hidden = !connected;
+  document.getElementById('client-id').value = settings.client_id || '';
+}
+
+async function loadSettings() {
+  settings = await api('/api/ozon/settings');
+  renderCreds();
+}
+
+async function selectMethod(id) {
+  try {
+    await api('/api/ozon/settings', { method: 'POST', body: JSON.stringify({ shipment_method_id: String(id) }) });
+    settings.shipment_method_id = String(id);
+    toast('Метод отгрузки выбран', 'success');
+    loadMethods();
+  } catch (err) {
+    toast(err.message, 'error');
+  }
+}
+
+async function loadMethods() {
+  const wrap = document.getElementById('methods');
+  if (!settings.client_id || !settings.has_secret) {
+    wrap.innerHTML = '<span class="muted">Сначала введите ключи в блоке «Подключение к Ozon» ниже.</span>';
+    return;
+  }
+  wrap.innerHTML = '<span class="muted">Загрузка…</span>';
+  try {
+    const { shipment_methods: methods = [] } = await api('/api/ozon/shipment-methods');
+    if (!methods.length) {
+      wrap.innerHTML = '<span class="muted">В кабинете Ozon нет методов отгрузки.</span>';
+      return;
+    }
+    wrap.innerHTML = '';
+    methods.forEach((m) => {
+      const selected = String(m.shipment_method_id) === String(settings.shipment_method_id);
+      const row = el(`
+        <div style="display:flex;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid var(--border)">
+          <div style="flex:1">
+            <div><strong>${escapeText(m.name || '—')}</strong> <span class="pill">${escapeText(statusLabel(m.status))}</span></div>
+            <div class="muted" style="font-size:12px">${escapeText(m.full_address || '')}</div>
+            <div class="muted" style="font-size:12px">ID: ${escapeText(m.shipment_method_id)}</div>
+            ${m.error ? `<div style="color:var(--danger);font-size:12px">${escapeText(m.error)}</div>` : ''}
+          </div>
+          ${selected
+            ? '<span style="color:var(--accent-2);white-space:nowrap">✓ Выбран</span>'
+            : '<button type="button" class="secondary">Выбрать</button>'}
+        </div>
+      `);
+      const btn = row.querySelector('button');
+      if (btn) btn.addEventListener('click', () => selectMethod(m.shipment_method_id));
+      wrap.appendChild(row);
+    });
+  } catch (err) {
+    wrap.innerHTML = `<span style="color:var(--danger)">${escapeText(err.message)}</span>`;
+  }
+}
+
+document.getElementById('reload-methods').addEventListener('click', loadMethods);
+
+document.getElementById('edit-creds').addEventListener('click', () => {
+  document.getElementById('creds-form').hidden = false;
+  document.getElementById('edit-creds').hidden = true;
+});
+
+document.getElementById('save-creds').addEventListener('click', async () => {
+  const clientId = document.getElementById('client-id').value.trim();
+  const clientSecret = document.getElementById('client-secret').value.trim();
+  if (!clientId || (!clientSecret && !settings.has_secret)) {
+    toast('Заполните Client ID и Client Secret', 'error');
+    return;
+  }
+  try {
+    await api('/api/ozon/settings', {
+      method: 'POST',
+      body: JSON.stringify({ client_id: clientId, client_secret: clientSecret }),
+    });
+    document.getElementById('client-secret').value = '';
+    toast('Ключи сохранены', 'success');
+    await loadSettings();
+    loadMethods();
+  } catch (err) {
+    toast(err.message, 'error');
+  }
+});
+
+const boxBody = document.getElementById('box-body');
+
+function addBoxRow(t = {}) {
+  const row = el(`
+    <tr>
+      <td><input data-k="name" placeholder="Например: Лоадер ×1"></td>
+      <td><input data-k="weight_g" type="number" min="1" step="1"></td>
+      <td><input data-k="length_mm" type="number" min="1" step="1"></td>
+      <td><input data-k="width_mm" type="number" min="1" step="1"></td>
+      <td><input data-k="height_mm" type="number" min="1" step="1"></td>
+      <td><button type="button" class="secondary small" title="Удалить">✕</button></td>
+    </tr>
+  `);
+  for (const input of row.querySelectorAll('input')) input.value = t[input.dataset.k] ?? '';
+  row.querySelector('button').addEventListener('click', () => row.remove());
+  boxBody.appendChild(row);
+}
+
+async function loadBoxes() {
+  const { templates } = await api('/api/ozon/box-templates');
+  boxBody.innerHTML = '';
+  templates.forEach(addBoxRow);
+  if (!templates.length) addBoxRow();
+}
+
+document.getElementById('box-add').addEventListener('click', () => addBoxRow());
+
+document.getElementById('box-save').addEventListener('click', async () => {
+  const templates = [...boxBody.querySelectorAll('tr')].map((row) => {
+    const t = {};
+    for (const input of row.querySelectorAll('input')) t[input.dataset.k] = input.value.trim();
+    return t;
+  }).filter((t) => t.name);
+  const bad = templates.find((t) => ['weight_g', 'length_mm', 'width_mm', 'height_mm'].some((k) => !(Number(t[k]) >= 1)));
+  if (bad) { toast(`Заполните вес и габариты в шаблоне «${bad.name}»`, 'error'); return; }
+  try {
+    await api('/api/ozon/box-templates', { method: 'PUT', body: JSON.stringify({ templates }) });
+    toast('Шаблоны сохранены', 'success');
+    loadBoxes();
+  } catch (err) {
+    toast(err.message, 'error');
+  }
+});
+
+document.getElementById('insurance-save').addEventListener('click', async () => {
+  try {
+    await api('/api/ozon/settings', {
+      method: 'POST',
+      body: JSON.stringify({ insurance_percent: document.getElementById('insurance-percent').value.trim() || '0' }),
+    });
+    toast('Сохранено', 'success');
+  } catch (err) {
+    toast(err.message, 'error');
+  }
+});
+
+loadSettings()
+  .then(() => { document.getElementById('insurance-percent').value = settings.insurance_percent || ''; })
+  .then(loadMethods)
+  .catch((err) => toast(err.message, 'error'));
+loadBoxes().catch((err) => toast(err.message, 'error'));
+
+// ---- Пользователи ----
+let me = null;
+
+function userRow(u) {
+  const row = el(`
+    <tr>
+      <td>${u.username}</td>
+      <td>${u.role === 'admin' ? 'Администратор' : 'Сотрудник'}</td>
+      <td>${new Date(u.created_at).toLocaleDateString('ru-RU')}</td>
+      <td style="text-align:right">
+        <button type="button" class="secondary small reset-pw">Сменить пароль</button>
+        ${u.id !== me.id ? '<button type="button" class="danger small delete-user">Удалить</button>' : ''}
+      </td>
+    </tr>
+  `);
+  row.querySelector('.reset-pw').addEventListener('click', async () => {
+    const password = prompt(`Новый пароль для «${u.username}» (минимум 6 символов):`);
+    if (!password) return;
+    try {
+      await api(`/api/users/${u.id}`, { method: 'PATCH', body: JSON.stringify({ password }) });
+      toast('Пароль обновлён', 'success');
+    } catch (err) {
+      toast(err.message, 'error');
+    }
+  });
+  const deleteBtn = row.querySelector('.delete-user');
+  if (deleteBtn) {
+    deleteBtn.addEventListener('click', async () => {
+      if (!(await confirmDialog(`Удалить пользователя «${u.username}»?`))) return;
+      try {
+        await api(`/api/users/${u.id}`, { method: 'DELETE' });
+        row.remove();
+        toast('Пользователь удалён', 'success');
+      } catch (err) {
+        toast(err.message, 'error');
+      }
+    });
+  }
+  return row;
+}
+
+async function loadUsers() {
+  me = await api('/api/auth/me');
+  if (me.role !== 'admin') return;
+  document.querySelector('.settings-tabs [data-tab="users"]').hidden = false;
+  const users = await api('/api/users');
+  const tbody = document.getElementById('tbody');
+  tbody.innerHTML = '';
+  for (const u of users) tbody.appendChild(userRow(u));
+}
+
+document.getElementById('add-user').addEventListener('click', async () => {
+  const username = prompt('Логин нового сотрудника:');
+  if (!username) return;
+  const password = prompt('Пароль (минимум 6 символов):');
+  if (!password) return;
+  const isAdmin = confirmDialog ? await confirmDialog(`Дать «${username}» права администратора?`, { okLabel: 'Да, админ', danger: false }) : false;
+  try {
+    await api('/api/users', {
+      method: 'POST',
+      body: JSON.stringify({ username, password, role: isAdmin ? 'admin' : 'employee' }),
+    });
+    toast('Сотрудник добавлен', 'success');
+    loadUsers();
+  } catch (err) {
+    toast(err.message, 'error');
+  }
+});
+
+loadUsers().then(() => showTab(location.hash.slice(1) || 'ozon')).catch(() => {});
+</script>
+</body>
+</html>

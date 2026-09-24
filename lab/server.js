@@ -324,7 +324,7 @@ function ozonCutoffAt() {
 
 function ozonShipmentMethodId() {
   const id = getSetting('ozon_shipment_method_id');
-  if (!id) throw new Error('Сначала настройте метод отгрузки на странице «Ozon Доставка»');
+  if (!id) throw new Error('Сначала настройте метод отгрузки в Настройках → Ozon Доставка');
   return Number(id);
 }
 
