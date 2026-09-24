@@ -176,7 +176,8 @@ export function deliveryLocation(coordinates, shipmentMethods) {
 }
 
 export function searchDropoffPoints(filters, pagination) {
-  return ozonRequest('/v1/dropoff-point/search', { filters, pagination });
+  // is_bulky Ozon требует обязательно — без него запрос не проходит валидацию.
+  return ozonRequest('/v1/dropoff-point/search', { filters: { is_bulky: false, ...filters }, pagination });
 }
 
 export function dropoffPointInfo(dropoffPointIds) {

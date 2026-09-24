@@ -61,6 +61,7 @@
           <input type="text" id="dropoff-search" placeholder="Адрес dropoff-точки (например, Москва)">
           <button type="button" class="secondary" id="dropoff-search-btn">Найти dropoff</button>
         </div>
+        <label style="display:flex;align-items:center;gap:6px;margin:6px 0"><input type="checkbox" id="dropoff-bulky" style="width:auto"> Крупногабаритные отправления</label>
         <div id="dropoff-results"></div>
       </div>
       <div>
@@ -189,6 +190,7 @@ document.getElementById('dropoff-search-btn').addEventListener('click', async ()
       body: JSON.stringify({
         filters: {
           types: ['pvz'],
+          is_bulky: document.getElementById('dropoff-bulky').checked,
           address_search: document.getElementById('dropoff-search').value.trim(),
           viewport: RUSSIA_VIEWPORT,
         },
