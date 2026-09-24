@@ -34,25 +34,8 @@
     <div class="spacer"></div>
     <a href="/api/export/orders.csv"><button class="secondary" type="button">⬇ Экспорт в CSV (для Google Таблиц)</button></a>
   </div>
-  <div class="card">
-    <table class="orders-table" id="table">
-      <thead>
-        <tr>
-          <th>№</th>
-          <th>Дата</th>
-          <th>Клиент</th>
-          <th>ТК / ПВЗ</th>
-          <th>Товары</th>
-          <th class="right">Товары, ₽</th>
-          <th class="right">Доставка, ₽</th>
-          <th class="right">Итого, ₽</th>
-          <th>Статус</th>
-        </tr>
-      </thead>
-      <tbody id="tbody"></tbody>
-    </table>
-    <div id="empty" class="empty-state" style="display:none">Заказов пока нет. Добавьте первый на странице «Новый заказ».</div>
-  </div>
+  <div id="tbody" class="list"></div>
+  <div id="empty" class="card empty-state" style="display:none">Заказов пока нет. Добавьте первый на странице «Новый заказ».</div>
 </main>
 </div>
 <script src="/app.js"></script>
@@ -85,17 +68,27 @@ function render(orders) {
     const itemsSummary = summarizeItems(o.items) || '—';
     const date = new Date(o.created_at).toLocaleDateString('ru-RU');
     const row = el(`
-      <tr style="cursor:pointer">
-        <td>#${o.id}${o.receipts_count ? ` <span title="${o.receipts_count} чек(ов) прикреплено">📎${o.receipts_count}</span>` : ''}</td>
-        <td class="nowrap">${date}</td>
-        <td>${o.full_name || ''}<br><span class="muted">${o.phone || ''}</span></td>
-        <td class="wide">${deliveryDot(o.delivery_service, catalog.delivery_services)}${o.delivery_service || ''}<br><span class="muted">${o.pvz_address || ''}</span></td>
-        <td>${itemsSummary}</td>
-        <td class="right">${money(o.goods_total)}</td>
-        <td class="right">${money(o.delivery_price)}</td>
-        <td class="right"><strong>${money(o.grand_total)}</strong></td>
-        <td>${statusPill(o.status, statuses)}</td>
-      </tr>
+      <div class="list-card clickable">
+        <div class="lc-main">
+          <div class="lc-head">
+            <span class="lc-id">#${o.id}</span>
+            <span class="lc-title">${escapeHtml(o.full_name || 'Без имени')}</span>
+            ${o.receipts_count ? `<span class="chip" title="${o.receipts_count} чек(ов) прикреплено">📎 ${o.receipts_count}</span>` : ''}
+            ${statusPill(o.status, statuses)}
+          </div>
+          <div class="lc-sub">
+            <span>${escapeHtml(o.phone || '')}</span>
+            <span>${date}</span>
+          </div>
+          <div class="lc-line">${deliveryDot(o.delivery_service, catalog.delivery_services)}<strong>${escapeHtml(o.delivery_service || '—')}</strong>
+            <span class="muted">${escapeHtml(o.pvz_address || '')}</span></div>
+          <div class="lc-line">${escapeHtml(itemsSummary)}</div>
+        </div>
+        <div class="lc-side">
+          <div class="lc-total">${money(o.grand_total)}</div>
+          <div class="lc-note">товары ${money(o.goods_total)}<br>доставка ${money(o.delivery_price)}</div>
+        </div>
+      </div>
     `);
     row.addEventListener('click', () => { window.location.href = `/order.html?id=${o.id}`; });
     tbody.appendChild(row);

@@ -546,8 +546,8 @@ table.orders-table td.nowrap, table.orders-table th.nowrap, table.orders-table t
 }
 
 @container main (max-width: 1150px) {
-  table.orders-table thead, .items-table thead { display: none; }
-  table.orders-table tbody tr, .items-table tbody tr {
+  table.orders-table thead { display: none; }
+  table.orders-table tbody tr {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
     gap: 8px 14px;
@@ -555,7 +555,7 @@ table.orders-table td.nowrap, table.orders-table th.nowrap, table.orders-table t
     border-bottom: 1px solid var(--border);
     align-items: start;
   }
-  table.orders-table tbody td, .items-table tbody td {
+  table.orders-table tbody td {
     display: block;
     border: 0;
     padding: 0;
@@ -563,7 +563,7 @@ table.orders-table td.nowrap, table.orders-table th.nowrap, table.orders-table t
     text-align: left;
     white-space: normal;
   }
-  table.orders-table tbody td[data-label]::before, .items-table tbody td[data-label]::before {
+  table.orders-table tbody td[data-label]::before {
     content: attr(data-label);
     display: block;
     font-size: 11px;
@@ -571,11 +571,105 @@ table.orders-table td.nowrap, table.orders-table th.nowrap, table.orders-table t
     margin-bottom: 2px;
   }
   /* Адрес и список товаров — длинные, им две клетки. */
-  table.orders-table tbody td.wide, .items-table tbody td.wide { grid-column: span 2; }
-  .items-table tbody td select, .items-table tbody td input:not([type="hidden"]):not([type="checkbox"]) { width: 100%; }
-  /* Ячейки без подписи (кнопки PDF и т.п.) — вровень с полями, а не выше них. */
-  table.orders-table tbody td:not([data-label]), .items-table tbody td:not([data-label]) { align-self: end; }
-  /* «✕ удалить товар» — в правый верхний угол карточки, а не отдельной строкой. */
-  .items-table tbody tr { position: relative; padding-right: 44px; }
-  .items-table tbody td:has(> .remove-item) { position: absolute; top: 12px; right: 4px; }
+  table.orders-table tbody td.wide { grid-column: span 2; }
+  table.orders-table tbody td:not([data-label]) { align-self: end; }
 }
+
+/* ---- Карточки списков: «Все заказы», «Сборка», «Серийные номера» ---- */
+.list { display: flex; flex-direction: column; gap: 10px; }
+.list-card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 14px 18px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px 20px;
+  transition: border-color 0.12s ease, transform 0.12s ease, box-shadow 0.12s ease;
+}
+.list-card.clickable { cursor: pointer; }
+.list-card.clickable:hover {
+  border-color: var(--accent);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.25);
+  transform: translateY(-1px);
+}
+.lc-main { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.lc-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.lc-head .pill { margin-left: auto; }
+.lc-id { color: var(--muted); font-weight: 700; font-size: 14px; }
+.lc-title { font-weight: 700; font-size: 16px; }
+.lc-sub { display: flex; flex-wrap: wrap; gap: 4px 14px; color: var(--muted); font-size: 13px; }
+.lc-line { font-size: 14px; display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap; }
+.lc-side {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 8px;
+  text-align: right;
+}
+.lc-total { font-size: 20px; font-weight: 800; color: var(--accent-2); white-space: nowrap; }
+.lc-note { font-size: 12px; color: var(--muted); line-height: 1.5; white-space: nowrap; }
+.lc-actions { justify-content: center; }
+.lc-field { display: flex; flex-direction: column; gap: 4px; font-size: 11px; color: var(--muted); text-align: left; }
+.lc-field input { min-width: 150px; }
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text);
+  white-space: nowrap;
+}
+.chip .dot { width: 8px; height: 8px; margin-right: 4px; }
+.chip-qty { background: rgba(91, 140, 255, 0.15); border-color: rgba(91, 140, 255, 0.4); font-weight: 700; }
+.serial {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 14px;
+  letter-spacing: 0.04em;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  padding: 3px 10px;
+  border-radius: 8px;
+}
+
+@media (max-width: 640px) {
+  .list-card { grid-template-columns: 1fr; }
+  .lc-side { align-items: flex-start; text-align: left; flex-direction: row; flex-wrap: wrap; }
+}
+
+/* ---- Товары в заказе: каждая позиция — карточка (таблица только ради разметки формы) ---- */
+.items-table { min-width: 0; margin-bottom: 12px; }
+.items-table, .items-table tbody { display: block; width: 100%; }
+.items-table thead { display: none; }
+.items-table tbody { display: flex; flex-direction: column; gap: 10px; }
+.items-table tbody tr {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 10px 14px;
+  align-items: end;
+  position: relative;
+  padding: 14px 52px 14px 16px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+}
+.items-table tbody td { display: block; border: 0; padding: 0; min-width: 0; font-size: 13px; }
+.items-table tbody td[data-label]::before {
+  content: attr(data-label);
+  display: block;
+  font-size: 11px;
+  color: var(--muted);
+  margin-bottom: 4px;
+}
+.items-table tbody td.wide { grid-column: span 2; }
+.items-table tbody td select, .items-table tbody td input:not([type="hidden"]):not([type="checkbox"]) { width: 100%; min-width: 0; }
+.items-table tbody td:has(> .remove-item) { position: absolute; top: 10px; right: 10px; }
+
+.toolbar > select { width: auto; max-width: 240px; }

@@ -43,6 +43,25 @@ function connectorDot(letter, connectors) {
   return dot(findSwatch(connectors || [], 'letter', letter));
 }
 
+function escapeHtml(value) {
+  return String(value ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+// Плашки товара для карточек: модель, цвет, разъём, количество.
+// Использует глобальный catalog страницы (models/colors/connectors), если он есть.
+function itemChips(it) {
+  const cat = (typeof catalog !== 'undefined' && catalog) || {};
+  const model = (cat.models || []).find((m) => m.id === it.model_id);
+  const color = (cat.colors || []).find((c) => c.letter === it.color);
+  const conn = (cat.connectors || []).find((c) => c.letter === it.connector);
+  const chips = [];
+  if (model || it.model_id) chips.push(`<span class="chip">${escapeHtml(model?.label || it.model_id)}</span>`);
+  if (color || it.color) chips.push(`<span class="chip">${dot(color?.swatch)}${escapeHtml(color?.shortLabel || color?.label || it.color)}</span>`);
+  if (conn || it.connector) chips.push(`<span class="chip">${dot(conn?.swatch)}${escapeHtml(conn?.plugLabel || conn?.label || it.connector)}</span>`);
+  if (Number(it.quantity) > 1) chips.push(`<span class="chip chip-qty">× ${it.quantity}</span>`);
+  return chips.join('');
+}
+
 function el(html) {
   const t = document.createElement('template');
   t.innerHTML = html.trim();

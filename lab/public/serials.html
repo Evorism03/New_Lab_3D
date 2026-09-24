@@ -31,24 +31,8 @@
     <div class="spacer"></div>
     <a href="/api/export/serials.csv"><button class="secondary" type="button">⬇ Экспорт в CSV (для Google Таблиц)</button></a>
   </div>
-  <div class="card">
-    <table class="orders-table" id="table">
-      <thead>
-        <tr>
-          <th>№ заказа</th>
-          <th>Модель</th>
-          <th>Товар</th>
-          <th>Цвет / Разъём</th>
-          <th>Кол-во</th>
-          <th>Серийный номер</th>
-          <th>Клиент</th>
-          <th>Статус</th>
-        </tr>
-      </thead>
-      <tbody id="tbody"></tbody>
-    </table>
-    <div id="empty" class="empty-state" style="display:none">Серийных номеров пока нет.</div>
-  </div>
+  <div id="tbody" class="list"></div>
+  <div id="empty" class="card empty-state" style="display:none">Серийных номеров пока нет.</div>
 </main>
 </div>
 <script src="/app.js"></script>
@@ -81,16 +65,21 @@ function render() {
   document.getElementById('empty').style.display = rows.length ? 'none' : 'block';
   for (const r of rows) {
     const row = el(`
-      <tr style="cursor:pointer">
-        <td>#${r.order_id}</td>
-        <td>${modelLabel(r.model_id)}</td>
-        <td>${r.product_name || ''}</td>
-        <td>${colorDot(r.color, catalog.colors)}${colorLabel(r.color)} / ${connectorDot(r.connector, catalog.connectors)}${connectorLabel(r.connector)}</td>
-        <td>${r.quantity}</td>
-        <td><code>${r.serial_number || '—'}</code></td>
-        <td>${r.full_name || ''}<br><span class="muted">${r.phone || ''}</span></td>
-        <td>${statusPill(r.status, statuses)}</td>
-      </tr>
+      <div class="list-card clickable">
+        <div class="lc-main">
+          <div class="lc-head">
+            <span class="lc-title">${escapeHtml(r.product_name || 'Товар')}</span>
+            ${itemChips(r)}
+          </div>
+          <div class="lc-line"><span class="serial">${escapeHtml(r.serial_number || '—')}</span></div>
+          <div class="lc-sub">
+            <span>Заказ #${r.order_id}</span>
+            <span>${escapeHtml(r.full_name || '')}</span>
+            <span>${escapeHtml(r.phone || '')}</span>
+          </div>
+        </div>
+        <div class="lc-side">${statusPill(r.status, statuses)}</div>
+      </div>
     `);
     row.addEventListener('click', () => { window.location.href = `/order.html?id=${r.order_id}`; });
     tbody.appendChild(row);
