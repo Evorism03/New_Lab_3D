@@ -17,13 +17,14 @@ export function addressQuery(addressText) {
   const parts = parseAddress(addressText);
   const query = {
     parts,
-    // Регион в сравнении не участвует — берём только последний кусок (сам город).
-    city: addressWords(String(parts.city).split(',').pop()),
+    // Регион/район/поселение в сравнении не участвуют; подходит любой из населённых пунктов
+    // («Москва, п. Внуковское» — пункт может быть записан и как Москва, и как Внуковское).
+    cities: globalThis.LabAddress.cityNames(parts).map(addressWords).filter((w) => w.length),
     street: addressWords(parts.street),
     house: addressWords(parts.house),
     extra: addressWords(parts.extra),
   };
-  if (!query.city.length && !query.street.length) {
+  if (!query.cities.length && !query.street.length) {
     throw new Error('Не удалось разобрать адрес ПВЗ — укажите хотя бы город и улицу');
   }
   return query;
@@ -32,7 +33,7 @@ export function addressQuery(addressText) {
 // words — слова адреса пункта (addressWords). 0 — не подходит.
 export function scoreAddress(words, query, { ignoreCity = false } = {}) {
   const has = (w) => words.some((pw) => wordMatches(pw, w));
-  if (!ignoreCity && query.city.length && !query.city.every(has)) return 0;
+  if (!ignoreCity && query.cities.length && !query.cities.some((cityWords) => cityWords.every(has))) return 0;
   const streetHits = query.street.filter(has).length;
   if (query.street.length && !streetHits) return 0;
   let score = 1 + streetHits * 2;

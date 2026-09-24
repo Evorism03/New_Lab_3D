@@ -131,12 +131,6 @@ export async function deliveryPoints(query) {
   return Array.isArray(list) ? list : [];
 }
 
-function cityNameFrom(parts) {
-  // «Московская обл., г. Химки» → «Химки»
-  const last = String(parts.city || '').split(',').pop().trim();
-  return last.replace(/^(?:г|город|гор|пгт|пос|п|поселок|посёлок|с|село|д|деревня|рп|ст-ца|станица)\.?\s+/i, '').trim();
-}
-
 function describePoint(p) {
   return {
     code: p.code,
@@ -153,15 +147,20 @@ function describePoint(p) {
 // purpose: 'handout' — пункт выдачи (для получателя), 'reception' — приём посылок (для отправки).
 export async function findPointsByAddress(addressText, limit = 5, purpose = 'handout') {
   const query = addressQuery(addressText);
-  const cityName = cityNameFrom(query.parts);
-  if (!cityName) throw new Error('Не удалось определить город в адресе ПВЗ');
-  const cities = await findCities(cityName);
-  if (!cities.length) throw new Error(`СДЭК не знает город «${cityName}»`);
+  // Пробуем населённые пункты от самого мелкого: «Москва, п. Внуковское» → Внуковское, затем Москва.
+  const names = globalThis.LabAddress.cityNames(query.parts);
+  if (!names.length) throw new Error('Не удалось определить город в адресе ПВЗ');
   // Если указан регион — предпочитаем город из этого региона.
-  const regionWords = addressWords(String(query.parts.city).split(',').slice(0, -1).join(' '));
-  const city = cities.find((c) => regionWords.length && regionWords.some((w) => addressWords(c.region || '').includes(w)))
-    || cities.find((c) => String(c.city).toLowerCase() === cityName.toLowerCase())
-    || cities[0];
+  const regionWords = addressWords(String(query.parts.city).split(',').filter((c) => /обл|край|респ|округ|район|р-н|ао/i.test(c)).join(' '));
+  let city = null;
+  for (const cityName of names) {
+    const cities = await findCities(cityName);
+    city = cities.find((c) => regionWords.length && regionWords.some((w) => addressWords(c.region || '').includes(w)))
+      || cities.find((c) => String(c.city).toLowerCase() === cityName.toLowerCase())
+      || cities[0];
+    if (city) break;
+  }
+  if (!city) throw new Error(`СДЭК не знает населённый пункт «${names.join('» / «')}»`);
   const filter = purpose === 'reception' ? { is_reception: 'true' } : { is_handout: 'true' };
   const points = (await deliveryPoints({ city_code: city.code, type: 'ALL', ...filter })).map((p) => {
     const d = describePoint(p);

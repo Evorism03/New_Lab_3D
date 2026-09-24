@@ -6,10 +6,15 @@
   const STREET_TYPES = [
     'улица', 'ул', 'проспект', 'пр-т', 'пр-кт', 'просп', 'пр', 'переулок', 'пер', 'бульвар', 'б-р',
     'бул', 'шоссе', 'ш', 'набережная', 'наб', 'площадь', 'пл', 'проезд', 'пр-д', 'тупик', 'туп',
-    'микрорайон', 'мкр', 'мкрн', 'мр', 'аллея', 'тракт', 'линия', 'квартал', 'кв-л', 'тер',
+    'микрорайон', 'мкр', 'мкрн', 'мр', 'аллея', 'тракт', 'линия', 'квартал', 'кв-л', 'тер', 'жк',
   ];
   const CITY_TYPES = ['город', 'г', 'гор', 'пгт', 'поселок', 'посёлок', 'пос', 'п', 'село', 'с', 'деревня', 'дер', 'станица', 'ст-ца', 'рп'];
-  const REGION_WORDS = ['область', 'обл', 'край', 'республика', 'респ', 'автономный', 'ао', 'район', 'р-н'];
+  // Части адреса крупнее улицы, но не сам город: регион, район, поселение, округ, СНТ…
+  const REGION_WORDS = [
+    'область', 'обл', 'край', 'республика', 'респ', 'автономный', 'ао', 'район', 'р-н',
+    'поселение', 'пос-е', 'округ', 'городской', 'муниципальный', 'мо', 'го', 'мр-н',
+    'снт', 'днт', 'тсн', 'кп', 'нп', 'территория',
+  ];
   const HOUSE_TYPES = ['дом', 'д', 'владение', 'вл'];
   const BUILDING_TYPES = ['корпус', 'корп', 'к', 'строение', 'стр', 'литера', 'лит'];
 
@@ -43,7 +48,9 @@
   function parseAddress(text) {
     const parts = { city: '', street: '', house: '', extra: '' };
     const extra = [];
-    const regions = [];
+    // Город, регион, поселение и т.п. — в том порядке, как в исходной строке.
+    const localities = [];
+    let hasCity = false;
     for (let seg of splitSegments(text)) {
       if (/^россия$/i.test(seg) || /^\d{6}$/.test(seg)) continue; // страна и индекс не нужны
       seg = seg.replace(/^\d{6}\s+/, '');
@@ -65,21 +72,25 @@
           continue;
         }
       }
-      if (CITY_PREFIX.test(seg) && !parts.city) { parts.city = seg; continue; }
-      if (REGION_ANY.test(seg)) { regions.push(seg); continue; }
+      // «г. Москва», «п. Внуковское», «д. Ивановка» — населённые пункты (их может быть несколько).
+      const village = HOUSE_PREFIX.test(seg) && !/^\d/.test(seg.replace(HOUSE_PREFIX, ''));
+      if ((CITY_PREFIX.test(seg) || village) && !parts.street) { localities.push(seg); hasCity = true; continue; }
+      if (REGION_ANY.test(seg) && !parts.street) { localities.push(seg); continue; }
       if (HOUSE_NUMBER.test(seg) && !parts.house) { parts.house = seg; continue; }
 
       // Сегмент без маркеров: сначала город, потом улица (с возможным номером дома в конце).
-      if (!parts.city && !parts.street) {
+      if (!hasCity && !parts.street) {
         const words = seg.split(' ');
         // «Москва Ленина 5» — всё в одном сегменте.
         if (words.length >= 3 && /^\d/.test(words[words.length - 1]) && !parts.house) {
-          parts.city = words[0];
+          localities.push(words[0]);
+          hasCity = true;
           parts.house = words[words.length - 1];
           parts.street = words.slice(1, -1).join(' ');
           continue;
         }
-        parts.city = seg;
+        localities.push(seg);
+        hasCity = true;
         continue;
       }
       if (!parts.street) {
@@ -90,12 +101,37 @@
       }
       extra.push(seg);
     }
-    if (regions.length) parts.city = [...regions, parts.city].filter(Boolean).join(', ');
+    parts.city = localities.join(', ');
     parts.extra = extra.join(', ');
     return parts;
   }
 
   function hasRegion(s) { return REGION_ANY.test(s); }
+
+  function isVillage(s) { return HOUSE_PREFIX.test(s) && !/^\d/.test(s.replace(HOUSE_PREFIX, '')); }
+
+  // Индекс куска «города» в поле «Город»: последний, который не регион/район/поселение.
+  function cityChunkIndex(chunks) {
+    for (let i = chunks.length - 1; i >= 0; i--) if (!hasRegion(chunks[i])) return i;
+    return chunks.length - 1;
+  }
+
+  function stripLocalityType(chunk) {
+    return clean(chunk.replace(CITY_PREFIX, '').replace(isVillage(chunk) ? HOUSE_PREFIX : /^$/, ''));
+  }
+
+  // Населённые пункты из поля «Город» без регионов/районов/поселений, от самого мелкого:
+  // «Москва, п. Внуковское» → ['Внуковское', 'Москва']. Если есть только регион — он сам.
+  function cityNames(parts) {
+    const chunks = String(parts.city || '').split(',').map(clean).filter(Boolean);
+    const places = chunks.filter((c) => !hasRegion(c));
+    return (places.length ? places : chunks.slice(-1)).reverse().map(stripLocalityType).filter(Boolean);
+  }
+
+  // Само название населённого пункта: «Московская обл., г. Химки» → «Химки».
+  function cityName(parts) {
+    return cityNames(parts)[0] || '';
+  }
 
   // Сборка строки из частей: недостающие «г.», «ул.», «д.» дописываются.
   function formatAddress(parts) {
@@ -104,12 +140,12 @@
     const house = clean(parts.house);
     const out = [];
     if (city) {
-      // Регион оставляем как есть, к последнему куску (сам город) добавляем «г.», если маркера нет.
+      // Регион/поселение оставляем как есть, к самому городу добавляем «г.», если маркера нет.
       const chunks = city.split(',').map(clean).filter(Boolean);
-      const last = chunks.pop();
-      const village = HOUSE_PREFIX.test(last) && !/^\d/.test(last.replace(HOUSE_PREFIX, '')); // «д. Ивановка»
-      const lastFmt = CITY_PREFIX.test(last) || hasRegion(last) || village ? last : `г. ${last}`;
-      out.push(...chunks, lastFmt);
+      const idx = cityChunkIndex(chunks);
+      const c = chunks[idx];
+      if (!CITY_PREFIX.test(c) && !hasRegion(c) && !isVillage(c)) chunks[idx] = `г. ${c}`;
+      out.push(...chunks);
     }
     if (street) out.push(STREET_PREFIX.test(street) || STREET_SUFFIX.test(street) ? street : `ул. ${street}`);
     if (house) out.push(HOUSE_PREFIX.test(house) ? house : `д. ${house}`);
@@ -150,5 +186,5 @@
     return { refresh: fillParts };
   }
 
-  globalThis.LabAddress = { parseAddress, formatAddress, normalizeWords, bindAddressFields };
+  globalThis.LabAddress = { parseAddress, formatAddress, normalizeWords, cityName, cityNames, bindAddressFields };
 })();
