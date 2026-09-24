@@ -525,3 +525,8 @@ table.orders-table tr:hover { background: var(--panel-2); }
   border-color: var(--accent);
 }
 .settings-tabs button[hidden] { display: none; }
+
+button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}

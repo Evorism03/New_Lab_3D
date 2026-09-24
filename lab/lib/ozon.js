@@ -10,7 +10,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { getSetting } from '../db.js';
-import '../public/address.js'; // globalThis.LabAddress — разбор и сравнение адресов
+import { addressQuery, addressWords, rankByAddress } from './address-match.js';
 
 const AUTH_URL = 'https://xapi.ozon.ru/oauth/token';
 const API_BASE = 'https://api-delivery.ozon.ru';
@@ -401,7 +401,7 @@ const POINTS_FILE = path.join(path.dirname(fileURLToPath(import.meta.url)), '..'
 function prepare(points, loadedAt) {
   const prepared = points.map((p) => {
     const address = pointAddressText(p);
-    return { raw: p, id: String(pointId(p)), address, words: globalThis.LabAddress.normalizeWords(address) };
+    return { raw: p, id: String(pointId(p)), address, words: addressWords(address) };
   });
   return { points: prepared, loadedAt, loading: null };
 }
@@ -444,52 +444,14 @@ async function getAllDeliveryPoints() {
   return pointsCache.loading;
 }
 
-function wordMatches(a, b) {
-  return a === b || (a.length >= 4 && b.length >= 4 && (a.startsWith(b) || b.startsWith(a)));
-}
-
-// Оценка совпадения: город и улица обязательны, номер дома — решающий.
-function scorePoint(point, query) {
-  const has = (w) => point.words.some((pw) => wordMatches(pw, w));
-  const cityOk = !query.city.length || query.city.every(has);
-  if (!cityOk) return 0;
-  const streetHits = query.street.filter(has).length;
-  if (query.street.length && !streetHits) return 0;
-  let score = 1 + streetHits * 2;
-  if (query.house.length) {
-    const houseNum = query.house[0];
-    if (point.words.includes(houseNum)) score += 5;
-    else if (point.words.some((w) => w.replace(/[^\d]/g, '') === houseNum.replace(/[^\d]/g, ''))) score += 2;
-  }
-  score += query.extra.filter(has).length * 0.5;
-  return score;
-}
-
 export async function findDeliveryPointsByAddress(addressText, limit = 5) {
-  const { parseAddress, normalizeWords } = globalThis.LabAddress;
-  const parts = parseAddress(addressText);
-  const cityWords = normalizeWords(parts.city);
-  const query = {
-    // Регион в сравнении не участвует — берём только последний кусок (сам город).
-    city: normalizeWords(String(parts.city).split(',').pop()),
-    street: normalizeWords(parts.street),
-    house: normalizeWords(parts.house),
-    extra: normalizeWords(parts.extra),
-  };
-  if (!query.city.length && !query.street.length && !cityWords.length) {
-    throw new Error('Не удалось разобрать адрес ПВЗ — укажите хотя бы город и улицу');
-  }
+  const query = addressQuery(addressText);
   const points = await getAllDeliveryPoints();
-  return points
-    .map((p) => ({ p, score: scorePoint(p, query) }))
-    .filter((x) => x.score > 0)
-    .sort((a, b) => b.score - a.score)
-    .slice(0, limit)
-    .map(({ p, score }) => ({
-      delivery_point_id: p.id,
-      full_address: p.address,
-      name: p.raw.name || '',
-      type: p.raw.type || '',
-      score,
-    }));
+  return rankByAddress(points, query, limit).map(({ point: p, score }) => ({
+    delivery_point_id: p.id,
+    full_address: p.address,
+    name: p.raw.name || '',
+    type: p.raw.type || '',
+    score,
+  }));
 }

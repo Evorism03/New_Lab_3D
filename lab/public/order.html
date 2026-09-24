@@ -100,12 +100,12 @@
   </div>
 
   <div class="card" style="margin-top:16px">
-    <h2>🚚 Ozon Доставка</h2>
+    <h2>📦 Посылка</h2>
     <div class="field" style="max-width:360px">
       <label>Шаблон коробки <span class="muted" style="font-weight:normal">— шаблоны настраиваются в Настройках → Ozon Доставка</span></label>
       <select id="ozon-box-template"><option value="">— вручную —</option></select>
     </div>
-    <div class="grid-3">
+    <div class="grid-3" style="grid-template-columns:repeat(4,1fr)">
       <div class="field">
         <label>Вес, г</label>
         <input id="ozon-weight" type="number" min="1" step="1">
@@ -122,6 +122,13 @@
         <label>Высота, мм</label>
         <input id="ozon-height" type="number" min="1" step="1">
       </div>
+    </div>
+    <button type="button" class="secondary small" id="ozon-save-params">Сохранить габариты</button>
+  </div>
+
+  <div class="card carrier-card" id="ozon-card" style="margin-top:16px">
+    <h2>🚚 Ozon Доставка</h2>
+    <div class="grid-3">
       <div class="field">
         <label>ID ПВЗ Ozon <span class="muted" style="font-weight:normal">— необязательно</span></label>
         <input id="ozon-delivery-point" placeholder="подберётся по адресу ПВЗ">
@@ -133,7 +140,6 @@
     </div>
     <div id="ozon-point-info" class="muted" style="margin-bottom:10px"></div>
     <div id="ozon-point-candidates" style="margin-bottom:10px"></div>
-    <button type="button" class="secondary small" id="ozon-save-params">Сохранить габариты и ПВЗ</button>
 
     <div id="ozon-status" style="margin-top:16px"></div>
 
@@ -143,6 +149,32 @@
       <button type="button" class="secondary" id="ozon-refresh-status">Обновить статус</button>
       <button type="button" class="secondary" id="ozon-approve">Подтвердить к отгрузке</button>
       <a href="#" id="ozon-label-link" target="_blank"><button type="button" class="secondary">🏷 Этикетка Ozon PDF</button></a>
+    </div>
+  </div>
+
+  <div class="card carrier-card" id="cdek-card" style="margin-top:16px">
+    <h2>🟢 СДЭК</h2>
+    <div class="grid-3">
+      <div class="field">
+        <label>Код ПВЗ СДЭК <span class="muted" style="font-weight:normal">— необязательно</span></label>
+        <input id="cdek-point-code" placeholder="подберётся по адресу ПВЗ">
+      </div>
+      <div class="field" style="align-self:end;display:flex;gap:8px;flex-wrap:wrap">
+        <button type="button" class="secondary" id="cdek-find-point">Найти ПВЗ по адресу</button>
+        <button type="button" class="secondary" id="cdek-set-point">Сохранить код</button>
+      </div>
+    </div>
+    <div id="cdek-point-info" class="muted" style="margin-bottom:10px"></div>
+    <div id="cdek-point-candidates" style="margin-bottom:10px"></div>
+
+    <div id="cdek-status" style="margin-top:16px"></div>
+
+    <div class="toolbar" style="margin-top:10px">
+      <button type="button" class="secondary" id="cdek-calculate">Рассчитать доставку</button>
+      <button type="button" id="cdek-create">Создать заказ в СДЭК</button>
+      <button type="button" class="secondary" id="cdek-refresh">Обновить статус</button>
+      <button type="button" class="secondary" id="cdek-label">🏷 Этикетка СДЭК PDF</button>
+      <button type="button" class="danger" id="cdek-cancel">Отменить заказ СДЭК</button>
     </div>
   </div>
 
@@ -436,6 +468,12 @@ const addressFields = LabAddress.bindAddressFields(document.querySelector('[name
 let ozonDraftCreated = false;
 // Адрес ПВЗ изменился — выбранный ранее ПВЗ Ozon больше не подходит (пока черновик не создан).
 document.querySelector('[name="pvz_address"]').addEventListener('change', () => {
+  // То же для СДЭК: пока заказ в СДЭК не создан, выбранный ПВЗ сбрасываем.
+  const cdekInput = document.getElementById('cdek-point-code');
+  if (cdekInput.value && document.getElementById('cdek-refresh').disabled) {
+    cdekInput.value = '';
+    document.getElementById('cdek-point-info').textContent = 'Адрес изменён — ПВЗ СДЭК подберётся заново.';
+  }
   const pointInput = document.getElementById('ozon-delivery-point');
   if (ozonDraftCreated || !pointInput.value) return;
   pointInput.value = '';
@@ -496,24 +534,133 @@ async function saveOzonPoint(pointId) {
   });
 }
 
-document.getElementById('ozon-label-link').addEventListener('click', async (e) => {
-  e.preventDefault();
-  const link = e.currentTarget;
-  if (link.style.pointerEvents === 'none') return;
-  // Окно открываем сразу (иначе браузер заблокирует всплывающее окно), а содержимое — после ответа.
+// ---- СДЭК ----
+function renderCdek(order) {
+  const sh = order.cdek_shipment || {};
+  document.getElementById('cdek-point-code').value = order.cdek_pvz_code || '';
+  document.getElementById('cdek-point-info').textContent = sh.point?.code
+    ? `ПВЗ: ${sh.point.full_address}${sh.point.type === 'POSTAMAT' ? ' (постамат)' : ''}`
+    : '';
+  const lines = [];
+  if (sh.uuid) {
+    lines.push(`<div><strong>Номер СДЭК (трек):</strong> ${escapeText(sh.cdek_number || 'присваивается…')}${sh.status_name ? ` <span class="pill">${escapeText(sh.status_name)}</span>` : ''}</div>`);
+  } else {
+    lines.push(`<span class="muted">Заказ в СДЭК ещё не создан.${sh.cancelled_at ? ' Предыдущий заказ отменён.' : ''}</span>`);
+  }
+  if (sh.errors?.length) lines.push(`<div style="color:var(--danger)">СДЭК отклонил заказ: ${escapeText(sh.errors.join('; '))}</div>`);
+  if (sh.price) {
+    const p = sh.price;
+    const ins = p.insurance ? ` + страховка ${money(p.insurance)}` : '';
+    const days = p.period_min != null ? `, ${p.period_min === p.period_max ? p.period_min : `${p.period_min}–${p.period_max}`} раб. дн.` : '';
+    lines.push(`<div class="muted">Расчёт (тариф ${escapeText(p.tariff_code)}): доставка ${money(p.delivery)}${ins} = <strong>${money(p.total)}</strong>${days}</div>`);
+  }
+  document.getElementById('cdek-status').innerHTML = lines.join('');
+  const created = Boolean(sh.uuid);
+  document.getElementById('cdek-create').disabled = created && !sh.errors?.length;
+  for (const btnId of ['cdek-refresh', 'cdek-label', 'cdek-cancel']) document.getElementById(btnId).disabled = !created;
+}
+
+async function cdekAction(path, options, successMessage) {
+  try {
+    const order = await api(`/api/orders/${id}/cdek/${path}`, options);
+    renderCdek(order);
+    if (order.delivery_price != null && path === 'calculate') {
+      document.querySelector('[name="delivery_price"]').value = order.delivery_price || 0;
+      updatePreview();
+    }
+    if (order.cdek_shipment?.errors?.length) toast('СДЭК отклонил заказ — причина указана в блоке СДЭК', 'error');
+    else if (successMessage) toast(successMessage, 'success');
+    return order;
+  } catch (err) {
+    toast(err.message, 'error');
+    return null;
+  }
+}
+
+document.getElementById('cdek-find-point').addEventListener('click', async () => {
+  const wrap = document.getElementById('cdek-point-candidates');
+  const address = document.querySelector('[name="pvz_address"]').value.trim();
+  if (!address) { toast('Заполните адрес ПВЗ в заказе', 'error'); return; }
+  wrap.innerHTML = '<div class="muted">Поиск…</div>';
+  try {
+    const { points } = await api('/api/cdek/points/find', { method: 'POST', body: JSON.stringify({ address }) });
+    if (!points.length) {
+      wrap.innerHTML = '<div style="color:var(--danger)">ПВЗ СДЭК по этому адресу не найден. Проверьте адрес или введите код ПВЗ.</div>';
+      return;
+    }
+    wrap.innerHTML = '';
+    points.forEach((p) => {
+      const row = el(`
+        <div style="display:flex;align-items:center;gap:12px;padding:8px 0;border-bottom:1px solid var(--border)">
+          <div style="flex:1">
+            <div>${escapeText(p.full_address)}</div>
+            <div class="muted" style="font-size:12px">${escapeText([p.name, p.type === 'POSTAMAT' ? 'постамат' : 'ПВЗ', p.code, p.work_time].filter(Boolean).join(' · '))}</div>
+          </div>
+          <button type="button" class="secondary small">Выбрать</button>
+        </div>
+      `);
+      row.querySelector('button').addEventListener('click', async () => {
+        const order = await cdekAction('point', { method: 'PUT', body: JSON.stringify(p) }, 'ПВЗ СДЭК выбран');
+        if (order) wrap.innerHTML = '';
+      });
+      wrap.appendChild(row);
+    });
+  } catch (err) {
+    wrap.innerHTML = `<div style="color:var(--danger)">${escapeText(err.message)}</div>`;
+  }
+});
+
+document.getElementById('cdek-set-point').addEventListener('click', () => cdekAction('point', {
+  method: 'PUT',
+  body: JSON.stringify({ code: document.getElementById('cdek-point-code').value.trim() }),
+}, 'Сохранено'));
+
+document.getElementById('cdek-calculate').addEventListener('click', () => cdekAction('calculate', { method: 'POST' }, 'Расчёт получен'));
+document.getElementById('cdek-refresh').addEventListener('click', () => cdekAction('status', { method: 'POST' }, 'Статус обновлён'));
+
+document.getElementById('cdek-create').addEventListener('click', async () => {
+  if (!(await confirmDialog('Создать заказ в СДЭК?', { danger: false, okLabel: 'Создать' }))) return;
+  cdekAction('create', { method: 'POST' }, 'Заказ создан в СДЭК');
+});
+
+document.getElementById('cdek-cancel').addEventListener('click', async () => {
+  if (!(await confirmDialog('Отменить (удалить) заказ в СДЭК?'))) return;
+  cdekAction('cancel', { method: 'POST' }, 'Заказ в СДЭК отменён');
+});
+
+document.getElementById('cdek-label').addEventListener('click', () => openPdf(`/api/orders/${id}/cdek/label.pdf`));
+
+// Показываем блок той службы доставки, что выбрана в заказе (для прочих — оба).
+function syncCarrierCards() {
+  const service = String(document.getElementById('delivery-service').value || '').toLowerCase();
+  const isCdek = service.includes('сдэк') || service.includes('cdek');
+  const isOzon = service.includes('озон') || service.includes('ozon');
+  document.getElementById('cdek-card').hidden = isOzon && !isCdek;
+  document.getElementById('ozon-card').hidden = isCdek && !isOzon;
+}
+document.getElementById('delivery-service').addEventListener('change', syncCarrierCards);
+
+// PDF открываем в новой вкладке; ошибку показываем уведомлением, а не JSON во вкладке.
+async function openPdf(url) {
   const win = window.open('', '_blank');
   try {
-    const res = await fetch(link.href, { credentials: 'same-origin' });
+    const res = await fetch(url, { credentials: 'same-origin' });
     if (!res.ok) {
       const data = await res.json().catch(() => ({}));
       throw new Error(data.error || `HTTP ${res.status}`);
     }
-    const url = URL.createObjectURL(await res.blob());
-    if (win) win.location.href = url; else window.location.href = url;
+    const blobUrl = URL.createObjectURL(await res.blob());
+    if (win) win.location.href = blobUrl; else window.location.href = blobUrl;
   } catch (err) {
     if (win) win.close();
     toast(err.message, 'error');
   }
+}
+
+document.getElementById('ozon-label-link').addEventListener('click', (e) => {
+  e.preventDefault();
+  if (e.currentTarget.style.pointerEvents === 'none') return;
+  openPdf(e.currentTarget.href);
 });
 
 document.getElementById('ozon-find-point').addEventListener('click', async () => {
@@ -709,6 +856,8 @@ async function load() {
   document.getElementById('ozon-delivery-point').value = order.ozon_delivery_point_id || '';
   renderOzonStatus(order.ozon_shipment);
   loadBoxTemplates().catch((err) => toast(err.message, 'error'));
+  renderCdek(order);
+  syncCarrierCards();
 
   sel.addEventListener('change', async () => {
     await api(`/api/orders/${id}`, { method: 'PATCH', body: JSON.stringify({ status: sel.value }) });
@@ -731,6 +880,10 @@ document.getElementById('order-form').addEventListener('submit', async (e) => {
     const order = await api(`/api/orders/${id}`, { method: 'PATCH', body: JSON.stringify(data) });
     const pointId = document.getElementById('ozon-delivery-point').value.trim();
     if (pointId !== (order.ozon_delivery_point_id || '')) await saveOzonPoint(pointId);
+    const cdekCode = document.getElementById('cdek-point-code').value.trim();
+    if (cdekCode !== (order.cdek_pvz_code || '')) {
+      renderCdek(await api(`/api/orders/${id}/cdek/point`, { method: 'PUT', body: JSON.stringify({ code: cdekCode }) }));
+    }
     itemsBody.innerHTML = '';
     order.items.forEach((it) => addItemRow(it));
     if (!order.items.length) addItemRow();

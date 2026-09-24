@@ -34,6 +34,8 @@ import {
   setOrderOzonParams,
   setOrderOzonDeliveryPoint,
   patchOrderOzonShipment,
+  patchOrderCdekShipment,
+  setOrderCdekPoint,
   listUsers,
   findUserById,
   createOrUpdateUser,
@@ -46,6 +48,7 @@ import {
 } from './db.js';
 import { buildLabelPdf } from './lib/label.js';
 import * as ozon from './lib/ozon.js';
+import * as cdek from './lib/cdek.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const publicDir = path.join(__dirname, 'public');
@@ -302,6 +305,129 @@ function ozonDeliveryPriceFor(order, deliveryCost) {
     insurance: Math.round(insurance * 100) / 100,
     percent,
     total: Math.round((deliveryCost + insurance) * 100) / 100,
+  };
+}
+
+// ---- СДЭК ----------------------------------------------------------------------------------
+
+const CDEK_DEFAULTS = { order_type: '2', tariff_code: '136', tariff_postamat: '368' };
+
+function cdekSetting(key) {
+  return getSetting(`cdek_${key}`) || CDEK_DEFAULTS[key] || '';
+}
+
+function cdekShipmentPoint() {
+  try {
+    const point = JSON.parse(getSetting('cdek_shipment_point') || 'null');
+    if (point?.code) return point;
+  } catch {
+    // пусто
+  }
+  throw new Error('Выберите ПВЗ отправки в Настройках → СДЭК');
+}
+
+// Габариты для СДЭК: вес в граммах, стороны — в сантиметрах (из мм, с округлением вверх).
+function cdekPackageSize(order) {
+  const d = ozonDimensions(order);
+  return {
+    weight: d.weight_g,
+    length: Math.ceil(d.length_mm / 10),
+    width: Math.ceil(d.width_mm / 10),
+    height: Math.ceil(d.height_mm / 10),
+  };
+}
+
+function cdekTariffFor(point) {
+  return Number(point?.type === 'POSTAMAT' ? cdekSetting('tariff_postamat') : cdekSetting('tariff_code'));
+}
+
+// ПВЗ получателя: выбранный вручную, иначе — подобранный по адресу (если совпадение однозначное).
+async function cdekRecipientPoint(order) {
+  const saved = order.cdek_shipment?.point;
+  if (order.cdek_pvz_code && saved?.code === order.cdek_pvz_code) return saved;
+  if (order.cdek_pvz_code) {
+    const info = await cdek.pointInfo(order.cdek_pvz_code);
+    if (!info) throw new Error(`ПВЗ СДЭК с кодом ${order.cdek_pvz_code} не найден`);
+    setOrderCdekPoint(order.id, info);
+    return info;
+  }
+  if (!order.pvz_address) throw new Error('Укажите адрес ПВЗ заказа или код ПВЗ СДЭК');
+  const found = await cdek.findPointsByAddress(order.pvz_address, 2);
+  if (!found.length) throw new Error(`ПВЗ СДЭК по адресу «${order.pvz_address}» не найден — проверьте адрес или укажите код ПВЗ`);
+  const [best, second] = found;
+  if (second && second.score >= best.score) {
+    throw new Error('По адресу подходит несколько ПВЗ СДЭК — нажмите «Найти ПВЗ по адресу» и выберите нужный');
+  }
+  setOrderCdekPoint(order.id, best);
+  return best;
+}
+
+function cdekInsuranceService(order) {
+  return [{ code: 'INSURANCE', parameter: String(Math.round(Number(order.goods_total) || 0)) }];
+}
+
+// ware_key: только буквы, цифры и простые символы, до 50 знаков.
+function cdekWareKey(it, index) {
+  const raw = it.serial_number || it.model_id || `item-${it.id || index + 1}`;
+  return String(raw).replace(/[^A-Za-zА-Яа-яЁё0-9_\-.]/g, '').slice(0, 50) || `item-${index + 1}`;
+}
+
+function cdekOrderBody(order, point) {
+  const orderType = Number(cdekSetting('order_type')) === 1 ? 1 : 2;
+  const size = cdekPackageSize(order);
+  const items = order.items.filter((it) => Number(it.quantity) > 0);
+  const totalQty = items.reduce((sum, it) => sum + Number(it.quantity), 0) || 1;
+  const pkg = { number: `${order.id}-1`, ...size };
+  if (orderType === 1) {
+    // Интернет-магазин: товары обязательны; оплата при получении — 0 (заказ уже оплачен в ВК).
+    pkg.items = items.map((it, i) => ({
+      name: it.product_name || 'Товар',
+      ware_key: cdekWareKey(it, i),
+      payment: { value: 0 },
+      cost: Number(it.price) || 0,
+      weight: Math.max(1, Math.round(size.weight / totalQty)),
+      amount: Number(it.quantity),
+    }));
+  } else {
+    pkg.comment = summarizeItemsForOzon(order.items) || 'Товары';
+  }
+  const body = {
+    type: orderType,
+    tariff_code: cdekTariffFor(point),
+    comment: `Заказ #${order.id}`,
+    shipment_point: cdekShipmentPoint().code,
+    delivery_point: point.code,
+    recipient: {
+      name: order.full_name || 'Получатель',
+      phones: [{ number: normalizePhone(order.phone) }],
+    },
+    packages: [pkg],
+  };
+  if (orderType === 1) body.number = `order-${order.id}`;
+  else {
+    body.sender = {
+      name: getSetting('cdek_sender_name') || 'Отправитель',
+      phones: [{ number: normalizePhone(getSetting('cdek_sender_phone')) }],
+    };
+    if (!getSetting('cdek_sender_phone')) throw new Error('Укажите телефон отправителя в Настройках → СДЭК');
+    body.services = cdekInsuranceService(order);
+  }
+  return body;
+}
+
+// Статусы СДЭК — массив; берём самый свежий. Ошибки валидации — в requests[].errors.
+function cdekSummary(result) {
+  const entity = result?.entity || {};
+  const statuses = (entity.statuses || []).slice().sort((a, b) => String(b.date_time).localeCompare(String(a.date_time)));
+  const errors = (result?.requests || []).flatMap((r) => (r.state === 'INVALID' ? r.errors || [] : []));
+  return {
+    uuid: entity.uuid,
+    cdek_number: entity.cdek_number || null,
+    status_code: statuses[0]?.code || null,
+    status_name: statuses[0]?.name || null,
+    status_at: statuses[0]?.date_time || null,
+    errors: errors.map((e) => e.message || e.code),
+    checked_at: new Date().toISOString(),
   };
 }
 
@@ -793,6 +919,152 @@ const server = http.createServer(async (req, res) => {
       } catch (err) {
         return sendJson(res, 502, { error: err.message });
       }
+    }
+
+    // ---- СДЭК ----
+    if (pathname === '/api/cdek/settings' && req.method === 'GET') {
+      let shipmentPoint = null;
+      try {
+        shipmentPoint = JSON.parse(getSetting('cdek_shipment_point') || 'null');
+      } catch {
+        shipmentPoint = null;
+      }
+      return sendJson(res, 200, {
+        client_id: getSetting('cdek_client_id'),
+        has_secret: !!getSetting('cdek_client_secret'),
+        test_mode: getSetting('cdek_test_mode') === '1',
+        order_type: cdekSetting('order_type'),
+        tariff_code: cdekSetting('tariff_code'),
+        tariff_postamat: cdekSetting('tariff_postamat'),
+        sender_name: getSetting('cdek_sender_name'),
+        sender_phone: getSetting('cdek_sender_phone'),
+        shipment_point: shipmentPoint,
+      });
+    }
+
+    if (pathname === '/api/cdek/settings' && req.method === 'POST') {
+      const data = await readBody(req);
+      const str = (v) => String(v ?? '').trim();
+      if (data.client_id != null) setSetting('cdek_client_id', str(data.client_id));
+      if (data.client_secret) setSetting('cdek_client_secret', str(data.client_secret));
+      if (data.test_mode != null) setSetting('cdek_test_mode', data.test_mode ? '1' : '0');
+      for (const key of ['order_type', 'tariff_code', 'tariff_postamat', 'sender_name', 'sender_phone']) {
+        if (data[key] != null) setSetting(`cdek_${key}`, str(data[key]));
+      }
+      if (data.shipment_point !== undefined) {
+        const p = data.shipment_point;
+        setSetting('cdek_shipment_point', p?.code ? JSON.stringify({
+          code: String(p.code), full_address: p.full_address || '', city_code: p.city_code ?? null, type: p.type || '',
+        }) : '');
+      }
+      return sendJson(res, 200, { ok: true });
+    }
+
+    if (pathname === '/api/cdek/points/find' && req.method === 'POST') {
+      const data = await readBody(req);
+      try {
+        const purpose = data.purpose === 'reception' ? 'reception' : 'handout';
+        const points = await cdek.findPointsByAddress(String(data.address || ''), 8, purpose);
+        return sendJson(res, 200, { points });
+      } catch (err) {
+        return sendJson(res, 502, { error: err.message });
+      }
+    }
+
+    const cdekMatch = pathname.match(/^\/api\/orders\/(\d+)\/cdek\/(point|calculate|create|status|cancel|label\.pdf)$/);
+    if (cdekMatch) {
+      const orderId = Number(cdekMatch[1]);
+      const action = cdekMatch[2];
+      const order = getOrder(orderId);
+      if (!order) return sendJson(res, 404, { error: 'Заказ не найден' });
+      const uuid = order.cdek_shipment?.uuid;
+      try {
+        if (action === 'point' && req.method === 'PUT') {
+          const data = await readBody(req);
+          if (!data.code) return sendJson(res, 200, setOrderCdekPoint(orderId, null));
+          const point = data.full_address ? data : await cdek.pointInfo(String(data.code));
+          if (!point) return sendJson(res, 404, { error: `ПВЗ СДЭК с кодом ${data.code} не найден` });
+          return sendJson(res, 200, setOrderCdekPoint(orderId, {
+            code: String(point.code), full_address: point.full_address || '', city_code: point.city_code ?? null,
+            type: point.type || '', name: point.name || '',
+          }));
+        }
+
+        if (action === 'calculate' && req.method === 'POST') {
+          const point = await cdekRecipientPoint(order);
+          const from = cdekShipmentPoint();
+          const body = {
+            tariff_code: cdekTariffFor(point),
+            from_location: from.city_code ? { code: Number(from.city_code) } : undefined,
+            to_location: point.city_code ? { code: Number(point.city_code) } : undefined,
+            shipment_point: from.code,
+            delivery_point: point.code,
+            packages: [cdekPackageSize(order)],
+            services: cdekInsuranceService(order),
+          };
+          const result = await cdek.calculateTariff(body);
+          if (result.errors?.length) throw new Error(`СДЭК расчёт: ${result.errors.map((e) => e.message).join('; ')}`);
+          const deliverySum = Number(result.delivery_sum) || 0;
+          const total = Number(result.total_sum ?? deliverySum);
+          const insurance = (result.services || []).filter((x) => x.code === 'INSURANCE')
+            .reduce((sum, x) => sum + Number(x.total_sum ?? x.sum ?? 0), 0);
+          const price = {
+            delivery: Math.round((total - insurance) * 100) / 100,
+            insurance: Math.round(insurance * 100) / 100,
+            total: Math.round(total * 100) / 100,
+            period_min: result.period_min ?? null,
+            period_max: result.period_max ?? null,
+            tariff_code: body.tariff_code,
+          };
+          updateOrder(orderId, { delivery_price: price.total });
+          return sendJson(res, 200, patchOrderCdekShipment(orderId, { price, calculated_at: new Date().toISOString() }));
+        }
+
+        if (action === 'create' && req.method === 'POST') {
+          if (uuid && !order.cdek_shipment?.cancelled_at && !order.cdek_shipment?.errors?.length) {
+            return sendJson(res, 400, { error: 'Заказ в СДЭК уже создан' });
+          }
+          const point = await cdekRecipientPoint(order);
+          const result = await cdek.createOrder(cdekOrderBody(getOrder(orderId), point));
+          const newUuid = result?.entity?.uuid;
+          if (!newUuid) throw new Error('СДЭК не вернул идентификатор заказа');
+          patchOrderCdekShipment(orderId, {
+            uuid: newUuid, cdek_number: null, errors: [], cancelled_at: null, created_at: new Date().toISOString(),
+          });
+          // Заказ СДЭК обрабатывает асинхронно — через пару секунд уже видны номер или ошибки.
+          await new Promise((r) => setTimeout(r, 1500));
+          const info = await cdek.getOrder(newUuid).catch(() => null);
+          return sendJson(res, 200, info ? patchOrderCdekShipment(orderId, cdekSummary(info)) : getOrder(orderId));
+        }
+
+        if (action === 'status' && req.method === 'POST') {
+          if (!uuid) return sendJson(res, 400, { error: 'Заказ в СДЭК ещё не создан' });
+          const info = await cdek.getOrder(uuid);
+          return sendJson(res, 200, patchOrderCdekShipment(orderId, cdekSummary(info)));
+        }
+
+        if (action === 'cancel' && req.method === 'POST') {
+          if (!uuid) return sendJson(res, 400, { error: 'Заказ в СДЭК ещё не создан' });
+          await cdek.deleteOrder(uuid);
+          return sendJson(res, 200, patchOrderCdekShipment(orderId, {
+            uuid: null, cdek_number: null, status_code: null, status_name: null, errors: [], cancelled_at: new Date().toISOString(),
+          }));
+        }
+
+        if (action === 'label.pdf' && req.method === 'GET') {
+          if (!uuid) return sendJson(res, 400, { error: 'Сначала создайте заказ в СДЭК' });
+          const buffer = await cdek.barcodePdf(uuid, 'A6');
+          patchOrderCdekShipment(orderId, { label_downloaded_at: new Date().toISOString() });
+          res.writeHead(200, {
+            'Content-Type': 'application/pdf',
+            'Content-Disposition': `inline; filename="cdek-${order.cdek_shipment?.cdek_number || orderId}.pdf"`,
+          });
+          return res.end(buffer);
+        }
+      } catch (err) {
+        return sendJson(res, 502, { error: err.message });
+      }
+      return sendJson(res, 405, { error: 'Метод не поддерживается' });
     }
 
     const ozonLabelMatch = pathname.match(/^\/api\/orders\/(\d+)\/ozon\/label\.pdf$/);

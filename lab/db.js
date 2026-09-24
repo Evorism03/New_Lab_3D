@@ -88,6 +88,9 @@ for (const stmt of [
   'ALTER TABLE orders ADD COLUMN ozon_shipment TEXT',
   // Ручной порядок карточек в колонке доски (NULL — ещё не двигали, такие идут сверху).
   'ALTER TABLE orders ADD COLUMN board_position INTEGER',
+  // СДЭК: код ПВЗ получателя и JSON с данными заказа в СДЭК (uuid, номер, статусы, расчёт).
+  'ALTER TABLE orders ADD COLUMN cdek_pvz_code TEXT',
+  'ALTER TABLE orders ADD COLUMN cdek_shipment TEXT',
   // Заказы 3D-печати из New_Lab_3d (приходят через /api/external/orders).
   "ALTER TABLE orders ADD COLUMN source TEXT DEFAULT 'manual'",
   'ALTER TABLE orders ADD COLUMN external_order_id TEXT',
@@ -261,6 +264,7 @@ function withTotals(order) {
     grand_total: goodsTotal + order.delivery_price,
     receipts_count: receiptsCount,
     ozon_shipment: parseOzonShipment(order.ozon_shipment),
+    cdek_shipment: parseOzonShipment(order.cdek_shipment),
   };
 }
 
@@ -512,6 +516,24 @@ export function setOrderOzonParams(id, { weight_g, length_mm, width_mm, height_m
 export function setOrderOzonDeliveryPoint(id, deliveryPointId) {
   db.prepare('UPDATE orders SET ozon_delivery_point_id = ? WHERE id = ?').run(String(deliveryPointId || ''), id);
   return getOrder(id);
+}
+
+// СДЭК: ПВЗ получателя (код + описание в cdek_shipment.point) и данные заказа в СДЭК.
+export function patchOrderCdekShipment(id, patch) {
+  const existing = db.prepare('SELECT cdek_shipment FROM orders WHERE id = ?').get(id);
+  if (!existing) return null;
+  const current = parseOzonShipment(existing.cdek_shipment) || {};
+  db.prepare('UPDATE orders SET cdek_shipment = ?, updated_at = ? WHERE id = ?').run(
+    JSON.stringify({ ...current, ...patch }),
+    new Date().toISOString(),
+    id
+  );
+  return getOrder(id);
+}
+
+export function setOrderCdekPoint(id, point) {
+  db.prepare('UPDATE orders SET cdek_pvz_code = ? WHERE id = ?').run(point?.code ? String(point.code) : '', id);
+  return patchOrderCdekShipment(id, { point: point?.code ? point : null });
 }
 
 // Черновик/статус отправления Ozon Delivery хранится как JSON в orders.ozon_shipment —

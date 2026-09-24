@@ -28,6 +28,7 @@
 <main>
   <div class="settings-tabs" role="tablist">
     <button type="button" data-tab="ozon" class="active">🚚 Ozon Доставка</button>
+    <button type="button" data-tab="cdek">🟢 СДЭК</button>
     <button type="button" data-tab="users" hidden>👤 Пользователи</button>
   </div>
 
@@ -96,6 +97,80 @@
   </div>
   </section>
 
+  <section data-panel="cdek" hidden>
+    <div class="card">
+      <h2>ПВЗ отправки</h2>
+      <p class="muted">Пункт СДЭК, куда вы относите посылки. Введите его адрес и выберите из списка.</p>
+      <div id="cdek-sender-point" class="muted" style="margin-bottom:10px"></div>
+      <div class="toolbar">
+        <input id="cdek-sender-search" placeholder="Город, улица, дом — например: Москва, Ленина 5" style="flex:1">
+        <button type="button" class="secondary" id="cdek-sender-find">Найти ПВЗ</button>
+      </div>
+      <div id="cdek-sender-results"></div>
+    </div>
+
+    <div class="card" style="margin-top:16px">
+      <h2>Параметры отправки</h2>
+      <div class="grid-3">
+        <div class="field">
+          <label>Тип заказа</label>
+          <select id="cdek-order-type">
+            <option value="2">Доставка (любой договор)</option>
+            <option value="1">Интернет-магазин (договор с ИМ)</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>Тариф до ПВЗ</label>
+          <select id="cdek-tariff">
+            <option value="136">136 — Посылка склад-склад</option>
+            <option value="234">234 — Экономичная посылка склад-склад</option>
+            <option value="483">483 — Экспресс склад-склад</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>Тариф до постамата</label>
+          <select id="cdek-tariff-postamat">
+            <option value="368">368 — Посылка склад-постамат</option>
+            <option value="378">378 — Экономичная посылка склад-постамат</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>Отправитель (ФИО или компания)</label>
+          <input id="cdek-sender-name" placeholder="Нужен для типа «Доставка»">
+        </div>
+        <div class="field">
+          <label>Телефон отправителя</label>
+          <input id="cdek-sender-phone" placeholder="+7 900 000-00-00">
+        </div>
+      </div>
+      <p class="muted">Страховка СДЭК считается от стоимости товаров и входит в сумму расчёта — «Сумма доставки» в заказе заполняется полной суммой.</p>
+      <button type="button" id="cdek-save-params">Сохранить</button>
+    </div>
+
+    <div class="card" style="margin-top:16px">
+      <h2>Подключение к СДЭК</h2>
+      <div id="cdek-creds-status" class="muted"></div>
+      <div id="cdek-creds-form" hidden>
+        <p class="muted">«Account» и «Secure password» из личного кабинета СДЭК: Интеграция → API. Вводятся один раз.</p>
+        <div class="grid-3">
+          <div class="field">
+            <label>Account (client_id)</label>
+            <input id="cdek-client-id">
+          </div>
+          <div class="field">
+            <label>Secure password (client_secret)</label>
+            <input id="cdek-client-secret" type="password">
+          </div>
+          <div class="field" style="align-self:end">
+            <label><input type="checkbox" id="cdek-test-mode" style="width:auto;display:inline-block;margin-right:6px">Тестовый режим (api.edu.cdek.ru)</label>
+          </div>
+        </div>
+        <button type="button" id="cdek-save-creds">Сохранить</button>
+      </div>
+      <button type="button" class="secondary" id="cdek-edit-creds" hidden>Изменить ключи</button>
+    </div>
+  </section>
+
   <section data-panel="users" hidden>
   <div class="toolbar">
     <h2 style="margin:0">Сотрудники</h2>
@@ -120,7 +195,7 @@
 </div>
 <script src="/app.js"></script>
 <script>
-// Вкладки настроек; активная запоминается в адресе (#ozon, #users).
+// Вкладки настроек; активная запоминается в адресе (#ozon, #cdek, #users).
 function showTab(name) {
   const btn = document.querySelector(`.settings-tabs [data-tab="${name}"]`);
   if (!btn || btn.hidden) name = 'ozon';
@@ -304,6 +379,103 @@ loadSettings()
   .then(loadMethods)
   .catch((err) => toast(err.message, 'error'));
 loadBoxes().catch((err) => toast(err.message, 'error'));
+
+// ---- СДЭК ----
+let cdekSettings = {};
+
+function renderCdek() {
+  const c = cdekSettings;
+  const connected = c.client_id && c.has_secret;
+  document.getElementById('cdek-creds-status').innerHTML = connected
+    ? `Подключено · Account: <code>${escapeText(c.client_id)}</code>${c.test_mode ? ' · <strong>тестовый режим</strong>' : ''}`
+    : 'Ключи ещё не введены.';
+  document.getElementById('cdek-creds-form').hidden = connected;
+  document.getElementById('cdek-edit-creds').hidden = !connected;
+  document.getElementById('cdek-client-id').value = c.client_id || '';
+  document.getElementById('cdek-test-mode').checked = !!c.test_mode;
+  document.getElementById('cdek-order-type').value = c.order_type || '2';
+  setSelectValue('cdek-tariff', c.tariff_code || '136');
+  setSelectValue('cdek-tariff-postamat', c.tariff_postamat || '368');
+  document.getElementById('cdek-sender-name').value = c.sender_name || '';
+  document.getElementById('cdek-sender-phone').value = c.sender_phone || '';
+  document.getElementById('cdek-sender-point').innerHTML = c.shipment_point?.code
+    ? `Выбран: <strong>${escapeText(c.shipment_point.full_address)}</strong> (код ${escapeText(c.shipment_point.code)})`
+    : 'ПВЗ отправки не выбран.';
+}
+
+// Тариф, которого нет в списке, добавляем как отдельный пункт.
+function setSelectValue(id, value) {
+  const sel = document.getElementById(id);
+  if (![...sel.options].some((o) => o.value === String(value))) sel.appendChild(el(`<option value="${escapeText(value)}">${escapeText(value)}</option>`));
+  sel.value = String(value);
+}
+
+async function loadCdek() {
+  cdekSettings = await api('/api/cdek/settings');
+  renderCdek();
+}
+
+async function saveCdek(data, message = 'Сохранено') {
+  try {
+    await api('/api/cdek/settings', { method: 'POST', body: JSON.stringify(data) });
+    toast(message, 'success');
+    await loadCdek();
+  } catch (err) {
+    toast(err.message, 'error');
+  }
+}
+
+document.getElementById('cdek-edit-creds').addEventListener('click', () => {
+  document.getElementById('cdek-creds-form').hidden = false;
+  document.getElementById('cdek-edit-creds').hidden = true;
+});
+
+document.getElementById('cdek-save-creds').addEventListener('click', () => {
+  const clientId = document.getElementById('cdek-client-id').value.trim();
+  const clientSecret = document.getElementById('cdek-client-secret').value.trim();
+  if (!clientId || (!clientSecret && !cdekSettings.has_secret)) { toast('Заполните Account и Secure password', 'error'); return; }
+  document.getElementById('cdek-client-secret').value = '';
+  saveCdek({ client_id: clientId, client_secret: clientSecret, test_mode: document.getElementById('cdek-test-mode').checked }, 'Ключи сохранены');
+});
+
+document.getElementById('cdek-save-params').addEventListener('click', () => saveCdek({
+  order_type: document.getElementById('cdek-order-type').value,
+  tariff_code: document.getElementById('cdek-tariff').value,
+  tariff_postamat: document.getElementById('cdek-tariff-postamat').value,
+  sender_name: document.getElementById('cdek-sender-name').value.trim(),
+  sender_phone: document.getElementById('cdek-sender-phone').value.trim(),
+}));
+
+document.getElementById('cdek-sender-find').addEventListener('click', async () => {
+  const wrap = document.getElementById('cdek-sender-results');
+  const address = document.getElementById('cdek-sender-search').value.trim();
+  if (!address) { toast('Введите адрес ПВЗ', 'error'); return; }
+  wrap.innerHTML = '<div class="muted">Поиск…</div>';
+  try {
+    const { points } = await api('/api/cdek/points/find', { method: 'POST', body: JSON.stringify({ address, purpose: 'reception' }) });
+    wrap.innerHTML = points.length ? '' : '<div class="muted">Ничего не найдено — проверьте город и улицу.</div>';
+    points.forEach((p) => {
+      const row = el(`
+        <div style="display:flex;align-items:center;gap:12px;padding:8px 0;border-bottom:1px solid var(--border)">
+          <div style="flex:1">
+            <div>${escapeText(p.full_address)}</div>
+            <div class="muted" style="font-size:12px">${escapeText([p.name, p.type, p.code, p.work_time].filter(Boolean).join(' · '))}</div>
+          </div>
+          <button type="button" class="secondary small">Выбрать</button>
+        </div>
+      `);
+      row.querySelector('button').addEventListener('click', async () => {
+        await saveCdek({ shipment_point: p }, 'ПВЗ отправки выбран');
+        wrap.innerHTML = '';
+      });
+      wrap.appendChild(row);
+    });
+  } catch (err) {
+    wrap.innerHTML = `<div style="color:var(--danger)">${escapeText(err.message)}</div>`;
+  }
+});
+
+loadCdek().catch((err) => toast(err.message, 'error'));
 
 // ---- Пользователи ----
 let me = null;
