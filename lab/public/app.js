@@ -127,6 +127,26 @@ function initSidebar() {
 }
 initSidebar();
 
+// Подписи ячеек для «карточного» вида таблиц на узких экранах: data-label = заголовок колонки.
+// Строки добавляются динамически, поэтому следим за изменениями DOM.
+function labelTableCells() {
+  for (const table of document.querySelectorAll('table.orders-table, table.items-table')) {
+    const headers = [...table.querySelectorAll('thead th')].map((th) => th.textContent.trim());
+    if (!headers.length) continue;
+    for (const row of table.querySelectorAll('tbody tr')) {
+      [...row.children].forEach((td, i) => {
+        if (td.tagName === 'TD' && !td.hasAttribute('data-label') && headers[i]) td.setAttribute('data-label', headers[i]);
+      });
+    }
+  }
+}
+let labelTimer = null;
+new MutationObserver(() => {
+  clearTimeout(labelTimer);
+  labelTimer = setTimeout(labelTableCells, 30);
+}).observe(document.documentElement, { childList: true, subtree: true });
+labelTableCells();
+
 // Текущий сотрудник + кнопка "Выйти" внизу сайдбара (пользователи — в Настройках, только для админа).
 async function initSidebarUser() {
   const mount = document.getElementById('sidebar-user');

@@ -533,25 +533,44 @@ button:disabled {
   cursor: not-allowed;
 }
 
-/* Узкие и вертикальные мониторы: таблицы не сжимаются в столбик, а прокручиваются по горизонтали. */
-.card:has(> table),
-.table-scroll {
-  overflow-x: auto;
-}
-table.orders-table { min-width: 860px; }
-.items-table { min-width: 900px; }
-/* Выпадающие списки в таблице товаров не сжимаются до нечитаемых «Авт…», «Ол…». */
-.items-table select[name="product_name"] { min-width: 170px; }
-.items-table select[name="color"], .items-table select[name="connector"] { min-width: 120px; }
-.items-table select[name="model_id"] { min-width: 70px; }
-.items-table input[name="quantity"] { min-width: 56px; }
-.items-table input[name="price"] { min-width: 90px; }
-.items-table input[name="serial_number"] { min-width: 140px; }
-.items-table input[type="date"] { min-width: 130px; }
+/* Узкие и вертикальные мониторы: вместо горизонтальной прокрутки строка таблицы становится
+   компактной карточкой — ячейки переносятся по сетке, у каждой своя подпись (data-label из
+   заголовка колонки, проставляет app.js). Ширина считается по основной области, а не по окну. */
+main { container-type: inline-size; container-name: main; }
 table.orders-table td.nowrap, table.orders-table th.nowrap, table.orders-table td.right { white-space: nowrap; }
 
 @media (max-width: 1280px) {
   main { padding: 14px; }
   table.orders-table th, table.orders-table td { padding: 8px 6px; font-size: 13px; }
   .items-table th, .items-table td { padding: 4px; font-size: 12px; }
+}
+
+@container main (max-width: 1150px) {
+  table.orders-table thead, .items-table thead { display: none; }
+  table.orders-table tbody tr, .items-table tbody tr {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+    gap: 8px 14px;
+    padding: 12px 4px;
+    border-bottom: 1px solid var(--border);
+    align-items: start;
+  }
+  table.orders-table tbody td, .items-table tbody td {
+    display: block;
+    border: 0;
+    padding: 0;
+    min-width: 0;
+    text-align: left;
+    white-space: normal;
+  }
+  table.orders-table tbody td[data-label]::before, .items-table tbody td[data-label]::before {
+    content: attr(data-label);
+    display: block;
+    font-size: 11px;
+    color: var(--muted);
+    margin-bottom: 2px;
+  }
+  /* Адрес и список товаров — длинные, им две клетки. */
+  table.orders-table tbody td.wide, .items-table tbody td.wide { grid-column: span 2; }
+  .items-table tbody td select, .items-table tbody td input:not([type="hidden"]):not([type="checkbox"]) { width: 100%; }
 }

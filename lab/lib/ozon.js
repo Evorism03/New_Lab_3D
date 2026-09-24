@@ -447,11 +447,13 @@ async function getAllDeliveryPoints() {
 export async function findDeliveryPointsByAddress(addressText, limit = 5) {
   const query = addressQuery(addressText);
   const points = await getAllDeliveryPoints();
-  return rankByAddress(points, query, limit).map(({ point: p, score }) => ({
+  return rankByAddress(points, query, limit).map(({ point: p, score, relaxed }) => ({
     delivery_point_id: p.id,
     full_address: p.address,
     name: p.raw.name || '',
     type: p.raw.type || '',
     score,
+    // Нашлось только без совпадения города — показываем, но автоматически не выбираем.
+    relaxed,
   }));
 }

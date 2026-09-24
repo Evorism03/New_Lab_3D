@@ -88,8 +88,8 @@ function render(orders) {
       <tr style="cursor:pointer">
         <td>#${o.id}${o.receipts_count ? ` <span title="${o.receipts_count} чек(ов) прикреплено">📎${o.receipts_count}</span>` : ''}</td>
         <td class="nowrap">${date}</td>
-        <td style="min-width:150px">${o.full_name || ''}<br><span class="muted">${o.phone || ''}</span></td>
-        <td style="min-width:200px">${deliveryDot(o.delivery_service, catalog.delivery_services)}${o.delivery_service || ''}<br><span class="muted">${o.pvz_address || ''}</span></td>
+        <td>${o.full_name || ''}<br><span class="muted">${o.phone || ''}</span></td>
+        <td class="wide">${deliveryDot(o.delivery_service, catalog.delivery_services)}${o.delivery_service || ''}<br><span class="muted">${o.pvz_address || ''}</span></td>
         <td>${itemsSummary}</td>
         <td class="right">${money(o.goods_total)}</td>
         <td class="right">${money(o.delivery_price)}</td>

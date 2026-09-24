@@ -462,8 +462,8 @@ async function ozonDeliveryPointId(order) {
   const found = await ozon.findDeliveryPointsByAddress(order.pvz_address, 2);
   if (!found.length) throw new Error(`ПВЗ Ozon по адресу «${order.pvz_address}» не найден — проверьте адрес или укажите ID ПВЗ вручную`);
   const [best, second] = found;
-  if (second && second.score >= best.score) {
-    throw new Error('По адресу подходит несколько ПВЗ Ozon — нажмите «Найти ПВЗ по адресу» и выберите нужный');
+  if (best.relaxed || (second && second.score >= best.score)) {
+    throw new Error('ПВЗ Ozon по адресу не определён однозначно — нажмите «Найти ПВЗ по адресу» и выберите нужный');
   }
   setOrderOzonDeliveryPoint(order.id, best.delivery_point_id);
   return Number(best.delivery_point_id);

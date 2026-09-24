@@ -62,7 +62,6 @@
       </div>
 
       <h3>Товары и серийные номера</h3>
-      <div class="table-scroll">
       <table class="items-table" id="items-table">
         <thead>
           <tr>
@@ -78,7 +77,6 @@
         </thead>
         <tbody id="items-body"></tbody>
       </table>
-      </div>
       <button type="button" class="secondary small" id="add-item">+ Добавить товар</button>
 
       <div class="field" style="margin-top:16px">
@@ -120,7 +118,7 @@ function addItemRow(values = {}) {
     .join('');
   const row = el(`
     <tr>
-      <td><select name="product_name">${productOptions}</select></td>
+      <td class="wide"><select name="product_name">${productOptions}</select></td>
       <td><select name="model_id">${modelOptions}</select></td>
       <td><div style="display:flex;align-items:center"><span class="dot color-dot"></span><select name="color">${colorOptions}</select></div></td>
       <td><div style="display:flex;align-items:center"><span class="dot connector-dot"></span><select name="connector">${connectorOptions}</select></div></td>

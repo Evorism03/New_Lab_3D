@@ -118,12 +118,23 @@ export async function cdekRequest(method, pathname, { query, body } = {}) {
 
 // --- Города и ПВЗ -------------------------------------------------------------------------
 
-// /location/cities ищет по точному названию; если не нашлось — подсказки /location/suggest/cities.
+// Кандидаты населённого пункта из СДЭК: точный поиск /location/cities и подсказки
+// /location/suggest/cities (у подсказок есть полное название с районом и регионом).
 export async function findCities(name) {
-  const list = await cdekRequest('GET', '/location/cities', { query: { city: name, country_codes: 'RU', size: 20 } });
-  if (Array.isArray(list) && list.length) return list;
-  const suggested = await cdekRequest('GET', '/location/suggest/cities', { query: { name, country_code: 'RU' } });
-  return (Array.isArray(suggested) ? suggested : []).map((c) => ({ code: c.code, city: name, region: c.full_name || '' }));
+  const [exact, suggested] = await Promise.all([
+    cdekRequest('GET', '/location/cities', { query: { city: name, country_codes: 'RU', size: 20 } }).catch(() => []),
+    cdekRequest('GET', '/location/suggest/cities', { query: { name, country_code: 'RU' } }).catch(() => []),
+  ]);
+  const byCode = new Map();
+  for (const c of Array.isArray(exact) ? exact : []) {
+    byCode.set(c.code, { code: c.code, city: c.city, label: [c.city, c.sub_region, c.region].filter(Boolean).join(', ') });
+  }
+  for (const c of Array.isArray(suggested) ? suggested : []) {
+    const prev = byCode.get(c.code);
+    const label = c.full_name || prev?.label || name;
+    byCode.set(c.code, { code: c.code, city: prev?.city || String(label).split(',')[0].trim(), label });
+  }
+  return [...byCode.values()];
 }
 
 export async function deliveryPoints(query) {
@@ -147,30 +158,49 @@ function describePoint(p) {
 // purpose: 'handout' — пункт выдачи (для получателя), 'reception' — приём посылок (для отправки).
 export async function findPointsByAddress(addressText, limit = 5, purpose = 'handout') {
   const query = addressQuery(addressText);
-  // Пробуем населённые пункты от самого мелкого: «Москва, п. Внуковское» → Внуковское, затем Москва.
-  const names = globalThis.LabAddress.cityNames(query.parts);
+  const L = globalThis.LabAddress;
+  // Названия для поиска: населённые пункты от самого мелкого, затем поселения/СНТ из того же поля
+  // («Москва, поселение Десёновское» → Москва, Десёновское).
+  const chunks = String(query.parts.city || '').split(',').map((c) => c.trim()).filter(Boolean);
+  const settlementNames = chunks
+    .filter((c) => /поселени|снт|днт|тсн|(^|\s)кп(\s|$)|(^|\s)нп(\s|$)/i.test(c))
+    .map((c) => c.replace(/(сельское|городское)?\s*поселение|снт|днт|тсн|(^|\s)кп(\s|$)|(^|\s)нп(\s|$)/gi, ' ').trim())
+    .filter(Boolean);
+  const names = [...new Set([...L.cityNames(query.parts), ...settlementNames])].slice(0, 3);
   if (!names.length) throw new Error('Не удалось определить город в адресе ПВЗ');
-  // Если указан регион — предпочитаем город из этого региона.
-  const regionWords = addressWords(String(query.parts.city).split(',').filter((c) => /обл|край|респ|округ|район|р-н|ао/i.test(c)).join(' '));
-  let city = null;
-  for (const cityName of names) {
-    const cities = await findCities(cityName);
-    city = cities.find((c) => regionWords.length && regionWords.some((w) => addressWords(c.region || '').includes(w)))
-      || cities.find((c) => String(c.city).toLowerCase() === cityName.toLowerCase())
-      || cities[0];
-    if (city) break;
+
+  // Все слова «городской» части адреса (регион, район, посёлок) — по ним выбираем, какой из
+  // одноимённых населённых пунктов СДЭК имеется в виду.
+  const localityWords = addressWords(query.parts.city);
+  const scored = new Map();
+  for (const name of names) {
+    const nameWords = addressWords(name);
+    for (const c of await findCities(name)) {
+      const labelWords = addressWords(c.label);
+      let score = addressWords(c.city).join(' ') === nameWords.join(' ') ? 3 : 0;
+      score += localityWords.filter((w) => labelWords.includes(w)).length;
+      if (!scored.has(c.code) || scored.get(c.code).score < score) scored.set(c.code, { ...c, score });
+    }
   }
-  if (!city) throw new Error(`СДЭК не знает населённый пункт «${names.join('» / «')}»`);
+  const cities = [...scored.values()].sort((a, b) => b.score - a.score).slice(0, 3);
+  if (!cities.length) throw new Error(`СДЭК не знает населённый пункт «${names.join('» / «')}»`);
+
   const filter = purpose === 'reception' ? { is_reception: 'true' } : { is_handout: 'true' };
-  const points = (await deliveryPoints({ city_code: city.code, type: 'ALL', ...filter })).map((p) => {
-    const d = describePoint(p);
-    return { ...d, words: addressWords(`${p.location?.address || ''} ${p.location?.address_full || ''}`) };
-  });
-  // Город уже отфильтрован запросом — сравниваем только улицу и дом.
-  return rankByAddress(points, query, limit, { ignoreCity: true })
+  const perCity = await Promise.all(cities.map(async (city) => {
+    const points = (await deliveryPoints({ city_code: city.code, type: 'ALL', ...filter })).map((p) => {
+      const d = describePoint(p);
+      return { ...d, words: addressWords(`${p.location?.address || ''} ${p.location?.address_full || ''}`) };
+    });
+    // Город уже отфильтрован запросом — сравниваем улицу и дом; точность выбора города — бонусом.
+    return rankByAddress(points, query, limit, { ignoreCity: true })
+      .map(({ point, score }) => ({ point, score: score + city.score }));
+  }));
+  return perCity.flat()
+    .sort((a, b) => b.score - a.score)
+    .slice(0, limit)
     .map(({ point, score }) => {
       const { words, ...rest } = point;
-      return { ...rest, score };
+      return { ...rest, score: Math.round(score * 10) / 10 };
     });
 }
 

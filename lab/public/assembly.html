@@ -89,7 +89,7 @@ function render() {
   for (const r of rows) {
     const row = el(`
       <tr>
-        <td style="min-width:150px"><a href="/order.html?id=${r.order_id}">#${r.order_id}</a><br><span class="muted">${r.full_name || ''}</span></td>
+        <td><a href="/order.html?id=${r.order_id}">#${r.order_id}</a><br><span class="muted">${r.full_name || ''}</span></td>
         <td>${r.product_name || ''}</td>
         <td>${modelLabel(r.model_id)}</td>
         <td>${r.quantity}</td>
