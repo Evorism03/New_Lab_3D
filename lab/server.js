@@ -553,43 +553,10 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, 200, { ok: true });
     }
 
-    if (pathname === '/api/ozon/dropoff-points/search' && req.method === 'POST') {
-      const data = await readBody(req);
+    if (pathname === '/api/ozon/shipment-methods' && req.method === 'GET') {
       try {
-        const result = await ozon.searchDropoffPoints(data.filters || {}, data.pagination || { limit: 20 });
-        return sendJson(res, 200, result);
-      } catch (err) {
-        return sendJson(res, 502, { error: err.message });
-      }
-    }
-
-    if (pathname === '/api/ozon/return-points/search' && req.method === 'POST') {
-      const data = await readBody(req);
-      try {
-        const result = await ozon.searchReturnPoints(data.filters || {}, data.pagination || { limit: 20 });
-        return sendJson(res, 200, result);
-      } catch (err) {
-        return sendJson(res, 502, { error: err.message });
-      }
-    }
-
-    if (pathname === '/api/ozon/shipment-method/create' && req.method === 'POST') {
-      const data = await readBody(req);
-      try {
-        const result = await ozon.createShipmentMethod({
-          name: data.name,
-          phone_number: normalizePhone(data.phone_number),
-          is_bulky: !!data.is_bulky,
-          type: {
-            dropoff: {
-              dropoff_point_id: Number(data.dropoff_point_id),
-              return_point_id: Number(data.return_point_id),
-            },
-          },
-        });
-        const methodId = result?.shipment_method?.shipment_method_id;
-        if (methodId) setSetting('ozon_shipment_method_id', String(methodId));
-        return sendJson(res, 200, result);
+        const result = await ozon.searchShipmentMethods({}, { limit: 100 });
+        return sendJson(res, 200, { shipment_methods: result.shipment_methods || [] });
       } catch (err) {
         return sendJson(res, 502, { error: err.message });
       }
