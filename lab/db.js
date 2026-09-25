@@ -134,6 +134,8 @@ export function setSetting(key, value) {
 
 export const STATUSES = [
   { id: 'new', label: 'Новый заказ' },
+  // Только для заказов с сайта (есть файл модели, который нужно напечатать) — см. assertPrintAllowed.
+  { id: 'printing', label: 'Печать' },
   { id: 'to_collect', label: 'Собрать' },
   { id: 'collected', label: 'Собран' },
   { id: 'shipped', label: 'Отправлен' },
@@ -263,6 +265,9 @@ function withTotals(order) {
     grand_total: goodsTotal + order.delivery_price,
     receipts_count: receiptsCount,
     display_number: order.number || String(order.id),
+    // Тег происхождения: заказы из New_Lab_3d — «Сайт», всё созданное в самой CRM — «CRM».
+    source_tag: order.source === SITE_SOURCE ? 'site' : 'crm',
+    source_label: order.source === SITE_SOURCE ? 'Сайт' : 'CRM',
     ozon_shipment: parseOzonShipment(order.ozon_shipment),
     cdek_shipment: parseOzonShipment(order.cdek_shipment),
     npd_receipt: parseOzonShipment(order.npd_receipt),
@@ -407,9 +412,23 @@ function insertItems(orderId, items) {
   }
 }
 
+export const SITE_SOURCE = 'new_lab_3d';
+
+// «Печать» — только для заказов с сайта: у них есть файл, который нужно напечатать.
+function assertPrintAllowed(status, orderIds) {
+  if (status !== 'printing') return;
+  for (const oid of orderIds) {
+    const row = db.prepare('SELECT source FROM orders WHERE id = ?').get(oid);
+    if (row && row.source !== SITE_SOURCE) {
+      throw Object.assign(new Error('В «Печать» можно переносить только заказы с сайта'), { status: 400 });
+    }
+  }
+}
+
 export function updateOrder(id, data) {
   const existing = db.prepare('SELECT * FROM orders WHERE id = ?').get(id);
   if (!existing) return null;
+  if (data.status && data.status !== existing.status) assertPrintAllowed(data.status, [id]);
   const now = new Date().toISOString();
   if (data.number !== undefined) {
     db.prepare('UPDATE orders SET number = ? WHERE id = ?').run(cleanOrderNumber(data.number, id), id);
@@ -442,6 +461,7 @@ export function updateOrder(id, data) {
 
 // Перетаскивание на доске: заказ встаёт в колонку status, порядок колонки — как в ids.
 export function reorderBoardColumn(status, ids) {
+  assertPrintAllowed(status, ids);
   const now = new Date().toISOString();
   const setStatus = db.prepare('UPDATE orders SET status = ?, updated_at = ? WHERE id = ? AND status != ?');
   const setPos = db.prepare('UPDATE orders SET board_position = ? WHERE id = ?');

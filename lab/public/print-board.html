@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Доска — Order Automation</title>
+<title>Печать — Order Automation</title>
 <link rel="stylesheet" href="/style.css">
 <link rel="manifest" href="/manifest.webmanifest">
 <meta name="theme-color" content="#171d2b">
@@ -17,8 +17,8 @@
   </div>
   <a href="/" class="new-order-btn"><span class="nav-icon">➕</span><span class="label">Новый заказ</span></a>
   <nav class="sidebar-nav">
-    <a href="/board.html" class="active"><span class="nav-icon">🗂</span><span class="label">Доска</span></a>
-    <a href="/print-board.html"><span class="nav-icon">🖨</span><span class="label">Печать</span></a>
+    <a href="/board.html"><span class="nav-icon">🗂</span><span class="label">Доска</span></a>
+    <a href="/print-board.html" class="active"><span class="nav-icon">🖨</span><span class="label">Печать</span></a>
     <a href="/assembly.html"><span class="nav-icon">🔧</span><span class="label">Сборка</span></a>
     <a href="/orders.html"><span class="nav-icon">📋</span><span class="label">Все заказы</span></a>
     <a href="/serials.html"><span class="nav-icon">#️⃣</span><span class="label">Серийные номера</span></a>
@@ -28,11 +28,13 @@
 </aside>
 <main>
   <div class="toolbar">
-    <input type="search" id="search" placeholder="Поиск: ФИО, телефон, товар, серийник...">
+    <input type="search" id="search" placeholder="Поиск: ФИО, файл, материал...">
+    <span class="muted">Только заказы с сайта (с файлом на печать)</span>
   </div>
   <div class="board" id="board"></div>
 </main>
 </div>
+<script>window.BOARD_MODE = 'print';</script>
 <script src="/app.js"></script>
 <script src="/board.js"></script>
 </body>

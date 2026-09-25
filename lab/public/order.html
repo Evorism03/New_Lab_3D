@@ -965,8 +965,6 @@ async function load() {
   [statuses, catalog] = await Promise.all([api('/api/statuses'), api('/api/catalog')]);
   renderQuickAdd(document.getElementById('quick-add'), addItemRow);
   const sel = document.getElementById('status-select');
-  for (const s of statuses) sel.appendChild(el(`<option value="${s.id}">${s.label}</option>`));
-
   const deliverySelect = document.getElementById('delivery-service');
   for (const s of catalog.delivery_services) {
     deliverySelect.appendChild(el(`<option value="${s.label}">${s.label}</option>`));
@@ -977,18 +975,23 @@ async function load() {
   window.CURRENT_ORDER_ID = order.id;
   document.getElementById('order-form').number.value = order.number || '';
   document.getElementById('order-form').number.placeholder = String(order.id);
+  // «Печать» — только для заказов с сайта (сервер тоже это проверяет).
+  for (const s of statuses) {
+    if (s.id === 'printing' && order.source_tag !== 'site' && order.status !== 'printing') continue;
+    sel.appendChild(el(`<option value="${s.id}">${s.label}</option>`));
+  }
   const infoEl = document.getElementById('external-info');
   if (order.source === 'new_lab_3d') {
     const paidPill = order.payment_status === 'paid'
       ? '<span class="pill delivered">Оплачен</span>'
       : '<span class="pill new">Не оплачен</span>';
     infoEl.innerHTML = `
-      Из New_Lab_3d ${paidPill}
+      ${tagBadge(order)} Из New_Lab_3d ${paidPill}
       ${order.customer_email ? ` · ${order.customer_email}` : ''}
       ${order.shipping_address ? ` · ${order.shipping_address}` : ''}
     `;
   } else {
-    infoEl.innerHTML = '';
+    infoEl.innerHTML = `${tagBadge(order)} Создан в CRM`;
   }
   sel.value = order.status;
   const form = document.getElementById('order-form');

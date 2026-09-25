@@ -367,7 +367,21 @@ table.orders-table tr:hover { background: var(--panel-2); }
 }
 
 .pill.new { color: var(--accent); }
+.pill.printing { color: #c792ea; }
 .pill.to_collect { color: var(--warn); }
+
+.tag {
+  display: inline-block;
+  padding: 1px 7px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  vertical-align: middle;
+  border: 1px solid var(--border);
+}
+.tag-site { color: #c792ea; background: rgba(199, 146, 234, 0.12); border-color: rgba(199, 146, 234, 0.35); }
+.tag-crm { color: var(--accent); background: rgba(91, 140, 255, 0.12); border-color: rgba(91, 140, 255, 0.35); }
 .pill.collected { color: var(--accent-2); }
 .pill.shipped { color: #6fd0ff; }
 .pill.delivered { color: #9be38a; }
