@@ -81,7 +81,10 @@
         </thead>
         <tbody id="items-body"></tbody>
       </table>
-      <button type="button" class="secondary small" id="add-item">+ Добавить товар</button>
+      <div class="quick-add">
+        <button type="button" class="secondary small" id="add-item">+ Добавить товар</button>
+        <div id="quick-add" class="quick-add-list"></div>
+      </div>
 
       <div class="field" style="margin-top:16px">
         <label>Заметка (необязательно)</label>
@@ -206,6 +209,7 @@ addItemBtn.addEventListener('click', () => addItemRow());
     deliverySelect.appendChild(el(`<option value="${s.label}">${s.label}</option>`));
   }
   addItemRow();
+  renderQuickAdd(document.getElementById('quick-add'), addItemRow);
 })();
 
 LabAddress.bindAddressFields(document.querySelector('[name="pvz_address"]'), document.getElementById('address-parts'));

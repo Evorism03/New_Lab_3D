@@ -263,7 +263,7 @@ function ozonDeclaredValue(order) {
   return { amount: order.goods_total.toFixed(2), currency_code: 'RUB' };
 }
 
-// Шаблоны коробок (вес с товаром и габариты), чтобы не вводить их вручную в каждом заказе.
+// Шаблоны коробок: вес пустой коробки (с упаковкой) и габариты. Вес посылки = коробка + товары.
 function readBoxTemplates() {
   try {
     const list = JSON.parse(getSetting('ozon_box_templates') || '[]');
@@ -284,6 +284,35 @@ function cleanBoxTemplates(list) {
       height_mm: Math.round(Number(t?.height_mm) || 0),
     }))
     .filter((t) => t.name);
+}
+
+// Каталог товаров для быстрого заполнения заказа: название, модель, цена, вес одной штуки.
+function readProductTemplates() {
+  try {
+    const list = JSON.parse(getSetting('product_templates') || '[]');
+    return Array.isArray(list) ? list : [];
+  } catch {
+    return [];
+  }
+}
+
+function cleanProductTemplates(list) {
+  if (!Array.isArray(list)) return [];
+  return list
+    .map((t) => ({
+      name: String(t?.name || '').trim().slice(0, 120),
+      model_id: MODELS.some((m) => m.id === t?.model_id) ? t.model_id : '',
+      price: Math.max(0, Math.round((Number(t?.price) || 0) * 100) / 100),
+      weight_g: Math.max(0, Math.round(Number(t?.weight_g) || 0)),
+    }))
+    .filter((t) => t.name);
+}
+
+// Список «Товар» в форме: сначала каталог из Настроек, затем встроенные названия.
+function catalogProducts() {
+  const templates = readProductTemplates().map((t) => ({ label: t.name, model_id: t.model_id, price: t.price, weight_g: t.weight_g }));
+  const rest = PRODUCTS.filter((p) => !templates.some((t) => t.label === p.label));
+  return [...templates, ...rest];
 }
 
 // Ozon отдаёт сумму объектом { amount: "123.00", currency_code: "RUB" } (иногда — числом/строкой),
@@ -340,8 +369,8 @@ function npdLinesFor(order) {
         name: fillTemplate(itemTemplate, {
           'товар': it.product_name || 'Товар',
           'цвет': color?.shortLabel || '',
-          'разъём': connector?.shortLabel || connector?.label || '',
-          'разъем': connector?.shortLabel || connector?.label || '',
+          'разъём': connector?.label || '',
+          'разъем': connector?.label || '',
           'кол-во': String(qty),
           'модель': it.model_id ? it.model_id.toUpperCase() : '',
           'серийник': it.serial_number || '',
@@ -629,7 +658,8 @@ const server = http.createServer(async (req, res) => {
         models: MODELS,
         colors: COLORS,
         connectors: CONNECTORS,
-        products: PRODUCTS,
+        products: catalogProducts(),
+        boxes: readBoxTemplates(),
         delivery_services: DELIVERY_SERVICES,
       });
     }
@@ -813,11 +843,22 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, 200, { ok: true });
     }
 
-    if (pathname === '/api/ozon/box-templates' && req.method === 'GET') {
+    if (pathname === '/api/catalog/products' && req.method === 'GET') {
+      return sendJson(res, 200, { templates: readProductTemplates() });
+    }
+
+    if (pathname === '/api/catalog/products' && req.method === 'PUT') {
+      const data = await readBody(req);
+      const templates = cleanProductTemplates(data.templates);
+      setSetting('product_templates', JSON.stringify(templates));
+      return sendJson(res, 200, { templates });
+    }
+
+    if ((pathname === '/api/ozon/box-templates' || pathname === '/api/catalog/boxes') && req.method === 'GET') {
       return sendJson(res, 200, { templates: readBoxTemplates() });
     }
 
-    if (pathname === '/api/ozon/box-templates' && req.method === 'PUT') {
+    if ((pathname === '/api/ozon/box-templates' || pathname === '/api/catalog/boxes') && req.method === 'PUT') {
       const data = await readBody(req);
       const templates = cleanBoxTemplates(data.templates);
       setSetting('ozon_box_templates', JSON.stringify(templates));

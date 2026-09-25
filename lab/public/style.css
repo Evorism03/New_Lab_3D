@@ -745,3 +745,13 @@ input.invalid, input.invalid:focus { border-color: var(--danger) !important; box
 .npd-name { flex: 1; min-width: 0; background: var(--bg); border: 1px solid #34405a; }
 .npd-sum { white-space: nowrap; font-weight: 600; }
 .npd-total { border-top: 1px dashed var(--border); margin-top: 6px; padding-top: 8px; font-weight: 700; }
+
+/* Быстрое добавление товаров из каталога */
+.quick-add { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.quick-add-list { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.chip.quick-chip { cursor: pointer; font-size: 13px; padding: 5px 12px; }
+.chip.quick-chip:hover { border-color: var(--accent); color: var(--accent); }
+
+/* Каталог товаров в Настройках */
+#product-table tbody tr { grid-template-columns: 2fr repeat(3, minmax(0, 1fr)); }
+#product-table tbody td { order: 0; grid-column: auto; }

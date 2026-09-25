@@ -27,28 +27,43 @@
 </aside>
 <main>
   <div class="settings-tabs" role="tablist">
-    <button type="button" data-tab="ozon" class="active">🚚 Ozon Доставка</button>
+    <button type="button" data-tab="catalog" class="active">📦 Каталог</button>
+    <button type="button" data-tab="ozon">🚚 Ozon Доставка</button>
     <button type="button" data-tab="cdek">🟢 СДЭК</button>
     <button type="button" data-tab="npd">🧾 Мой налог</button>
     <button type="button" data-tab="users" hidden>👤 Пользователи</button>
   </div>
 
-  <section data-panel="ozon">
+  <section data-panel="catalog">
   <div class="card">
-    <h2>Метод отгрузки</h2>
-    <p class="muted">Выберите метод отгрузки, который уже создан в личном кабинете Ozon. Через него будут оформляться все отправления.</p>
-    <div id="methods" class="muted">Загрузка…</div>
-    <button type="button" class="secondary" id="reload-methods" style="margin-top:10px">Обновить список</button>
+    <h2>Товары</h2>
+    <p class="muted">Для быстрого заполнения заказа: в форме заказа товар добавляется одной кнопкой — с моделью и ценой. Вес одной штуки нужен для расчёта веса посылки.</p>
+    <table class="items-table" id="product-table">
+      <thead>
+        <tr>
+          <th>Название</th>
+          <th>Модель</th>
+          <th>Цена, ₽</th>
+          <th>Вес 1 шт, г</th>
+          <th style="width:50px"></th>
+        </tr>
+      </thead>
+      <tbody id="product-body"></tbody>
+    </table>
+    <div class="toolbar" style="margin-top:10px">
+      <button type="button" class="secondary small" id="product-add">+ Добавить товар</button>
+      <button type="button" id="product-save">Сохранить товары</button>
+    </div>
   </div>
 
   <div class="card" style="margin-top:16px">
-    <h2>Шаблоны коробок</h2>
-    <p class="muted">Вес посылки с товаром и габариты коробки. В заказе шаблон выбирается из списка — поля заполнятся сами.</p>
+    <h2>Коробки</h2>
+    <p class="muted">Вес пустой коробки (с наполнителем/упаковкой) и её габариты. В заказе вес посылки считается сам: коробка + товары × количество.</p>
     <table class="items-table" id="box-table">
       <thead>
         <tr>
           <th>Название</th>
-          <th style="width:110px">Вес, г</th>
+          <th style="width:110px">Вес коробки, г</th>
           <th style="width:110px">Длина, мм</th>
           <th style="width:110px">Ширина, мм</th>
           <th style="width:110px">Высота, мм</th>
@@ -58,9 +73,19 @@
       <tbody id="box-body"></tbody>
     </table>
     <div class="toolbar" style="margin-top:10px">
-      <button type="button" class="secondary small" id="box-add">+ Добавить шаблон</button>
-      <button type="button" id="box-save">Сохранить шаблоны</button>
+      <button type="button" class="secondary small" id="box-add">+ Добавить коробку</button>
+      <button type="button" id="box-save">Сохранить коробки</button>
     </div>
+  </div>
+
+  </section>
+
+  <section data-panel="ozon" hidden>
+  <div class="card">
+    <h2>Метод отгрузки</h2>
+    <p class="muted">Выберите метод отгрузки, который уже создан в личном кабинете Ozon. Через него будут оформляться все отправления.</p>
+    <div id="methods" class="muted">Загрузка…</div>
+    <button type="button" class="secondary" id="reload-methods" style="margin-top:10px">Обновить список</button>
   </div>
 
   <div class="card" style="margin-top:16px">
@@ -256,10 +281,10 @@
 </div>
 <script src="/app.js"></script>
 <script>
-// Вкладки настроек; активная запоминается в адресе (#ozon, #cdek, #npd, #users).
+// Вкладки настроек; активная запоминается в адресе (#catalog, #ozon, #cdek, #npd, #users).
 function showTab(name) {
   const btn = document.querySelector(`.settings-tabs [data-tab="${name}"]`);
-  if (!btn || btn.hidden) name = 'ozon';
+  if (!btn || btn.hidden) name = 'catalog';
   document.querySelectorAll('.settings-tabs [data-tab]').forEach((b) => b.classList.toggle('active', b.dataset.tab === name));
   document.querySelectorAll('[data-panel]').forEach((p) => { p.hidden = p.dataset.panel !== name; });
 }
@@ -267,7 +292,7 @@ document.querySelectorAll('.settings-tabs [data-tab]').forEach((b) => b.addEvent
   history.replaceState(null, '', `#${b.dataset.tab}`);
   showTab(b.dataset.tab);
 }));
-showTab(location.hash.slice(1) || 'ozon');
+showTab(location.hash.slice(1) || 'catalog');
 
 // ---- Ozon Доставка ----
 let settings = {};
@@ -398,7 +423,7 @@ function addBoxRow(t = {}) {
 }
 
 async function loadBoxes() {
-  const { templates } = await api('/api/ozon/box-templates');
+  const { templates } = await api('/api/catalog/boxes');
   boxBody.innerHTML = '';
   templates.forEach(addBoxRow);
   if (!templates.length) addBoxRow();
@@ -413,10 +438,10 @@ document.getElementById('box-save').addEventListener('click', async () => {
     return t;
   }).filter((t) => t.name);
   const bad = templates.find((t) => ['weight_g', 'length_mm', 'width_mm', 'height_mm'].some((k) => !(Number(t[k]) >= 1)));
-  if (bad) { toast(`Заполните вес и габариты в шаблоне «${bad.name}»`, 'error'); return; }
+  if (bad) { toast(`Заполните вес и габариты коробки «${bad.name}»`, 'error'); return; }
   try {
-    await api('/api/ozon/box-templates', { method: 'PUT', body: JSON.stringify({ templates }) });
-    toast('Шаблоны сохранены', 'success');
+    await api('/api/catalog/boxes', { method: 'PUT', body: JSON.stringify({ templates }) });
+    toast('Коробки сохранены', 'success');
     loadBoxes();
   } catch (err) {
     toast(err.message, 'error');
@@ -440,6 +465,53 @@ loadSettings()
   .then(loadMethods)
   .catch((err) => toast(err.message, 'error'));
 loadBoxes().catch((err) => toast(err.message, 'error'));
+
+// ---- Каталог товаров ----
+const productBody = document.getElementById('product-body');
+let catalogModels = [];
+
+function addProductRow(t = {}) {
+  const modelOptions = ['<option value="">—</option>', ...catalogModels.map((m) => `<option value="${m.id}">${escapeText(m.label)}</option>`)].join('');
+  const row = el(`
+    <tr>
+      <td><input data-k="name" placeholder="Например: Автоматический лоадер"></td>
+      <td><select data-k="model_id">${modelOptions}</select></td>
+      <td><input data-k="price" type="number" min="0" step="0.01"></td>
+      <td><input data-k="weight_g" type="number" min="0" step="1"></td>
+      <td><button type="button" class="secondary small remove-item" title="Удалить">✕</button></td>
+    </tr>
+  `);
+  for (const input of row.querySelectorAll('[data-k]')) input.value = t[input.dataset.k] ?? '';
+  row.querySelector('.remove-item').addEventListener('click', () => row.remove());
+  productBody.appendChild(row);
+}
+
+async function loadProducts() {
+  const [{ templates }, cat] = await Promise.all([api('/api/catalog/products'), api('/api/catalog')]);
+  catalogModels = cat.models || [];
+  productBody.innerHTML = '';
+  templates.forEach(addProductRow);
+  if (!templates.length) addProductRow();
+}
+
+document.getElementById('product-add').addEventListener('click', () => addProductRow());
+
+document.getElementById('product-save').addEventListener('click', async () => {
+  const templates = [...productBody.querySelectorAll('tr')].map((row) => {
+    const t = {};
+    for (const input of row.querySelectorAll('[data-k]')) t[input.dataset.k] = input.value.trim();
+    return t;
+  }).filter((t) => t.name);
+  try {
+    await api('/api/catalog/products', { method: 'PUT', body: JSON.stringify({ templates }) });
+    toast('Товары сохранены', 'success');
+    loadProducts();
+  } catch (err) {
+    toast(err.message, 'error');
+  }
+});
+
+loadProducts().catch((err) => toast(err.message, 'error'));
 
 // ---- СДЭК ----
 let cdekSettings = {};
@@ -688,7 +760,7 @@ document.getElementById('add-user').addEventListener('click', async () => {
   }
 });
 
-loadUsers().then(() => showTab(location.hash.slice(1) || 'ozon')).catch(() => {});
+loadUsers().then(() => showTab(location.hash.slice(1) || 'catalog')).catch(() => {});
 </script>
 </body>
 </html>

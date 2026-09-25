@@ -157,11 +157,11 @@ export const COLORS = [
   { letter: 'P', label: 'Розовый (Pink)', shortLabel: 'Розовый', swatch: '#ec4899' },
 ];
 
-// plugLabel — как разъём подписывается на этикетке (см. пример макета); shortLabel — в чеке «Мой налог».
+// plugLabel — как разъём подписывается на этикетке (см. пример макета).
 // swatch — у разъёмов нет реального цвета, метка просто для быстрого визуального различия.
 export const CONNECTORS = [
-  { letter: 'T', label: 'Т-образный', plugLabel: 'T-Plug', shortLabel: 'Т-образный', swatch: '#38bdf8' },
-  { letter: 'M', label: 'Mini Tamiya', plugLabel: 'Mini Tamiya', shortLabel: 'МиниТ', swatch: '#a78bfa' },
+  { letter: 'T', label: 'Т-образный', plugLabel: 'T-Plug', swatch: '#38bdf8' },
+  { letter: 'M', label: 'Mini Tamiya', plugLabel: 'Mini Tamiya', swatch: '#a78bfa' },
 ];
 
 // Каталог товаров для выпадающего списка "Товар" — меняется редко, правится здесь.

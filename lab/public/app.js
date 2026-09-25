@@ -240,3 +240,68 @@ document.addEventListener('input', (e) => {
     document.querySelectorAll('#items-table [name="serial_number"]').forEach(checkSerialInput);
   }, 300));
 });
+
+// ---- Каталог товаров в форме заказа ----
+// Товар из каталога (Настройки → Каталог) по названию.
+function productTemplate(name) {
+  const cat = (typeof catalog !== 'undefined' && catalog) || {};
+  return (cat.products || []).find((p) => p.label === name) || null;
+}
+
+// Подставить модель/цену из каталога в строку товара. Цену меняем, только если она пустая/0
+// или если force (товар выбрали заново).
+function applyProductTemplate(row, template, { force = false } = {}) {
+  if (!row || !template) return;
+  const model = row.querySelector('select[name="model_id"]');
+  if (model && template.model_id) {
+    model.value = template.model_id;
+    model.dispatchEvent(new Event('change', { bubbles: true }));
+  }
+  const price = row.querySelector('input[name="price"]');
+  if (price && template.price > 0 && (force || !(Number(price.value) > 0))) {
+    price.value = template.price;
+    price.dispatchEvent(new Event('input', { bubbles: true }));
+  }
+}
+
+// Выбрали другой товар в строке — подставляем его модель и цену.
+document.addEventListener('change', (e) => {
+  const select = e.target;
+  if (!(select instanceof HTMLSelectElement) || select.name !== 'product_name' || !select.closest('#items-table')) return;
+  applyProductTemplate(select.closest('tr'), productTemplate(select.value), { force: true });
+});
+
+// Кнопки «быстро добавить» над списком товаров. addRow(values) — функция страницы.
+function renderQuickAdd(mount, addRow) {
+  const cat = (typeof catalog !== 'undefined' && catalog) || {};
+  const products = (cat.products || []).filter((p) => p.price > 0 || p.model_id || p.weight_g > 0);
+  mount.innerHTML = '';
+  if (!products.length) {
+    mount.innerHTML = '<span class="muted" style="font-size:12px">Товары для быстрого добавления настраиваются в Настройках → Каталог.</span>';
+    return;
+  }
+  mount.appendChild(el('<span class="muted" style="font-size:12px">Быстро добавить:</span>'));
+  for (const p of products) {
+    const btn = el(`<button type="button" class="chip quick-chip">＋ ${escapeHtml(p.label)}${p.price > 0 ? ` · ${money(p.price)}` : ''}</button>`);
+    btn.addEventListener('click', () => {
+      // Пустая строка (новый заказ) заполняется, иначе добавляется новая.
+      const rows = [...document.querySelectorAll('#items-table tbody tr')];
+      const blank = rows.find((r) => {
+        const price = r.querySelector('input[name="price"]');
+        const serial = r.querySelector('input[name="serial_number"]');
+        return price && !(Number(price.value) > 0) && !(serial && serial.value.trim()) && !r.dataset.itemId;
+      });
+      if (blank) {
+        const select = blank.querySelector('select[name="product_name"]');
+        if (select) {
+          if (![...select.options].some((o) => o.value === p.label)) select.appendChild(el(`<option value="${escapeHtml(p.label)}">${escapeHtml(p.label)}</option>`));
+          select.value = p.label;
+        }
+        applyProductTemplate(blank, p, { force: true });
+      } else {
+        addRow({ product_name: p.label, model_id: p.model_id || undefined, price: p.price || 0, quantity: 1 });
+      }
+    });
+    mount.appendChild(btn);
+  }
+}

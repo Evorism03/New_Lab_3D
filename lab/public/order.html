@@ -87,7 +87,10 @@
         </thead>
         <tbody id="items-body"></tbody>
       </table>
-      <button type="button" class="secondary small" id="add-item">+ Добавить товар</button>
+      <div class="quick-add">
+        <button type="button" class="secondary small" id="add-item">+ Добавить товар</button>
+        <div id="quick-add" class="quick-add-list"></div>
+      </div>
 
       <div class="field" style="margin-top:16px">
         <label>Заметка</label>
@@ -106,7 +109,7 @@
   <div class="card" style="margin-top:16px">
     <h2>📦 Посылка</h2>
     <div class="field" style="max-width:360px">
-      <label>Шаблон коробки <span class="muted" style="font-weight:normal">— шаблоны настраиваются в Настройках → Ozon Доставка</span></label>
+      <label>Коробка <span class="muted" style="font-weight:normal">(Настройки → Каталог)</span></label>
       <select id="ozon-box-template"><option value="">— вручную —</option></select>
     </div>
     <div class="grid-3" style="grid-template-columns:repeat(4,1fr)">
@@ -127,7 +130,11 @@
         <input id="ozon-height" type="number" min="1" step="1">
       </div>
     </div>
-    <button type="button" class="secondary small" id="ozon-save-params">Сохранить габариты</button>
+    <div class="toolbar" style="margin:0;align-items:center">
+      <button type="button" class="secondary small" id="ozon-save-params">Сохранить габариты</button>
+      <button type="button" class="secondary small" id="parcel-recalc">⚖ Пересчитать вес</button>
+      <span id="parcel-weight-hint" class="muted" style="font-size:12px"></span>
+    </div>
   </div>
 
   <div class="card carrier-card" id="ozon-card" style="margin-top:16px">
@@ -279,6 +286,7 @@ function addItemRow(values = {}) {
       <td><button type="button" class="secondary small remove-item">✕</button></td>
     </tr>
   `);
+  if (values.id) row.dataset.itemId = values.id;
 
   if (!isPrint) {
     const colorSelect = row.querySelector('[name="color"]');
@@ -447,33 +455,73 @@ let boxTemplates = [];
 const boxSelect = document.getElementById('ozon-box-template');
 const boxFields = { weight_g: 'ozon-weight', length_mm: 'ozon-length', width_mm: 'ozon-width', height_mm: 'ozon-height' };
 
-// Подсвечиваем шаблон, если габариты заказа с ним совпадают; иначе — «вручную».
+// Подсвечиваем коробку, если габариты заказа с ней совпадают; иначе — «вручную».
+const dimFields = ['length_mm', 'width_mm', 'height_mm'];
 function syncBoxSelect() {
-  const idx = boxTemplates.findIndex((t) => Object.entries(boxFields)
-    .every(([k, elId]) => String(t[k]) === document.getElementById(elId).value.trim()));
+  const idx = boxTemplates.findIndex((t) => dimFields
+    .every((k) => String(t[k]) === document.getElementById(boxFields[k]).value.trim()));
   boxSelect.value = idx >= 0 ? String(idx) : '';
 }
 
 async function loadBoxTemplates() {
-  ({ templates: boxTemplates } = await api('/api/ozon/box-templates'));
+  ({ templates: boxTemplates } = await api('/api/catalog/boxes'));
   boxTemplates.forEach((t, i) => boxSelect.appendChild(el(
-    `<option value="${i}">${escapeText(t.name)} — ${t.weight_g} г, ${t.length_mm}×${t.width_mm}×${t.height_mm} мм</option>`
+    `<option value="${i}">${escapeText(t.name)} — ${t.length_mm}×${t.width_mm}×${t.height_mm} мм, коробка ${t.weight_g} г</option>`
   )));
   syncBoxSelect();
+}
+
+// Вес товаров по каталогу (вес 1 шт × количество) — из строк формы, даже несохранённых.
+function itemsWeight() {
+  let total = 0;
+  const missing = [];
+  for (const row of document.querySelectorAll('#items-table tbody tr')) {
+    const name = row.querySelector('[name="product_name"]')?.value;
+    const qty = Number(row.querySelector('[name="quantity"]')?.value) || 0;
+    if (!name || !qty) continue;
+    const w = productTemplate(name)?.weight_g || 0;
+    if (w > 0) total += w * qty;
+    else if (!missing.includes(name)) missing.push(name);
+  }
+  return { total, missing };
+}
+
+// Вес посылки = коробка + товары. Пишем в поле «Вес» и показываем разбивку.
+function recalcParcelWeight() {
+  const box = boxTemplates[Number(boxSelect.value)];
+  const boxWeight = box ? Number(box.weight_g) || 0 : 0;
+  const { total, missing } = itemsWeight();
+  const hint = document.getElementById('parcel-weight-hint');
+  if (!box && !total) {
+    hint.textContent = 'Выберите коробку или укажите вес товаров в Настройках → Каталог.';
+    return false;
+  }
+  document.getElementById('ozon-weight').value = boxWeight + total;
+  hint.innerHTML = `${box ? `коробка ${boxWeight} г + ` : ''}товары ${total} г = <strong>${boxWeight + total} г</strong>`
+    + (missing.length ? ` · <span style="color:var(--warn)">нет веса в каталоге: ${escapeText(missing.join(', '))}</span>` : '');
+  return true;
+}
+
+async function saveParcel(message) {
+  try {
+    await saveOzonPoint(document.getElementById('ozon-delivery-point').value.trim());
+    if (message) toast(message, 'success');
+  } catch (err) {
+    toast(err.message, 'error');
+  }
 }
 
 boxSelect.addEventListener('change', async () => {
   const t = boxTemplates[Number(boxSelect.value)];
   if (!boxSelect.value || !t) return;
-  for (const [k, elId] of Object.entries(boxFields)) document.getElementById(elId).value = t[k];
-  try {
-    await saveOzonPoint(document.getElementById('ozon-delivery-point').value.trim());
-    toast(`Габариты из шаблона «${t.name}» сохранены`, 'success');
-  } catch (err) {
-    toast(err.message, 'error');
-  }
+  for (const k of dimFields) document.getElementById(boxFields[k]).value = t[k];
+  recalcParcelWeight();
+  saveParcel(`Коробка «${t.name}»: габариты и вес посылки сохранены`);
 });
-Object.values(boxFields).forEach((elId) => document.getElementById(elId).addEventListener('input', syncBoxSelect));
+document.getElementById('parcel-recalc').addEventListener('click', () => {
+  if (recalcParcelWeight()) saveParcel('Вес посылки пересчитан и сохранён');
+});
+dimFields.forEach((k) => document.getElementById(boxFields[k]).addEventListener('input', syncBoxSelect));
 
 const addressFields = LabAddress.bindAddressFields(document.querySelector('[name="pvz_address"]'), document.getElementById('address-parts'));
 let ozonDraftCreated = false;
@@ -914,6 +962,7 @@ document.getElementById('ozon-approve').addEventListener('click', async () => {
 
 async function load() {
   [statuses, catalog] = await Promise.all([api('/api/statuses'), api('/api/catalog')]);
+  renderQuickAdd(document.getElementById('quick-add'), addItemRow);
   const sel = document.getElementById('status-select');
   for (const s of statuses) sel.appendChild(el(`<option value="${s.id}">${s.label}</option>`));
 
