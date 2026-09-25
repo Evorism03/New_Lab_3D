@@ -719,3 +719,21 @@ table.orders-table td.nowrap, table.orders-table th.nowrap, table.orders-table t
   height: 38px;
   box-sizing: border-box;
 }
+
+/* Поля внутри карточек товара — темнее карточки, с заметной рамкой, чтобы не сливались. */
+.items-table tbody td select,
+.items-table tbody td input:not([type="hidden"]):not([type="checkbox"]) {
+  background: var(--bg);
+  border: 1px solid #34405a;
+}
+.items-table tbody td select:focus,
+.items-table tbody td input:focus { border-color: var(--accent); }
+input.invalid, input.invalid:focus { border-color: var(--danger) !important; box-shadow: 0 0 0 2px rgba(239, 90, 111, 0.2); }
+.serial-warning { color: var(--danger); font-size: 12px; margin-top: 4px; }
+/* В карточке товара подсказка висит под полем и не сдвигает строку. */
+.items-table tbody td:has(> .serial-warning) { position: relative; }
+.items-table tbody td > .serial-warning { position: absolute; left: 0; top: 100%; margin-top: 2px; white-space: nowrap; }
+.items-table tbody tr:has(.serial-warning:not(:empty)) { padding-bottom: 26px; }
+.serial-warning:empty { display: none; }
+.grid-3.grid-order { grid-template-columns: 140px repeat(3, minmax(0, 1fr)); }
+@container main (max-width: 700px) { .grid-3.grid-order { grid-template-columns: 1fr 1fr; } }

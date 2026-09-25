@@ -90,6 +90,8 @@ for (const stmt of [
   'ALTER TABLE orders ADD COLUMN board_position INTEGER',
   // СДЭК: код ПВЗ получателя и JSON с данными заказа в СДЭК (uuid, номер, статусы, расчёт).
   'ALTER TABLE orders ADD COLUMN cdek_pvz_code TEXT',
+  // Номер заказа для людей (редактируемый). Пусто — показывается внутренний ID.
+  'ALTER TABLE orders ADD COLUMN number TEXT',
   'ALTER TABLE orders ADD COLUMN cdek_shipment TEXT',
   // Заказы 3D-печати из New_Lab_3d (приходят через /api/external/orders).
   "ALTER TABLE orders ADD COLUMN source TEXT DEFAULT 'manual'",
@@ -263,6 +265,7 @@ function withTotals(order) {
     goods_total: goodsTotal,
     grand_total: goodsTotal + order.delivery_price,
     receipts_count: receiptsCount,
+    display_number: order.number || String(order.id),
     ozon_shipment: parseOzonShipment(order.ozon_shipment),
     cdek_shipment: parseOzonShipment(order.cdek_shipment),
   };
@@ -276,6 +279,7 @@ export function listOrders({ status, q } = {}) {
     const needle = q.toLowerCase();
     orders = orders.filter((o) => {
       const haystack = [
+        `#${o.display_number}`,
         o.full_name,
         o.phone,
         o.pvz_address,
@@ -300,8 +304,56 @@ export function getOrder(id) {
   return { ...withTotals(order), receipts: listReceipts(id) };
 }
 
+function httpError(status, message) {
+  const err = new Error(message);
+  err.status = status;
+  return err;
+}
+
+// Номер заказа: до 30 символов; уникален среди номеров и ID других заказов (то, что видно как «#…»).
+function cleanOrderNumber(value, excludeId) {
+  const number = String(value ?? '').trim().replace(/^#/, '');
+  if (!number) return null;
+  if (number.length > 30) throw httpError(400, 'Номер заказа — не длиннее 30 символов');
+  const clash = db
+    .prepare(
+      `SELECT id FROM orders WHERE id != ? AND LOWER(COALESCE(NULLIF(number, ''), CAST(id AS TEXT))) = LOWER(?)`
+    )
+    .get(excludeId ?? -1, number);
+  if (clash) throw httpError(409, `Номер «${number}» уже занят другим заказом`);
+  return number;
+}
+
+// Серийник должен быть уникален: не повторяться внутри заказа и не совпадать с товаром другого заказа.
+export function findSerialOwner(serial, { excludeOrderId = null, excludeItemId = null } = {}) {
+  const value = String(serial || '').trim();
+  if (!value) return null;
+  return db
+    .prepare(
+      `SELECT items.id AS item_id, orders.id AS order_id, COALESCE(NULLIF(orders.number, ''), CAST(orders.id AS TEXT)) AS order_number
+       FROM items JOIN orders ON orders.id = items.order_id
+       WHERE UPPER(TRIM(items.serial_number)) = UPPER(?) AND orders.id != ? AND items.id != ?
+       LIMIT 1`
+    )
+    .get(value, excludeOrderId ?? -1, excludeItemId ?? -1) || null;
+}
+
+function assertSerialsFree(items, orderId) {
+  const seen = new Set();
+  for (const it of items || []) {
+    const serial = String(it.serial_number || '').trim().toUpperCase();
+    if (!serial) continue;
+    if (seen.has(serial)) throw httpError(409, `Серийный номер ${serial} указан в заказе дважды`);
+    seen.add(serial);
+    const owner = findSerialOwner(serial, { excludeOrderId: orderId });
+    if (owner) throw httpError(409, `Серийный номер ${serial} уже занят в заказе #${owner.order_number}`);
+  }
+}
+
 export function createOrder(data) {
   const now = new Date().toISOString();
+  const number = cleanOrderNumber(data.number, null);
+  assertSerialsFree(data.items, null);
   const info = db
     .prepare(
       `INSERT INTO orders (created_at, updated_at, status, delivery_service, pvz_address, full_name, phone, delivery_price, notes,
@@ -325,6 +377,7 @@ export function createOrder(data) {
       data.shipping_address || ''
     );
   const orderId = info.lastInsertRowid;
+  if (number) db.prepare('UPDATE orders SET number = ? WHERE id = ?').run(number, orderId);
   insertItems(orderId, data.items || []);
   return getOrder(orderId);
 }
@@ -360,6 +413,10 @@ export function updateOrder(id, data) {
   const existing = db.prepare('SELECT * FROM orders WHERE id = ?').get(id);
   if (!existing) return null;
   const now = new Date().toISOString();
+  if (data.number !== undefined) {
+    db.prepare('UPDATE orders SET number = ? WHERE id = ?').run(cleanOrderNumber(data.number, id), id);
+  }
+  if (data.items) assertSerialsFree(data.items, id);
   db.prepare(
     `UPDATE orders SET updated_at = ?, status = ?, delivery_service = ?, pvz_address = ?,
        full_name = ?, phone = ?, delivery_price = ?, notes = ? WHERE id = ?`
@@ -560,7 +617,8 @@ export function listSerials() {
     .prepare(
       `SELECT items.id as item_id, items.model_id, items.product_name, items.color, items.connector,
               items.quantity, items.price, items.serial_number, items.assembled_at,
-              orders.id as order_id, orders.full_name, orders.phone, orders.status,
+              orders.id as order_id, COALESCE(NULLIF(orders.number, ''), CAST(orders.id AS TEXT)) as order_number,
+              orders.full_name, orders.phone, orders.status,
               orders.delivery_service, orders.pvz_address, orders.created_at
        FROM items JOIN orders ON orders.id = items.order_id
        ORDER BY orders.id DESC, items.id`

@@ -71,7 +71,7 @@ function render(orders) {
       <div class="list-card clickable">
         <div class="lc-main">
           <div class="lc-head">
-            <span class="lc-id">#${o.id}</span>
+            <span class="lc-id">#${escapeHtml(o.display_number)}</span>
             <span class="lc-title">${escapeHtml(o.full_name || 'Без имени')}</span>
             ${o.receipts_count ? `<span class="chip" title="${o.receipts_count} чек(ов) прикреплено">📎 ${o.receipts_count}</span>` : ''}
             ${statusPill(o.status, statuses)}

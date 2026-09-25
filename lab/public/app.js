@@ -196,3 +196,47 @@ initSidebarUser();
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('/sw.js').catch(() => {});
 }
+
+// Проверка серийных номеров в форме заказа: повтор внутри заказа и занятость в других заказах.
+// Работает для любых полей name="serial_number" в #items-table (строки добавляются динамически).
+const serialCheckTimers = new WeakMap();
+function serialWarning(input) {
+  const cell = input.closest('td');
+  let note = cell.querySelector('.serial-warning');
+  if (!note) {
+    note = document.createElement('div');
+    note.className = 'serial-warning';
+    cell.appendChild(note);
+  }
+  return note;
+}
+async function checkSerialInput(input) {
+  const value = input.value.trim().toUpperCase();
+  const note = serialWarning(input);
+  const setState = (text) => {
+    note.textContent = text;
+    input.classList.toggle('invalid', Boolean(text));
+  };
+  if (!value) return setState('');
+  const others = [...document.querySelectorAll('#items-table [name="serial_number"]')]
+    .filter((el) => el !== input && el.value.trim().toUpperCase() === value);
+  if (others.length) return setState('Этот номер уже есть в этом заказе');
+  try {
+    const params = new URLSearchParams({ serial: value });
+    if (window.CURRENT_ORDER_ID) params.set('order_id', window.CURRENT_ORDER_ID);
+    const res = await api(`/api/serials/check?${params}`);
+    if (input.value.trim().toUpperCase() !== value) return; // успели поменять
+    setState(res.taken ? `Занят в заказе #${res.order_number}` : '');
+  } catch {
+    // проверка не удалась — окончательно проверит сервер при сохранении
+  }
+}
+document.addEventListener('input', (e) => {
+  const input = e.target;
+  if (!(input instanceof HTMLInputElement) || input.name !== 'serial_number' || !input.closest('#items-table')) return;
+  clearTimeout(serialCheckTimers.get(input));
+  serialCheckTimers.set(input, setTimeout(() => {
+    // перепроверяем все поля: повтор мог исчезнуть и у соседней строки
+    document.querySelectorAll('#items-table [name="serial_number"]').forEach(checkSerialInput);
+  }, 300));
+});

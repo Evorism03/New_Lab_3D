@@ -14,6 +14,7 @@ import {
   getOrder,
   createOrder,
   updateOrder,
+  findSerialOwner,
   reorderBoardColumn,
   deleteOrder,
   createOrUpdateExternalOrder,
@@ -157,7 +158,7 @@ function csvEscape(value) {
 
 function ordersToCsv(orders) {
   const header = [
-    'ID заказа',
+    '№ заказа',
     'Дата',
     'Статус',
     'ТК',
@@ -180,7 +181,7 @@ function ordersToCsv(orders) {
       .join(' | ');
     lines.push(
       [
-        o.id,
+        o.display_number,
         o.created_at,
         statusLabel(o.status),
         o.delivery_service,
@@ -218,7 +219,7 @@ function serialsToCsv(rows) {
   for (const r of rows) {
     lines.push(
       [
-        r.order_id,
+        r.order_number,
         r.full_name,
         r.phone,
         statusLabel(r.status),
@@ -394,7 +395,7 @@ function cdekOrderBody(order, point) {
   const body = {
     type: orderType,
     tariff_code: cdekTariffFor(point),
-    comment: `Заказ #${order.id}`,
+    comment: `Заказ #${order.display_number}`,
     shipment_point: cdekShipmentPoint().code,
     delivery_point: point.code,
     recipient: {
@@ -652,6 +653,14 @@ const server = http.createServer(async (req, res) => {
     if (orderMatch && req.method === 'DELETE') {
       deleteOrder(Number(orderMatch[1]));
       return sendJson(res, 200, { ok: true });
+    }
+
+    // Проверка серийника «на лету» из формы заказа.
+    if (pathname === '/api/serials/check' && req.method === 'GET') {
+      const owner = findSerialOwner(url.searchParams.get('serial'), {
+        excludeOrderId: Number(url.searchParams.get('order_id')) || null,
+      });
+      return sendJson(res, 200, { taken: !!owner, order_id: owner?.order_id ?? null, order_number: owner?.order_number ?? null });
     }
 
     if (pathname === '/api/serials' && req.method === 'GET') {
@@ -1115,6 +1124,8 @@ const server = http.createServer(async (req, res) => {
 
     return serveStatic(req, res, pathname);
   } catch (err) {
+    // Ожидаемые ошибки (занятый номер/серийник и т.п.) — с их кодом и текстом.
+    if (err.status >= 400 && err.status < 500) return sendJson(res, err.status, { error: err.message });
     console.error(err);
     return sendJson(res, 500, { error: 'Внутренняя ошибка сервера' });
   }

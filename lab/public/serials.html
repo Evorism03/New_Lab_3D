@@ -73,7 +73,7 @@ function render() {
           </div>
           <div class="lc-line"><span class="serial">${escapeHtml(r.serial_number || '—')}</span></div>
           <div class="lc-sub">
-            <span>Заказ #${r.order_id}</span>
+            <span>Заказ #${escapeHtml(r.order_number)}</span>
             <span>${escapeHtml(r.full_name || '')}</span>
             <span>${escapeHtml(r.phone || '')}</span>
           </div>

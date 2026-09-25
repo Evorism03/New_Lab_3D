@@ -35,7 +35,11 @@
     </div>
     <div id="external-info" class="muted" style="margin-bottom:10px"></div>
     <form id="order-form">
-      <div class="grid-3">
+      <div class="grid-3 grid-order">
+        <div class="field">
+          <label>Номер заказа</label>
+          <input name="number" maxlength="30" id="order-number">
+        </div>
         <div class="field">
           <label>Транспортная компания</label>
           <select name="delivery_service" id="delivery-service"></select>
@@ -294,7 +298,9 @@ function addItemRow(values = {}) {
           method: 'POST',
           body: JSON.stringify({ model_id: modelId, color, connector, current_serial: currentSerial }),
         });
-        row.querySelector('[name="serial_number"]').value = serial;
+        const serialInput = row.querySelector('[name="serial_number"]');
+        serialInput.value = serial;
+        serialInput.dispatchEvent(new Event('input', { bubbles: true }));
       } catch (err) {
         toast(err.message, 'error');
       }
@@ -821,7 +827,10 @@ async function load() {
   }
 
   const order = await api(`/api/orders/${id}`);
-  document.getElementById('title').textContent = `Заказ #${order.id}`;
+  document.getElementById('title').textContent = `Заказ #${order.display_number}`;
+  window.CURRENT_ORDER_ID = order.id;
+  document.getElementById('order-form').number.value = order.number || '';
+  document.getElementById('order-form').number.placeholder = String(order.id);
   const infoEl = document.getElementById('external-info');
   if (order.source === 'new_lab_3d') {
     const paidPill = order.payment_status === 'paid'
@@ -871,6 +880,7 @@ document.getElementById('order-form').addEventListener('submit', async (e) => {
     delivery_service: form.delivery_service.value,
     full_name: form.full_name.value,
     phone: form.phone.value,
+    number: form.number.value.trim(),
     pvz_address: form.pvz_address.value,
     delivery_price: Number(form.delivery_price.value) || 0,
     notes: form.notes.value,
@@ -878,6 +888,7 @@ document.getElementById('order-form').addEventListener('submit', async (e) => {
   };
   try {
     const order = await api(`/api/orders/${id}`, { method: 'PATCH', body: JSON.stringify(data) });
+    document.getElementById('title').textContent = `Заказ #${order.display_number}`;
     const pointId = document.getElementById('ozon-delivery-point').value.trim();
     if (pointId !== (order.ozon_delivery_point_id || '')) await saveOzonPoint(pointId);
     const cdekCode = document.getElementById('cdek-point-code').value.trim();

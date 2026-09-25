@@ -29,7 +29,11 @@
   <div class="card">
     <h2>Внести заказ (из ВК, после оплаты)</h2>
     <form id="order-form">
-      <div class="grid-3">
+      <div class="grid-3 grid-order">
+        <div class="field">
+          <label>Номер заказа</label>
+          <input name="number" maxlength="30" placeholder="авто">
+        </div>
         <div class="field">
           <label>Транспортная компания</label>
           <select name="delivery_service" id="delivery-service"></select>
@@ -159,7 +163,9 @@ function addItemRow(values = {}) {
         method: 'POST',
         body: JSON.stringify({ model_id: modelId, color, connector, current_serial: currentSerial }),
       });
-      row.querySelector('[name="serial_number"]').value = serial;
+      const serialInput = row.querySelector('[name="serial_number"]');
+      serialInput.value = serial;
+      serialInput.dispatchEvent(new Event('input', { bubbles: true }));
     } catch (err) {
       toast(err.message, 'error');
     }
@@ -211,6 +217,7 @@ document.getElementById('order-form').addEventListener('submit', async (e) => {
     delivery_service: form.delivery_service.value,
     full_name: form.full_name.value,
     phone: form.phone.value,
+    number: form.number.value.trim(),
     pvz_address: form.pvz_address.value,
     delivery_price: Number(form.delivery_price.value) || 0,
     notes: form.notes.value,
