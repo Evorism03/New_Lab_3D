@@ -7,6 +7,7 @@ import { StatCounter } from "@/components/StatCounter";
 import { TextMask } from "@/components/TextMask";
 import { TiltFrame } from "@/components/TiltFrame";
 import { prisma } from "@/lib/db";
+import { localizeCatalogText } from "@/lib/i18n/catalog";
 import { getServerLocale } from "@/lib/i18n/locale";
 import { daysWord, formatDays, formatTemplate, getDictionary } from "@/lib/i18n/translations";
 import { formatAmount } from "@/lib/money";
@@ -195,7 +196,9 @@ export default async function HomePage() {
                     <div>
                       <h3 className="text-lg font-semibold text-accent">{m.name}</h3>
                       {m.description && (
-                        <p className="mt-1 text-sm text-muted">{m.description}</p>
+                        <p className="mt-1 text-sm text-muted">
+                          {localizeCatalogText(m.description, dict.locale)}
+                        </p>
                       )}
                     </div>
 
@@ -204,7 +207,7 @@ export default async function HomePage() {
                         {m.colors.map((c) => (
                           <span
                             key={c.id}
-                            title={c.name}
+                            title={localizeCatalogText(c.name, dict.locale, c.nameRu)}
                             className="h-4 w-4 rounded-full border border-border"
                             style={{ background: c.hex }}
                           />
@@ -220,7 +223,8 @@ export default async function HomePage() {
 
                     {m.bestFor && (
                       <p className="rounded-lg border border-border bg-white/[0.03] px-3 py-2 text-[13px] leading-relaxed text-text">
-                        <span className="text-muted">{home.materialsBestFor}</span> {m.bestFor}
+                        <span className="text-muted">{home.materialsBestFor}</span>{" "}
+                        {localizeCatalogText(m.bestFor, dict.locale)}
                       </p>
                     )}
 

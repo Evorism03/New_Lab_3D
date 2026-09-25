@@ -10,7 +10,12 @@ export default async function AdminMaterialsPage() {
 
   const materials = await prisma.material.findMany({
     orderBy: { name: "asc" },
-    select: { id: true, name: true, imageKey: true },
+    select: {
+      id: true,
+      name: true,
+      imageKey: true,
+      colors: { select: { id: true, name: true, nameRu: true, hex: true }, orderBy: { name: "asc" } },
+    },
   });
 
   return (
@@ -24,6 +29,7 @@ export default async function AdminMaterialsPage() {
             id: m.id,
             name: m.name,
             imageUrl: materialImageUrl(m.id, m.imageKey),
+            colors: m.colors,
           }))}
         />
       </div>

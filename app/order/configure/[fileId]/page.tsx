@@ -2,6 +2,7 @@ import { notFound } from "next/navigation";
 
 import { ConfigureClient } from "@/components/ConfigureClient";
 import { prisma } from "@/lib/db";
+import { localizeCatalogText } from "@/lib/i18n/catalog";
 import { getServerLocale } from "@/lib/i18n/locale";
 import { getDictionary } from "@/lib/i18n/translations";
 import { serializeFile } from "@/lib/serializers";
@@ -50,7 +51,7 @@ export default async function ConfigurePage({
       materials={materials.map((m) => ({
         id: m.id,
         name: m.name,
-        description: m.description,
+        description: localizeCatalogText(m.description, dict.locale),
         pricePerCm3: Number(m.pricePerCm3),
         setupFeeCents: m.setupFeeCents,
         minPriceCents: m.minPriceCents,
@@ -58,10 +59,14 @@ export default async function ConfigurePage({
         strength: m.strength,
         flexibility: m.flexibility,
         heatResistance: m.heatResistance,
-        bestFor: m.bestFor,
+        bestFor: localizeCatalogText(m.bestFor, dict.locale),
         imageUrl: materialImageUrl(m.id, m.imageKey),
-        colors: m.colors.map((c) => ({ id: c.id, name: c.name, hex: c.hex })),
-        finishes: m.finishes.map((f) => ({ id: f.id, name: f.name, multiplier: Number(f.multiplier) })),
+        colors: m.colors.map((c) => ({ id: c.id, name: localizeCatalogText(c.name, dict.locale, c.nameRu), hex: c.hex })),
+        finishes: m.finishes.map((f) => ({
+          id: f.id,
+          name: localizeCatalogText(f.name, dict.locale, f.nameRu),
+          multiplier: Number(f.multiplier),
+        })),
       }))}
     />
   );

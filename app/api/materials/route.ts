@@ -25,10 +25,11 @@ export async function GET() {
       heatResistance: m.heatResistance,
       bestFor: m.bestFor,
       imageUrl: materialImageUrl(m.id, m.imageKey),
-      colors: m.colors.map((c) => ({ id: c.id, name: c.name, hex: c.hex })),
+      colors: m.colors.map((c) => ({ id: c.id, name: c.name, nameRu: c.nameRu, hex: c.hex })),
       finishes: m.finishes.map((f) => ({
         id: f.id,
         name: f.name,
+        nameRu: f.nameRu,
         multiplier: Number(f.multiplier),
       })),
     })),

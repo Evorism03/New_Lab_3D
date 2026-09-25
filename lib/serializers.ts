@@ -38,8 +38,8 @@ export function serializeOrderItem(item: OrderItemWithRelations) {
       volumeCm3: item.file.volumeCm3 !== null ? Number(item.file.volumeCm3) : null,
     },
     material: { id: item.material.id, name: item.material.name },
-    color: item.color ? { id: item.color.id, name: item.color.name } : null,
-    finish: item.finish ? { id: item.finish.id, name: item.finish.name } : null,
+    color: item.color ? { id: item.color.id, name: item.color.name, nameRu: item.color.nameRu } : null,
+    finish: item.finish ? { id: item.finish.id, name: item.finish.name, nameRu: item.finish.nameRu } : null,
   };
 }
 

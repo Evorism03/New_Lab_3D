@@ -1,5 +1,6 @@
 import { PricingAdmin } from "@/components/PricingAdmin";
 import { prisma } from "@/lib/db";
+import { localizeCatalogText } from "@/lib/i18n/catalog";
 import { getServerLocale } from "@/lib/i18n/locale";
 import { getDictionary } from "@/lib/i18n/translations";
 
@@ -29,7 +30,7 @@ export default async function AdminPricingPage() {
             active: m.active,
             finishes: m.finishes.map((f) => ({
               id: f.id,
-              name: f.name,
+              name: localizeCatalogText(f.name, dict.locale, f.nameRu),
               multiplier: Number(f.multiplier),
             })),
           }))}

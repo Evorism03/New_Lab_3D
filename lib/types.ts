@@ -53,8 +53,8 @@ export type OrderItemDTO = {
   totalPriceCents: number;
   file: { id: string; originalName: string; format: "STL" | "OBJ"; volumeCm3: number | null };
   material: { id: string; name: string };
-  color: { id: string; name: string } | null;
-  finish: { id: string; name: string } | null;
+  color: { id: string; name: string; nameRu: string | null } | null;
+  finish: { id: string; name: string; nameRu: string | null } | null;
 };
 
 export type OrderDTO = {

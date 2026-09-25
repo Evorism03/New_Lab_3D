@@ -1,3 +1,4 @@
+import { localizeCatalogText } from "@/lib/i18n/catalog";
 import type { OrderDTO } from "@/lib/types";
 
 // lab (D:\GitHub\lab) is the fulfillment/shipping tool — every paid order ends up there.
@@ -53,18 +54,23 @@ function toLabPayload(order: OrderDTO) {
     full_name: order.shipping.name,
     shipping_address: formatShippingAddress(order.shipping),
     payment_status: "unpaid",
-    items: order.items.map((item) => ({
-      item_kind: "print",
-      product_name: item.material.name + (item.finish ? ` — ${item.finish.name}` : ""),
-      material: item.material.name,
-      finish: item.finish?.name ?? null,
-      color: item.color?.name ?? null,
-      source_file: item.file.originalName,
-      source_file_url: `${APP_URL}/api/files/${item.file.id}/raw`,
-      quantity: item.quantity,
-      price: item.unitPriceCents / 100,
-      external_ref: item.id,
-    })),
+    // Lab staff work in Russian, so color/finish go over in Russian.
+    items: order.items.map((item) => {
+      const finishName = item.finish ? localizeCatalogText(item.finish.name, "ru", item.finish.nameRu) : null;
+      const colorName = item.color ? localizeCatalogText(item.color.name, "ru", item.color.nameRu) : null;
+      return {
+        item_kind: "print",
+        product_name: item.material.name + (finishName ? ` — ${finishName}` : ""),
+        material: item.material.name,
+        finish: finishName,
+        color: colorName,
+        source_file: item.file.originalName,
+        source_file_url: `${APP_URL}/api/files/${item.file.id}/raw`,
+        quantity: item.quantity,
+        price: item.unitPriceCents / 100,
+        external_ref: item.id,
+      };
+    }),
   };
 }
 

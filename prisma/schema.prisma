@@ -75,6 +75,8 @@ model Color {
   id         String @id @default(cuid())
   materialId String
   name       String
+  // Russian display name; the RU site falls back to a built-in translation of `name`, then `name` itself.
+  nameRu     String?
   hex        String
 
   material   Material    @relation(fields: [materialId], references: [id], onDelete: Cascade)
@@ -87,6 +89,7 @@ model Finish {
   id         String  @id @default(cuid())
   materialId String
   name       String
+  nameRu     String?
   multiplier Decimal @default(1) @db.Decimal(5, 3)
 
   material   Material    @relation(fields: [materialId], references: [id], onDelete: Cascade)
