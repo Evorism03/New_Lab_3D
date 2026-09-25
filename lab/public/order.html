@@ -226,6 +226,7 @@ function addItemRow(values = {}) {
   if (values.product_name && !catalog.products.some((p) => p.label === values.product_name)) {
     productOptions = `<option value="${values.product_name}" selected>${values.product_name}</option>` + productOptions;
   }
+  if (!productOptions) productOptions = '<option value="">— добавьте товары в Настройках → Каталог —</option>';
   const modelOptions = catalog.models
     .map((m) => `<option value="${m.id}" ${values.model_id === m.id ? 'selected' : ''}>${m.label}</option>`)
     .join('');

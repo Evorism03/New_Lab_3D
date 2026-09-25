@@ -111,9 +111,13 @@ const deliveryInput = document.querySelector('[name="delivery_price"]');
 let catalog = { models: [], colors: [], connectors: [], products: [] };
 
 function addItemRow(values = {}) {
-  const productOptions = catalog.products
+  let productOptions = catalog.products
     .map((p) => `<option value="${p.label}" ${values.product_name === p.label ? 'selected' : ''}>${p.label}</option>`)
     .join('');
+  if (values.product_name && !catalog.products.some((p) => p.label === values.product_name)) {
+    productOptions = `<option value="${values.product_name}" selected>${values.product_name}</option>` + productOptions;
+  }
+  if (!productOptions) productOptions = '<option value="">— добавьте товары в Настройках → Каталог —</option>';
   const modelOptions = catalog.models
     .map((m) => `<option value="${m.id}" ${values.model_id === m.id ? 'selected' : ''}>${m.label}</option>`)
     .join('');

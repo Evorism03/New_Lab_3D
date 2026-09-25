@@ -164,11 +164,6 @@ export const CONNECTORS = [
   { letter: 'M', label: 'Mini Tamiya', plugLabel: 'Mini Tamiya', swatch: '#a78bfa' },
 ];
 
-// Каталог товаров для выпадающего списка "Товар" — меняется редко, правится здесь.
-export const PRODUCTS = [
-  { id: 'auto-loader', label: 'Автоматический лоадер' },
-];
-
 // Каталог транспортных компаний — тоже со своей меткой-кружком для быстрого сканирования глазами.
 export const DELIVERY_SERVICES = [
   { id: 'sdek', label: 'СДЭК', swatch: '#22c55e' },

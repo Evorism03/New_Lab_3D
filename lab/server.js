@@ -8,7 +8,6 @@ import {
   MODELS,
   COLORS,
   CONNECTORS,
-  PRODUCTS,
   DELIVERY_SERVICES,
   listOrders,
   getOrder,
@@ -308,11 +307,9 @@ function cleanProductTemplates(list) {
     .filter((t) => t.name);
 }
 
-// Список «Товар» в форме: сначала каталог из Настроек, затем встроенные названия.
+// Список «Товар» в форме заказа — только каталог из Настроек → Каталог.
 function catalogProducts() {
-  const templates = readProductTemplates().map((t) => ({ label: t.name, model_id: t.model_id, price: t.price, weight_g: t.weight_g }));
-  const rest = PRODUCTS.filter((p) => !templates.some((t) => t.label === p.label));
-  return [...templates, ...rest];
+  return readProductTemplates().map((t) => ({ label: t.name, model_id: t.model_id, price: t.price, weight_g: t.weight_g }));
 }
 
 // Ozon отдаёт сумму объектом { amount: "123.00", currency_code: "RUB" } (иногда — числом/строкой),

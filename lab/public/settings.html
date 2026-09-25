@@ -474,7 +474,7 @@ function addProductRow(t = {}) {
   const modelOptions = ['<option value="">—</option>', ...catalogModels.map((m) => `<option value="${m.id}">${escapeText(m.label)}</option>`)].join('');
   const row = el(`
     <tr>
-      <td><input data-k="name" placeholder="Например: Автоматический лоадер"></td>
+      <td><input data-k="name" placeholder="Например: Электрический автолоадер"></td>
       <td><select data-k="model_id">${modelOptions}</select></td>
       <td><input data-k="price" type="number" min="0" step="0.01"></td>
       <td><input data-k="weight_g" type="number" min="0" step="1"></td>
