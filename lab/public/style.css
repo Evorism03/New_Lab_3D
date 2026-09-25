@@ -755,3 +755,58 @@ input.invalid, input.invalid:focus { border-color: var(--danger) !important; box
 /* Каталог товаров в Настройках */
 #product-table tbody tr { grid-template-columns: 2fr repeat(3, minmax(0, 1fr)); }
 #product-table tbody td { order: 0; grid-column: auto; }
+
+/* ---- Пошаговая форма нового заказа ---- */
+.wizard-steps { display: flex; gap: 6px; margin: 4px 0 18px; flex-wrap: wrap; }
+.wizard-steps button {
+  flex: 1;
+  min-width: 120px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--panel-2);
+  color: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 8px 12px;
+  font-weight: 600;
+  position: relative;
+}
+.wizard-steps button span {
+  width: 22px; height: 22px; border-radius: 50%;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: var(--bg); font-size: 12px;
+}
+.wizard-steps button.done { color: var(--text); }
+.wizard-steps button.done span { background: var(--accent-2); color: #0b1a12; }
+.wizard-steps button.current { border-color: var(--accent); color: var(--text); background: rgba(91, 140, 255, 0.12); }
+.wizard-steps button.current span { background: var(--accent); color: #fff; }
+.wizard-steps button:disabled { opacity: 0.5; cursor: default; }
+
+.wizard-step { display: none; min-height: 180px; }
+.wizard-step.active { display: block; }
+.wizard-step.slide-next { animation: wizard-in-right 0.28s ease; }
+.wizard-step.slide-prev { animation: wizard-in-left 0.28s ease; }
+@keyframes wizard-in-right { from { opacity: 0; transform: translateX(48px); } to { opacity: 1; transform: none; } }
+@keyframes wizard-in-left { from { opacity: 0; transform: translateX(-48px); } to { opacity: 1; transform: none; } }
+
+.wizard-nav {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 20px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+.wizard-total { margin-left: auto; color: var(--muted); }
+.wizard-total strong { color: var(--accent-2); font-size: 18px; margin-left: 4px; }
+#wizard-next, #wizard-submit { min-width: 150px; }
+
+.wizard-summary { display: grid; gap: 10px; }
+.ws-block { background: var(--panel-2); border: 1px solid var(--border); border-radius: 12px; padding: 12px 16px; display: grid; gap: 4px; }
+.ws-head { display: flex; justify-content: space-between; font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+.ws-item { display: flex; justify-content: space-between; gap: 12px; align-items: baseline; flex-wrap: wrap; }
+.ws-item .serial { margin-left: 6px; font-size: 12px; padding: 1px 6px; }
+.ws-total { display: flex; justify-content: space-between; align-items: baseline; padding: 4px 4px 0; color: var(--muted); }
+.ws-total strong { font-size: 22px; color: var(--accent-2); }
+.link-btn { background: none; border: none; color: var(--accent); padding: 0; font-size: 12px; font-weight: 600; text-transform: none; letter-spacing: 0; cursor: pointer; }

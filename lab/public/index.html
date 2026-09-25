@@ -28,75 +28,89 @@
 <main>
   <div class="card">
     <h2>Внести заказ (из ВК, после оплаты)</h2>
-    <form id="order-form">
-      <div class="grid-3 grid-order">
-        <div class="field">
-          <label>Номер заказа</label>
-          <input name="number" maxlength="30" placeholder="авто">
+    <div class="wizard-steps" id="wizard-steps">
+      <button type="button" data-go="0"><span>1</span>Клиент</button>
+      <button type="button" data-go="1"><span>2</span>Доставка</button>
+      <button type="button" data-go="2"><span>3</span>Товары</button>
+      <button type="button" data-go="3"><span>4</span>Проверка</button>
+    </div>
+    <form id="order-form" novalidate>
+      <section class="wizard-step active" data-step="0">
+        <div class="grid-3">
+          <div class="field">
+            <label>ФИО получателя</label>
+            <input name="full_name" required placeholder="Иванов Иван Иванович" autocomplete="off">
+          </div>
+          <div class="field">
+            <label>Номер телефона</label>
+            <input name="phone" required placeholder="+7 900 000-00-00" autocomplete="off">
+          </div>
+          <div class="field">
+            <label>Номер заказа <span class="muted" style="font-weight:normal">— необязательно</span></label>
+            <input name="number" maxlength="30" placeholder="авто">
+          </div>
         </div>
-        <div class="field">
-          <label>Транспортная компания</label>
-          <select name="delivery_service" id="delivery-service"></select>
+      </section>
+
+      <section class="wizard-step" data-step="1">
+        <div class="grid-3">
+          <div class="field">
+            <label>Транспортная компания</label>
+            <select name="delivery_service" id="delivery-service"></select>
+          </div>
+          <div class="field">
+            <label>Сумма доставки, ₽</label>
+            <input name="delivery_price" type="number" step="0.01" min="0" value="0">
+          </div>
         </div>
-        <div class="field">
-          <label>ФИО получателя</label>
-          <input name="full_name" required placeholder="Иванов Иван Иванович">
+        <div class="field" style="margin-bottom:8px">
+          <label>Адрес ПВЗ <span class="muted" style="font-weight:normal">— вставьте целиком из ВК, части заполнятся сами</span></label>
+          <input name="pvz_address" required placeholder="г. Москва, ул. Примерная, д. 1" autocomplete="off">
         </div>
-        <div class="field">
-          <label>Номер телефона</label>
-          <input name="phone" required placeholder="+7 900 000-00-00">
+        <div class="address-parts" id="address-parts">
+          <div class="field"><label>Город</label><input data-part="city" placeholder="г. Москва"></div>
+          <div class="field"><label>Улица</label><input data-part="street" placeholder="ул. Ленина"></div>
+          <div class="field"><label>Дом</label><input data-part="house" placeholder="5"></div>
+          <div class="field"><label>Дополнительно</label><input data-part="extra" placeholder="ТЦ, ПВЗ №…"></div>
         </div>
-      </div>
+      </section>
 
-      <div class="field" style="margin-bottom:8px">
-        <label>Адрес ПВЗ <span class="muted" style="font-weight:normal">— вставьте целиком из ВК, части заполнятся сами</span></label>
-        <input name="pvz_address" required placeholder="г. Москва, ул. Примерная, д. 1">
-      </div>
-      <div class="address-parts" id="address-parts">
-        <div class="field"><label>Город</label><input data-part="city" placeholder="г. Москва"></div>
-        <div class="field"><label>Улица</label><input data-part="street" placeholder="ул. Ленина"></div>
-        <div class="field"><label>Дом</label><input data-part="house" placeholder="5"></div>
-        <div class="field"><label>Дополнительно</label><input data-part="extra" placeholder="ТЦ, ПВЗ №…"></div>
-      </div>
-      <div style="margin-bottom:12px"></div>
+      <section class="wizard-step" data-step="2">
+        <table class="items-table" id="items-table">
+          <thead>
+            <tr>
+              <th>Товар</th>
+              <th>Модель</th>
+              <th>Цвет</th>
+              <th>Разъём</th>
+              <th style="width:70px">Кол-во</th>
+              <th style="width:110px">Цена, ₽</th>
+              <th style="width:190px">Серийный номер</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="items-body"></tbody>
+        </table>
+        <div class="quick-add">
+          <button type="button" class="secondary small" id="add-item">+ Добавить товар</button>
+          <div id="quick-add" class="quick-add-list"></div>
+        </div>
+      </section>
 
-      <div class="field">
-        <label>Сумма доставки, ₽</label>
-        <input name="delivery_price" type="number" step="0.01" min="0" value="0" style="max-width:200px">
-      </div>
+      <section class="wizard-step" data-step="3">
+        <div id="wizard-summary" class="wizard-summary"></div>
+        <div class="field" style="margin-top:16px">
+          <label>Заметка (необязательно)</label>
+          <textarea name="notes" rows="2" placeholder="Например: ссылка на переписку ВК, особые пожелания"></textarea>
+        </div>
+      </section>
 
-      <h3>Товары и серийные номера</h3>
-      <table class="items-table" id="items-table">
-        <thead>
-          <tr>
-            <th>Товар</th>
-            <th>Модель</th>
-            <th>Цвет</th>
-            <th>Разъём</th>
-            <th style="width:70px">Кол-во</th>
-            <th style="width:110px">Цена, ₽</th>
-            <th style="width:190px">Серийный номер</th>
-            <th></th>
-          </tr>
-        </thead>
-        <tbody id="items-body"></tbody>
-      </table>
-      <div class="quick-add">
-        <button type="button" class="secondary small" id="add-item">+ Добавить товар</button>
-        <div id="quick-add" class="quick-add-list"></div>
+      <div class="wizard-nav">
+        <button type="button" class="secondary" id="wizard-back">← Назад</button>
+        <div class="wizard-total">Итого: <strong id="preview-total">0,00 ₽</strong></div>
+        <button type="button" id="wizard-next">Далее →</button>
+        <button type="submit" id="wizard-submit" hidden>✓ Сохранить заказ</button>
       </div>
-
-      <div class="field" style="margin-top:16px">
-        <label>Заметка (необязательно)</label>
-        <textarea name="notes" rows="2" placeholder="Например: ссылка на переписку ВК, особые пожелания"></textarea>
-      </div>
-
-      <div class="field" style="max-width:260px">
-        <label>Итого товары + доставка</label>
-        <div id="preview-total" class="pill" style="font-size:16px;padding:8px 14px">0,00 ₽</div>
-      </div>
-
-      <button type="submit">Сохранить заказ</button>
     </form>
   </div>
 </main>
@@ -218,8 +232,141 @@ addItemBtn.addEventListener('click', () => addItemRow());
 
 LabAddress.bindAddressFields(document.querySelector('[name="pvz_address"]'), document.getElementById('address-parts'));
 
+// ---- Пошаговое заполнение: Клиент → Доставка → Товары → Проверка ----
+const steps = [...document.querySelectorAll('.wizard-step')];
+const stepButtons = [...document.querySelectorAll('#wizard-steps [data-go]')];
+let step = 0;
+let reached = 0;
+
+function stepValid(n) {
+  const section = steps[n];
+  for (const input of section.querySelectorAll('[required]')) {
+    if (!input.value.trim()) {
+      input.focus();
+      input.classList.add('invalid');
+      toast(`Заполните поле «${input.closest('.field')?.querySelector('label')?.childNodes[0]?.textContent.trim() || 'обязательное'}»`, 'error');
+      return false;
+    }
+    input.classList.remove('invalid');
+  }
+  if (n === 2) {
+    const items = readItems().filter((it) => it.product_name);
+    if (!items.length) {
+      toast('Добавьте хотя бы один товар', 'error');
+      return false;
+    }
+    const bad = document.querySelector('#items-table input.invalid');
+    if (bad) {
+      bad.focus();
+      toast('Серийный номер уже занят — исправьте его', 'error');
+      return false;
+    }
+  }
+  return true;
+}
+
+function showStep(n) {
+  const dir = n > step ? 'next' : 'prev';
+  steps[step].classList.remove('active', 'slide-next', 'slide-prev');
+  step = n;
+  reached = Math.max(reached, n);
+  const current = steps[step];
+  current.classList.remove('slide-next', 'slide-prev');
+  void current.offsetWidth; // перезапуск анимации
+  current.classList.add('active', `slide-${dir}`);
+  stepButtons.forEach((b, i) => {
+    b.classList.toggle('current', i === step);
+    b.classList.toggle('done', i < reached || (i < step));
+    b.disabled = i > reached;
+  });
+  document.getElementById('wizard-back').style.visibility = step === 0 ? 'hidden' : 'visible';
+  document.getElementById('wizard-next').hidden = step === steps.length - 1;
+  document.getElementById('wizard-submit').hidden = step !== steps.length - 1;
+  if (step === steps.length - 1) renderSummary();
+  const first = current.querySelector('input:not([type=hidden]):not([readonly]), select, textarea');
+  if (first && step !== 2) setTimeout(() => first.focus(), 50);
+}
+
+function goNext() {
+  if (!stepValid(step)) return;
+  if (step < steps.length - 1) showStep(step + 1);
+}
+function goBack() {
+  if (step > 0) showStep(step - 1);
+}
+
+document.getElementById('wizard-next').addEventListener('click', goNext);
+document.getElementById('wizard-back').addEventListener('click', goBack);
+stepButtons.forEach((b, i) => b.addEventListener('click', () => {
+  if (i === step || i > reached) return;
+  // вперёд — только через проверку текущего шага
+  if (i > step && !stepValid(step)) return;
+  showStep(i);
+}));
+
+// Красная подсветка обязательного поля снимается, как только в него начали писать.
+document.getElementById('order-form').addEventListener('input', (e) => {
+  if (e.target.name !== 'serial_number' && e.target.value.trim()) e.target.classList.remove('invalid');
+});
+
+// Enter — «Далее» (в заметке Enter — перенос строки).
+document.getElementById('order-form').addEventListener('keydown', (e) => {
+  if (e.key !== 'Enter' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'BUTTON') return;
+  e.preventDefault();
+  if (step < steps.length - 1) goNext();
+  else document.getElementById('wizard-submit').click();
+});
+
+// Свайп на телефоне/планшете: влево — дальше, вправо — назад.
+let touchX = null;
+document.getElementById('order-form').addEventListener('touchstart', (e) => { touchX = e.touches[0].clientX; }, { passive: true });
+document.getElementById('order-form').addEventListener('touchend', (e) => {
+  if (touchX == null) return;
+  const dx = e.changedTouches[0].clientX - touchX;
+  touchX = null;
+  if (Math.abs(dx) < 70) return;
+  if (dx < 0) goNext(); else goBack();
+});
+
+function renderSummary() {
+  const form = document.getElementById('order-form');
+  const items = readItems().filter((it) => it.product_name);
+  const label = (list, key, value) => (catalog[list] || []).find((x) => x[key] === value);
+  const goods = items.reduce((sum, it) => sum + it.price * it.quantity, 0);
+  const delivery = Number(form.delivery_price.value) || 0;
+  document.getElementById('wizard-summary').innerHTML = `
+    <div class="ws-block">
+      <div class="ws-head">Клиент <button type="button" class="link-btn" data-edit="0">изменить</button></div>
+      <div><strong>${escapeHtml(form.full_name.value)}</strong> · ${escapeHtml(form.phone.value)}</div>
+      ${form.number.value.trim() ? `<div class="muted">Заказ #${escapeHtml(form.number.value.trim())}</div>` : ''}
+    </div>
+    <div class="ws-block">
+      <div class="ws-head">Доставка <button type="button" class="link-btn" data-edit="1">изменить</button></div>
+      <div>${deliveryDot(form.delivery_service.value, catalog.delivery_services)}<strong>${escapeHtml(form.delivery_service.value)}</strong> · ${money(delivery)}</div>
+      <div class="muted">${escapeHtml(form.pvz_address.value)}</div>
+    </div>
+    <div class="ws-block">
+      <div class="ws-head">Товары <button type="button" class="link-btn" data-edit="2">изменить</button></div>
+      ${items.map((it) => `
+        <div class="ws-item">
+          <span>${escapeHtml(it.product_name)}
+            <span class="muted">${[label('colors', 'letter', it.color)?.shortLabel, label('connectors', 'letter', it.connector)?.label].filter(Boolean).map(escapeHtml).join(' / ')}</span>
+            ${it.serial_number ? `<span class="serial">${escapeHtml(it.serial_number)}</span>` : ''}</span>
+          <span>${it.quantity} × ${money(it.price)}</span>
+        </div>`).join('')}
+    </div>
+    <div class="ws-total"><span>Товары ${money(goods)} + доставка ${money(delivery)}</span><strong>${money(goods + delivery)}</strong></div>
+  `;
+  document.querySelectorAll('#wizard-summary [data-edit]').forEach((b) => b.addEventListener('click', () => showStep(Number(b.dataset.edit))));
+}
+
+showStep(0);
+
 document.getElementById('order-form').addEventListener('submit', async (e) => {
   e.preventDefault();
+  for (let n = 0; n < steps.length - 1; n++) {
+    if (!stepValid(n)) { showStep(n); return; }
+  }
   const form = e.target;
   const data = {
     delivery_service: form.delivery_service.value,
