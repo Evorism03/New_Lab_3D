@@ -604,8 +604,12 @@ async function renderNpd(order) {
   body.innerHTML = `
     ${r?.canceled_at ? `<div style="margin-bottom:10px">Прошлый чек аннулирован (${escapeText(r.cancel_reason || '')}).</div>` : ''}
     <div class="npd-lines">
-      ${preview.lines.map((l) => `
-        <div class="npd-line"><span>${escapeText(l.name)}${l.quantity > 1 ? ` × ${l.quantity}` : ''}</span><span>${money(l.amount * l.quantity)}</span></div>
+      ${preview.lines.map((l, i) => `
+        <div class="npd-line">
+          <span class="npd-num">${i + 1}</span>
+          <input class="npd-name" value="${escapeText(l.name)}" title="Название в чеке — можно поправить">
+          <span class="npd-sum">${money(l.amount * l.quantity)}</span>
+        </div>
       `).join('') || '<div class="muted">В заказе нет позиций с ценой — нечего пробивать.</div>'}
       <div class="npd-line npd-total"><span>Итого в чеке</span><span>${money(preview.total)}</span></div>
     </div>
@@ -613,13 +617,16 @@ async function renderNpd(order) {
       <div class="field" style="margin:0"><label>Дата расчёта</label><input type="date" id="npd-date" value="${todayStr}" max="${todayStr}"></div>
       <button type="button" id="npd-create" ${preview.total > 0 ? '' : 'disabled'}>🧾 Сформировать чек</button>
     </div>
-    <p class="muted" style="margin:8px 0 0;font-size:12px">Позиции берутся из сохранённого заказа — сначала сохраните изменения.</p>`;
+    <p class="muted" style="margin:8px 0 0;font-size:12px">Названия можно поправить прямо здесь. Суммы берутся из сохранённого заказа — сначала сохраните изменения. Шаблон названий — в Настройках → Мой налог.</p>`;
   document.getElementById('npd-create').addEventListener('click', async () => {
     if (!(await confirmDialog(`Сформировать чек в «Мой налог» на ${money(preview.total)}?`, { danger: false, okLabel: 'Сформировать' }))) return;
     try {
       const updated = await api(`/api/orders/${id}/npd/receipt`, {
         method: 'POST',
-        body: JSON.stringify({ date: document.getElementById('npd-date').value }),
+        body: JSON.stringify({
+          date: document.getElementById('npd-date').value,
+          names: [...document.querySelectorAll('#npd-body .npd-name')].map((input) => input.value.trim()),
+        }),
       });
       renderNpd(updated);
       toast('Чек сформирован', 'success');

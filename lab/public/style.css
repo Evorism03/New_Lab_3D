@@ -739,6 +739,9 @@ input.invalid, input.invalid:focus { border-color: var(--danger) !important; box
 @container main (max-width: 700px) { .grid-3.grid-order { grid-template-columns: 1fr 1fr; } }
 
 /* Предпросмотр чека «Мой налог» */
-.npd-lines { background: var(--panel-2); border: 1px solid var(--border); border-radius: 10px; padding: 10px 14px; max-width: 520px; }
-.npd-line { display: flex; justify-content: space-between; gap: 16px; padding: 4px 0; font-size: 14px; }
+.npd-lines { background: var(--panel-2); border: 1px solid var(--border); border-radius: 10px; padding: 10px 14px; max-width: 680px; }
+.npd-line { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 4px 0; font-size: 14px; }
+.npd-num { flex-shrink: 0; width: 24px; height: 24px; border-radius: 50%; background: var(--bg); display: inline-flex; align-items: center; justify-content: center; font-size: 12px; color: var(--muted); }
+.npd-name { flex: 1; min-width: 0; background: var(--bg); border: 1px solid #34405a; }
+.npd-sum { white-space: nowrap; font-weight: 600; }
 .npd-total { border-top: 1px dashed var(--border); margin-top: 6px; padding-top: 8px; font-weight: 700; }

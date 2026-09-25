@@ -215,7 +215,19 @@
           <label><input type="checkbox" id="npd-include-delivery" style="width:auto;display:inline-block;margin-right:6px">Доставка отдельной строкой в чеке</label>
         </div>
       </div>
-      <p class="muted">Чек пробивается на доход от физического лица. Позиции — товары заказа (цена × количество) и доставка, если включено.</p>
+      <div class="grid-2">
+        <div class="field">
+          <label>Строка товара в чеке</label>
+          <input id="npd-item-template" placeholder="{товар} ({цвет}/{разъём}) - {кол-во} шт">
+        </div>
+        <div class="field">
+          <label>Строка доставки в чеке</label>
+          <input id="npd-delivery-template" placeholder="Доставка {служба}">
+        </div>
+      </div>
+      <p class="muted">Подстановки: <code>{товар}</code> <code>{цвет}</code> <code>{разъём}</code> <code>{кол-во}</code> <code>{модель}</code> <code>{серийник}</code>, для доставки — <code>{служба}</code>.
+        Название товара можно вписать своё, например «Электрический автолоадер ({цвет}/{разъём}) - {кол-во} шт».
+        Сумма строки — цена × количество. Чек пробивается на доход от физического лица.</p>
       <button type="button" id="npd-save">Сохранить</button>
     </div>
   </section>
@@ -539,6 +551,8 @@ function renderNpd() {
   document.getElementById('npd-logout').hidden = !c.connected;
   document.getElementById('npd-payment-type').value = c.payment_type || 'ACCOUNT';
   document.getElementById('npd-include-delivery').checked = c.include_delivery !== false;
+  document.getElementById('npd-item-template').value = c.item_template || '';
+  document.getElementById('npd-delivery-template').value = c.delivery_template || '';
   if (c.inn && !document.getElementById('npd-inn').value) document.getElementById('npd-inn').value = c.inn;
 }
 
@@ -599,6 +613,8 @@ document.getElementById('npd-logout').addEventListener('click', async () => {
 document.getElementById('npd-save').addEventListener('click', () => npdDo('/api/npd/settings', {
   payment_type: document.getElementById('npd-payment-type').value,
   include_delivery: document.getElementById('npd-include-delivery').checked,
+  item_template: document.getElementById('npd-item-template').value,
+  delivery_template: document.getElementById('npd-delivery-template').value,
 }, 'Сохранено'));
 
 loadNpd().catch((err) => toast(err.message, 'error'));

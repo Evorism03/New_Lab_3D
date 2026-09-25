@@ -313,13 +313,49 @@ function ozonDeliveryPriceFor(order, deliveryCost) {
 
 // ---- «Мой налог» ----------------------------------------------------------------------------
 
-// Позиции чека: товары заказа (цена × количество) и, если включено, доставка отдельной строкой.
+// Позиции чека по шаблонам из настроек. Как в чеках вручную: одна строка на позицию заказа,
+// «Название (Цвет/Разъём) - N шт» с суммой за всю позицию; доставка — «Доставка СДЭК».
+const NPD_DEFAULT_ITEM_TEMPLATE = '{товар} ({цвет}/{разъём}) - {кол-во} шт';
+const NPD_DEFAULT_DELIVERY_TEMPLATE = 'Доставка {служба}';
+
+function fillTemplate(template, values) {
+  return template
+    .replace(/\{([^}]+)\}/g, (m, key) => (values[key.trim().toLowerCase()] ?? m))
+    .replace(/\(\s*\/\s*\)|\(\s*\)/g, '') // пустые «( / )», если у товара нет цвета/разъёма
+    .replace(/\(\s*\/\s*/g, '(').replace(/\s*\/\s*\)/g, ')')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+}
+
 function npdLinesFor(order) {
+  const itemTemplate = getSetting('npd_item_template') || NPD_DEFAULT_ITEM_TEMPLATE;
+  const deliveryTemplate = getSetting('npd_delivery_template') || NPD_DEFAULT_DELIVERY_TEMPLATE;
   const lines = order.items
     .filter((it) => Number(it.price) > 0 && Number(it.quantity) > 0)
-    .map((it) => ({ name: it.product_name || 'Товар', amount: Number(it.price), quantity: Number(it.quantity) }));
+    .map((it) => {
+      const color = COLORS.find((c) => c.letter === it.color);
+      const connector = CONNECTORS.find((c) => c.letter === it.connector);
+      const qty = Number(it.quantity);
+      return {
+        name: fillTemplate(itemTemplate, {
+          'товар': it.product_name || 'Товар',
+          'цвет': color?.shortLabel || '',
+          'разъём': connector?.shortLabel || connector?.label || '',
+          'разъем': connector?.shortLabel || connector?.label || '',
+          'кол-во': String(qty),
+          'модель': it.model_id ? it.model_id.toUpperCase() : '',
+          'серийник': it.serial_number || '',
+        }),
+        amount: Math.round(Number(it.price) * qty * 100) / 100,
+        quantity: 1,
+      };
+    });
   if (getSetting('npd_include_delivery') !== '0' && Number(order.delivery_price) > 0) {
-    lines.push({ name: 'Доставка', amount: Number(order.delivery_price), quantity: 1 });
+    lines.push({
+      name: fillTemplate(deliveryTemplate, { 'служба': order.delivery_service || '' }) || 'Доставка',
+      amount: Number(order.delivery_price),
+      quantity: 1,
+    });
   }
   return lines;
 }
@@ -956,6 +992,8 @@ const server = http.createServer(async (req, res) => {
         name: getSetting('npd_display_name'),
         payment_type: getSetting('npd_payment_type') || 'ACCOUNT',
         include_delivery: getSetting('npd_include_delivery') !== '0',
+        item_template: getSetting('npd_item_template') || NPD_DEFAULT_ITEM_TEMPLATE,
+        delivery_template: getSetting('npd_delivery_template') || NPD_DEFAULT_DELIVERY_TEMPLATE,
       });
     }
 
@@ -963,6 +1001,8 @@ const server = http.createServer(async (req, res) => {
       const data = await readBody(req);
       if (data.payment_type != null) setSetting('npd_payment_type', data.payment_type === 'CASH' ? 'CASH' : 'ACCOUNT');
       if (data.include_delivery != null) setSetting('npd_include_delivery', data.include_delivery ? '1' : '0');
+      if (data.item_template != null) setSetting('npd_item_template', String(data.item_template).trim().slice(0, 200));
+      if (data.delivery_template != null) setSetting('npd_delivery_template', String(data.delivery_template).trim().slice(0, 200));
       return sendJson(res, 200, { ok: true });
     }
 
@@ -1012,8 +1052,16 @@ const server = http.createServer(async (req, res) => {
           operationTime = new Date(y, m - 1, d, operationTime.getHours(), operationTime.getMinutes(), operationTime.getSeconds());
           if (operationTime > new Date()) return sendJson(res, 400, { error: 'Дата расчёта не может быть в будущем' });
         }
+        // Названия строк можно поправить в предпросмотре; суммы — только из заказа.
+        const services = npdLinesFor(order);
+        if (Array.isArray(data.names) && data.names.length === services.length) {
+          services.forEach((line, i) => {
+            const name = String(data.names[i] || '').trim();
+            if (name) line.name = name.slice(0, 256);
+          });
+        }
         const receipt = await npd.createIncome({
-          services: npdLinesFor(order),
+          services,
           operationTime,
           paymentType: getSetting('npd_payment_type') || 'ACCOUNT',
         });
