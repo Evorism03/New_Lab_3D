@@ -29,6 +29,7 @@
   <div class="settings-tabs" role="tablist">
     <button type="button" data-tab="ozon" class="active">🚚 Ozon Доставка</button>
     <button type="button" data-tab="cdek">🟢 СДЭК</button>
+    <button type="button" data-tab="npd">🧾 Мой налог</button>
     <button type="button" data-tab="users" hidden>👤 Пользователи</button>
   </div>
 
@@ -171,6 +172,54 @@
     </div>
   </section>
 
+  <section data-panel="npd" hidden>
+    <div class="card">
+      <h2>Вход в «Мой налог»</h2>
+      <div id="npd-status" class="muted" style="margin-bottom:10px"></div>
+      <div id="npd-login">
+        <p class="muted">Нужен один раз: пароль не сохраняется, хранится только сессия. Вход — как на сайте lknpd.nalog.ru.</p>
+        <div class="settings-tabs" style="margin-bottom:12px">
+          <button type="button" class="active" data-npd-mode="password">По ИНН и паролю</button>
+          <button type="button" data-npd-mode="sms">По СМС</button>
+        </div>
+        <div data-npd-form="password">
+          <div class="grid-3">
+            <div class="field"><label>ИНН</label><input id="npd-inn" inputmode="numeric" maxlength="12"></div>
+            <div class="field"><label>Пароль от личного кабинета налогоплательщика</label><input id="npd-password" type="password"></div>
+          </div>
+          <button type="button" id="npd-login-password">Войти</button>
+        </div>
+        <div data-npd-form="sms" hidden>
+          <div class="grid-3">
+            <div class="field"><label>Телефон</label><input id="npd-phone" placeholder="+7 900 000-00-00"></div>
+            <div class="field" id="npd-code-field" hidden><label>Код из СМС</label><input id="npd-code" inputmode="numeric" maxlength="6"></div>
+          </div>
+          <button type="button" id="npd-sms-start">Получить код</button>
+          <button type="button" id="npd-sms-verify" hidden>Войти</button>
+        </div>
+      </div>
+      <button type="button" class="secondary" id="npd-logout" hidden>Выйти из «Мой налог»</button>
+    </div>
+
+    <div class="card" style="margin-top:16px">
+      <h2>Параметры чеков</h2>
+      <div class="grid-3">
+        <div class="field">
+          <label>Способ оплаты в чеке</label>
+          <select id="npd-payment-type">
+            <option value="ACCOUNT">Безналичный (перевод на карту/счёт)</option>
+            <option value="CASH">Наличные</option>
+          </select>
+        </div>
+        <div class="field" style="align-self:end">
+          <label><input type="checkbox" id="npd-include-delivery" style="width:auto;display:inline-block;margin-right:6px">Доставка отдельной строкой в чеке</label>
+        </div>
+      </div>
+      <p class="muted">Чек пробивается на доход от физического лица. Позиции — товары заказа (цена × количество) и доставка, если включено.</p>
+      <button type="button" id="npd-save">Сохранить</button>
+    </div>
+  </section>
+
   <section data-panel="users" hidden>
   <div class="toolbar">
     <h2 style="margin:0">Сотрудники</h2>
@@ -195,7 +244,7 @@
 </div>
 <script src="/app.js"></script>
 <script>
-// Вкладки настроек; активная запоминается в адресе (#ozon, #cdek, #users).
+// Вкладки настроек; активная запоминается в адресе (#ozon, #cdek, #npd, #users).
 function showTab(name) {
   const btn = document.querySelector(`.settings-tabs [data-tab="${name}"]`);
   if (!btn || btn.hidden) name = 'ozon';
@@ -476,6 +525,83 @@ document.getElementById('cdek-sender-find').addEventListener('click', async () =
 });
 
 loadCdek().catch((err) => toast(err.message, 'error'));
+
+// ---- Мой налог ----
+let npdSettings = {};
+let npdChallenge = '';
+
+function renderNpd() {
+  const c = npdSettings;
+  document.getElementById('npd-status').innerHTML = c.connected
+    ? `Подключено · ${escapeText(c.name || '')} · ИНН <code>${escapeText(c.inn)}</code>`
+    : 'Не подключено.';
+  document.getElementById('npd-login').hidden = c.connected;
+  document.getElementById('npd-logout').hidden = !c.connected;
+  document.getElementById('npd-payment-type').value = c.payment_type || 'ACCOUNT';
+  document.getElementById('npd-include-delivery').checked = c.include_delivery !== false;
+  if (c.inn && !document.getElementById('npd-inn').value) document.getElementById('npd-inn').value = c.inn;
+}
+
+async function loadNpd() {
+  npdSettings = await api('/api/npd/settings');
+  renderNpd();
+}
+
+document.querySelectorAll('[data-npd-mode]').forEach((btn) => btn.addEventListener('click', () => {
+  document.querySelectorAll('[data-npd-mode]').forEach((b) => b.classList.toggle('active', b === btn));
+  document.querySelectorAll('[data-npd-form]').forEach((f) => { f.hidden = f.dataset.npdForm !== btn.dataset.npdMode; });
+}));
+
+async function npdDo(path, body, message) {
+  try {
+    const result = await api(path, { method: 'POST', body: JSON.stringify(body || {}) });
+    if (message) toast(message, 'success');
+    await loadNpd();
+    return result;
+  } catch (err) {
+    toast(err.message, 'error');
+    return null;
+  }
+}
+
+document.getElementById('npd-login-password').addEventListener('click', async () => {
+  const inn = document.getElementById('npd-inn').value.trim();
+  const password = document.getElementById('npd-password').value;
+  if (!/^\d{12}$/.test(inn)) { toast('ИНН физлица — 12 цифр', 'error'); return; }
+  const ok = await npdDo('/api/npd/login', { inn, password }, 'Вход выполнен');
+  if (ok) document.getElementById('npd-password').value = '';
+});
+
+document.getElementById('npd-sms-start').addEventListener('click', async () => {
+  const phone = document.getElementById('npd-phone').value.trim();
+  try {
+    const r = await api('/api/npd/sms/start', { method: 'POST', body: JSON.stringify({ phone }) });
+    npdChallenge = r.challengeToken;
+    document.getElementById('npd-code-field').hidden = false;
+    document.getElementById('npd-sms-verify').hidden = false;
+    toast('Код отправлен в СМС', 'success');
+  } catch (err) {
+    toast(err.message, 'error');
+  }
+});
+
+document.getElementById('npd-sms-verify').addEventListener('click', () => npdDo('/api/npd/sms/verify', {
+  phone: document.getElementById('npd-phone').value.trim(),
+  code: document.getElementById('npd-code').value.trim(),
+  challenge_token: npdChallenge,
+}, 'Вход выполнен'));
+
+document.getElementById('npd-logout').addEventListener('click', async () => {
+  if (!(await confirmDialog('Выйти из «Мой налог»? Для новых чеков нужно будет войти снова.'))) return;
+  npdDo('/api/npd/logout', {}, 'Вы вышли');
+});
+
+document.getElementById('npd-save').addEventListener('click', () => npdDo('/api/npd/settings', {
+  payment_type: document.getElementById('npd-payment-type').value,
+  include_delivery: document.getElementById('npd-include-delivery').checked,
+}, 'Сохранено'));
+
+loadNpd().catch((err) => toast(err.message, 'error'));
 
 // ---- Пользователи ----
 let me = null;

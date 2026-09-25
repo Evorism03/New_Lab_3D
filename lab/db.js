@@ -92,6 +92,8 @@ for (const stmt of [
   'ALTER TABLE orders ADD COLUMN cdek_pvz_code TEXT',
   // Номер заказа для людей (редактируемый). Пусто — показывается внутренний ID.
   'ALTER TABLE orders ADD COLUMN number TEXT',
+  // Чек «Мой налог» по заказу: JSON { uuid, url, total, lines, created_at, canceled_at, cancel_reason }.
+  'ALTER TABLE orders ADD COLUMN npd_receipt TEXT',
   'ALTER TABLE orders ADD COLUMN cdek_shipment TEXT',
   // Заказы 3D-печати из New_Lab_3d (приходят через /api/external/orders).
   "ALTER TABLE orders ADD COLUMN source TEXT DEFAULT 'manual'",
@@ -268,6 +270,7 @@ function withTotals(order) {
     display_number: order.number || String(order.id),
     ozon_shipment: parseOzonShipment(order.ozon_shipment),
     cdek_shipment: parseOzonShipment(order.cdek_shipment),
+    npd_receipt: parseOzonShipment(order.npd_receipt),
   };
 }
 
@@ -582,6 +585,15 @@ export function patchOrderCdekShipment(id, patch) {
   const current = parseOzonShipment(existing.cdek_shipment) || {};
   db.prepare('UPDATE orders SET cdek_shipment = ?, updated_at = ? WHERE id = ?').run(
     JSON.stringify({ ...current, ...patch }),
+    new Date().toISOString(),
+    id
+  );
+  return getOrder(id);
+}
+
+export function setOrderNpdReceipt(id, receipt) {
+  db.prepare('UPDATE orders SET npd_receipt = ?, updated_at = ? WHERE id = ?').run(
+    receipt ? JSON.stringify(receipt) : null,
     new Date().toISOString(),
     id
   );

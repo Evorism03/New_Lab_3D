@@ -182,6 +182,11 @@
     </div>
   </div>
 
+  <div class="card" style="margin-top:16px" id="npd-card">
+    <h2>🧾 Чек «Мой налог»</h2>
+    <div id="npd-body" class="muted">Загрузка…</div>
+  </div>
+
   <div class="card" style="margin-top:16px">
     <h2>Чеки</h2>
     <div id="receipts-list"></div>
@@ -540,6 +545,90 @@ async function saveOzonPoint(pointId) {
   });
 }
 
+// ---- Чек «Мой налог» ----
+async function renderNpd(order) {
+  const body = document.getElementById('npd-body');
+  const r = order.npd_receipt;
+  if (r?.uuid && !r.canceled_at) {
+    body.innerHTML = `
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+        <span class="pill delivered">Чек сформирован</span>
+        <strong>${money(r.total)}</strong>
+        <span class="muted">дата расчёта ${escapeText(new Date(r.operation_date || r.created_at).toLocaleDateString('ru-RU'))}</span>
+      </div>
+      <div class="toolbar" style="margin:12px 0 0">
+        <input id="npd-link" readonly value="${escapeText(r.url)}" style="flex:1;min-width:240px">
+        <button type="button" class="secondary" id="npd-copy">📋 Скопировать ссылку</button>
+        <a href="${escapeText(r.url)}" target="_blank"><button type="button" class="secondary">Открыть чек</button></a>
+      </div>
+      <div class="toolbar" style="margin:12px 0 0">
+        <select id="npd-cancel-reason" style="max-width:260px">
+          <option value="mistake">Чек сформирован ошибочно</option>
+          <option value="refund">Возврат средств</option>
+        </select>
+        <button type="button" class="danger" id="npd-cancel">Аннулировать чек</button>
+      </div>`;
+    document.getElementById('npd-copy').addEventListener('click', async () => {
+      const text = `Чек по заказу #${order.display_number}: ${r.url}`;
+      try {
+        await navigator.clipboard.writeText(text);
+      } catch {
+        const input = document.getElementById('npd-link');
+        input.select();
+        document.execCommand('copy');
+      }
+      toast('Ссылка на чек скопирована — можно отправить покупателю в ВК', 'success');
+    });
+    document.getElementById('npd-cancel').addEventListener('click', async () => {
+      const reasonSel = document.getElementById('npd-cancel-reason');
+      if (!(await confirmDialog(`Аннулировать чек? Причина: «${reasonSel.selectedOptions[0].text}».`))) return;
+      try {
+        renderNpd(await api(`/api/orders/${id}/npd/cancel`, { method: 'POST', body: JSON.stringify({ reason: reasonSel.value }) }));
+        toast('Чек аннулирован', 'success');
+      } catch (err) {
+        toast(err.message, 'error');
+      }
+    });
+    return;
+  }
+
+  let preview;
+  try {
+    preview = await api(`/api/orders/${id}/npd/preview`);
+  } catch (err) {
+    body.innerHTML = `<span style="color:var(--danger)">${escapeText(err.message)}</span>`;
+    return;
+  }
+  const today = new Date();
+  const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+  body.innerHTML = `
+    ${r?.canceled_at ? `<div style="margin-bottom:10px">Прошлый чек аннулирован (${escapeText(r.cancel_reason || '')}).</div>` : ''}
+    <div class="npd-lines">
+      ${preview.lines.map((l) => `
+        <div class="npd-line"><span>${escapeText(l.name)}${l.quantity > 1 ? ` × ${l.quantity}` : ''}</span><span>${money(l.amount * l.quantity)}</span></div>
+      `).join('') || '<div class="muted">В заказе нет позиций с ценой — нечего пробивать.</div>'}
+      <div class="npd-line npd-total"><span>Итого в чеке</span><span>${money(preview.total)}</span></div>
+    </div>
+    <div class="toolbar" style="margin:12px 0 0;align-items:end">
+      <div class="field" style="margin:0"><label>Дата расчёта</label><input type="date" id="npd-date" value="${todayStr}" max="${todayStr}"></div>
+      <button type="button" id="npd-create" ${preview.total > 0 ? '' : 'disabled'}>🧾 Сформировать чек</button>
+    </div>
+    <p class="muted" style="margin:8px 0 0;font-size:12px">Позиции берутся из сохранённого заказа — сначала сохраните изменения.</p>`;
+  document.getElementById('npd-create').addEventListener('click', async () => {
+    if (!(await confirmDialog(`Сформировать чек в «Мой налог» на ${money(preview.total)}?`, { danger: false, okLabel: 'Сформировать' }))) return;
+    try {
+      const updated = await api(`/api/orders/${id}/npd/receipt`, {
+        method: 'POST',
+        body: JSON.stringify({ date: document.getElementById('npd-date').value }),
+      });
+      renderNpd(updated);
+      toast('Чек сформирован', 'success');
+    } catch (err) {
+      toast(err.message, 'error');
+    }
+  });
+}
+
 // ---- СДЭК ----
 function renderCdek(order) {
   const sh = order.cdek_shipment || {};
@@ -867,6 +956,7 @@ async function load() {
   loadBoxTemplates().catch((err) => toast(err.message, 'error'));
   renderCdek(order);
   syncCarrierCards();
+  renderNpd(order);
 
   sel.addEventListener('change', async () => {
     await api(`/api/orders/${id}`, { method: 'PATCH', body: JSON.stringify({ status: sel.value }) });
@@ -889,6 +979,7 @@ document.getElementById('order-form').addEventListener('submit', async (e) => {
   try {
     const order = await api(`/api/orders/${id}`, { method: 'PATCH', body: JSON.stringify(data) });
     document.getElementById('title').textContent = `Заказ #${order.display_number}`;
+    renderNpd(order);
     const pointId = document.getElementById('ozon-delivery-point').value.trim();
     if (pointId !== (order.ozon_delivery_point_id || '')) await saveOzonPoint(pointId);
     const cdekCode = document.getElementById('cdek-point-code').value.trim();

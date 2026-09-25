@@ -37,6 +37,7 @@ import {
   patchOrderOzonShipment,
   patchOrderCdekShipment,
   setOrderCdekPoint,
+  setOrderNpdReceipt,
   listUsers,
   findUserById,
   createOrUpdateUser,
@@ -50,6 +51,7 @@ import {
 import { buildLabelPdf } from './lib/label.js';
 import * as ozon from './lib/ozon.js';
 import * as cdek from './lib/cdek.js';
+import * as npd from './lib/npd.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const publicDir = path.join(__dirname, 'public');
@@ -307,6 +309,19 @@ function ozonDeliveryPriceFor(order, deliveryCost) {
     percent,
     total: Math.round((deliveryCost + insurance) * 100) / 100,
   };
+}
+
+// ---- «Мой налог» ----------------------------------------------------------------------------
+
+// Позиции чека: товары заказа (цена × количество) и, если включено, доставка отдельной строкой.
+function npdLinesFor(order) {
+  const lines = order.items
+    .filter((it) => Number(it.price) > 0 && Number(it.quantity) > 0)
+    .map((it) => ({ name: it.product_name || 'Товар', amount: Number(it.price), quantity: Number(it.quantity) }));
+  if (getSetting('npd_include_delivery') !== '0' && Number(order.delivery_price) > 0) {
+    lines.push({ name: 'Доставка', amount: Number(order.delivery_price), quantity: 1 });
+  }
+  return lines;
 }
 
 // ---- СДЭК ----------------------------------------------------------------------------------
@@ -933,6 +948,96 @@ const server = http.createServer(async (req, res) => {
       }
     }
 
+    // ---- «Мой налог» ----
+    if (pathname === '/api/npd/settings' && req.method === 'GET') {
+      return sendJson(res, 200, {
+        connected: npd.isConnected(),
+        inn: getSetting('npd_inn'),
+        name: getSetting('npd_display_name'),
+        payment_type: getSetting('npd_payment_type') || 'ACCOUNT',
+        include_delivery: getSetting('npd_include_delivery') !== '0',
+      });
+    }
+
+    if (pathname === '/api/npd/settings' && req.method === 'POST') {
+      const data = await readBody(req);
+      if (data.payment_type != null) setSetting('npd_payment_type', data.payment_type === 'CASH' ? 'CASH' : 'ACCOUNT');
+      if (data.include_delivery != null) setSetting('npd_include_delivery', data.include_delivery ? '1' : '0');
+      return sendJson(res, 200, { ok: true });
+    }
+
+    if (pathname === '/api/npd/login' && req.method === 'POST') {
+      const data = await readBody(req);
+      if (!data.inn || !data.password) return sendJson(res, 400, { error: 'Введите ИНН и пароль' });
+      return sendJson(res, 200, await npd.loginByPassword(data.inn, data.password));
+    }
+
+    if (pathname === '/api/npd/sms/start' && req.method === 'POST') {
+      const data = await readBody(req);
+      if (!data.phone) return sendJson(res, 400, { error: 'Введите номер телефона' });
+      return sendJson(res, 200, await npd.smsStart(data.phone));
+    }
+
+    if (pathname === '/api/npd/sms/verify' && req.method === 'POST') {
+      const data = await readBody(req);
+      if (!data.phone || !data.code || !data.challenge_token) return sendJson(res, 400, { error: 'Введите код из СМС' });
+      return sendJson(res, 200, await npd.smsVerify(data.phone, data.code, data.challenge_token));
+    }
+
+    if (pathname === '/api/npd/logout' && req.method === 'POST') {
+      npd.logout();
+      return sendJson(res, 200, { ok: true });
+    }
+
+    const npdMatch = pathname.match(/^\/api\/orders\/(\d+)\/npd\/(preview|receipt|cancel)$/);
+    if (npdMatch) {
+      const orderId = Number(npdMatch[1]);
+      const order = getOrder(orderId);
+      if (!order) return sendJson(res, 404, { error: 'Заказ не найден' });
+      const current = order.npd_receipt;
+      const active = current?.uuid && !current.canceled_at;
+
+      if (npdMatch[2] === 'preview' && req.method === 'GET') {
+        const lines = npdLinesFor(order);
+        return sendJson(res, 200, { lines, total: lines.reduce((sum, l) => sum + l.amount * l.quantity, 0) });
+      }
+
+      if (npdMatch[2] === 'receipt' && req.method === 'POST') {
+        if (active) return sendJson(res, 400, { error: 'Чек по этому заказу уже сформирован' });
+        const data = await readBody(req);
+        // Дата расчёта — из формы (по умолчанию сегодня); время ставим текущее.
+        let operationTime = new Date();
+        if (/^\d{4}-\d{2}-\d{2}$/.test(data.date || '')) {
+          const [y, m, d] = data.date.split('-').map(Number);
+          operationTime = new Date(y, m - 1, d, operationTime.getHours(), operationTime.getMinutes(), operationTime.getSeconds());
+          if (operationTime > new Date()) return sendJson(res, 400, { error: 'Дата расчёта не может быть в будущем' });
+        }
+        const receipt = await npd.createIncome({
+          services: npdLinesFor(order),
+          operationTime,
+          paymentType: getSetting('npd_payment_type') || 'ACCOUNT',
+        });
+        return sendJson(res, 200, setOrderNpdReceipt(orderId, {
+          ...receipt,
+          operation_date: npd.localIso(operationTime).slice(0, 10),
+          created_at: new Date().toISOString(),
+        }));
+      }
+
+      if (npdMatch[2] === 'cancel' && req.method === 'POST') {
+        if (!active) return sendJson(res, 400, { error: 'Действующего чека по заказу нет' });
+        const data = await readBody(req);
+        const reason = data.reason === 'refund' ? 'refund' : 'mistake';
+        await npd.cancelIncome(current.uuid, reason);
+        return sendJson(res, 200, setOrderNpdReceipt(orderId, {
+          ...current,
+          canceled_at: new Date().toISOString(),
+          cancel_reason: npd.CANCEL_REASONS[reason],
+        }));
+      }
+      return sendJson(res, 405, { error: 'Метод не поддерживается' });
+    }
+
     // ---- СДЭК ----
     if (pathname === '/api/cdek/settings' && req.method === 'GET') {
       let shipmentPoint = null;
@@ -1125,7 +1230,7 @@ const server = http.createServer(async (req, res) => {
     return serveStatic(req, res, pathname);
   } catch (err) {
     // Ожидаемые ошибки (занятый номер/серийник и т.п.) — с их кодом и текстом.
-    if (err.status >= 400 && err.status < 500) return sendJson(res, err.status, { error: err.message });
+    if (err.status >= 400 && err.status < 600) return sendJson(res, err.status, { error: err.message });
     console.error(err);
     return sendJson(res, 500, { error: 'Внутренняя ошибка сервера' });
   }
