@@ -151,17 +151,6 @@ function tagBadge(order) {
   return `<span class="tag tag-${order.source_tag || 'crm'}" title="Откуда заказ">${escapeHtml(order.source_label || 'CRM')}</span>`;
 }
 
-// Пункт «Печать» добавляем в меню всех страниц одним местом, а не правкой каждого HTML.
-function initNavExtras() {
-  const nav = document.querySelector('.sidebar-nav');
-  if (!nav || nav.querySelector('a[href="/print-board.html"]')) return;
-  const link = el('<a href="/print-board.html"><span class="nav-icon">🖨</span><span class="label">Печать</span></a>');
-  const board = nav.querySelector('a[href="/board.html"]');
-  if (board) board.after(link);
-  else nav.prepend(link);
-}
-initNavExtras();
-
 // Подписи ячеек для «карточного» вида таблиц на узких экранах: data-label = заголовок колонки.
 // Строки добавляются динамически, поэтому следим за изменениями DOM.
 function labelTableCells() {

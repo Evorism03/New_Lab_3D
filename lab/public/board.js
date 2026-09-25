@@ -1,10 +1,9 @@
-// Общий код канбан-досок: обычной (board.html) и «Печать» (print-board.html).
-// Режим задаёт страница: window.BOARD_MODE = 'print' — только заказы с сайта и лишняя колонка «Печать».
-const PRINT_MODE = window.BOARD_MODE === 'print';
+// Канбан-доска заказов. Колонка «Печать» — только для заказов с сайта (сервер это тоже проверяет).
 
 let statuses = [];
 let catalog = { delivery_services: [] };
 let draggedId = null;
+let draggedIsSite = false;
 
 async function load() {
   const q = document.getElementById('search').value.trim();
@@ -15,8 +14,7 @@ async function load() {
   ]);
   statuses = statusesData;
   catalog = catalogData;
-  // На доске «Печать» живут только заказы с сайта — у них есть файл, который нужно напечатать.
-  render(PRINT_MODE ? orders.filter((o) => o.source_tag === 'site') : orders);
+  render(orders);
 }
 
 // Порядок в колонке: ещё не двигавшиеся вручную (новые) — сверху, от новых к старым;
@@ -51,11 +49,7 @@ function render(orders) {
   const board = document.getElementById('board');
   board.innerHTML = '';
   const searching = Boolean(document.getElementById('search').value.trim());
-  // Обычная доска колонку «Печать» не показывает, пока в ней нет заказов (чтобы они не «пропадали»).
-  const hasPrinting = orders.some((o) => o.status === 'printing');
-  const visibleStatuses = statuses.filter(
-    (s) => s.id !== 'cancelled' && (PRINT_MODE || s.id !== 'printing' || hasPrinting)
-  );
+  const visibleStatuses = statuses.filter((s) => s.id !== 'cancelled');
   for (const s of visibleStatuses) {
     const colOrders = sortColumn(orders.filter((o) => o.status === s.id));
     const col = el(`
@@ -72,12 +66,13 @@ function render(orders) {
           <div class="name">#${escapeHtml(o.display_number)} ${tagBadge(o)} ${o.full_name || 'Без имени'}${o.receipts_count ? ` <span title="${o.receipts_count} чек(ов)">📎${o.receipts_count}</span>` : ''}</div>
           <div class="meta">${deliveryDot(o.delivery_service, catalog.delivery_services)}${o.delivery_service || ''} · ${o.pvz_address || ''}</div>
           <div class="meta">${itemsSummary}</div>
-          ${PRINT_MODE ? filesLine(o) : ''}
+          ${filesLine(o)}
           <div class="total">${money(o.grand_total)}</div>
         </div>
       `);
       card.addEventListener('dragstart', (e) => {
         draggedId = o.id;
+        draggedIsSite = o.source_tag === 'site';
         e.dataTransfer.effectAllowed = 'move';
         placeholder.style.height = `${card.offsetHeight}px`;
         requestAnimationFrame(() => card.classList.add('dragging'));
@@ -91,6 +86,11 @@ function render(orders) {
       cardsWrap.appendChild(card);
     }
     col.addEventListener('dragover', (e) => {
+      // В «Печать» — только заказы с сайта: для CRM-заказа колонка не принимает drop.
+      if (s.id === 'printing' && !draggedIsSite) {
+        e.dataTransfer.dropEffect = 'none';
+        return;
+      }
       e.preventDefault();
       col.classList.add('dragover');
       // При поиске видна только часть карточек — порядок не меняем, только колонку.
