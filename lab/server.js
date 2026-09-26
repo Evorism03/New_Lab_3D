@@ -1069,13 +1069,18 @@ const server = http.createServer(async (req, res) => {
     const receiptFileMatch = pathname.match(/^\/api\/receipts\/(\d+)\/file$/);
     if (receiptFileMatch && req.method === 'GET') {
       const receipt = getReceipt(Number(receiptFileMatch[1]));
-      if (!receipt) return sendJson(res, 404, { error: 'Чек не найден' });
+      if (!receipt) return sendJson(res, 404, { error: 'Файл не найден' });
       const filePath = path.join(uploadsDir, receipt.file_name);
       fs.readFile(filePath, (err, buf) => {
         if (err) return sendJson(res, 404, { error: 'Файл не найден на диске' });
+        // Теперь можно прикреплять любые файлы: в браузере открываем только картинки/PDF/текст,
+        // остальное (в т.ч. html/svg — чтобы не исполнялись на нашем сайте) — скачивается.
+        const mime = String(receipt.mime_type || '').toLowerCase();
+        const inline = /^(image\/(png|jpe?g|gif|webp|bmp|heic|heif)|application\/pdf|text\/plain)$/.test(mime);
         res.writeHead(200, {
-          'Content-Type': receipt.mime_type,
-          'Content-Disposition': `inline; filename="${encodeURIComponent(receipt.original_name)}"`,
+          'Content-Type': inline ? receipt.mime_type : 'application/octet-stream',
+          'Content-Disposition': `${inline ? 'inline' : 'attachment'}; filename*=UTF-8''${encodeURIComponent(receipt.original_name)}`,
+          'X-Content-Type-Options': 'nosniff',
         });
         res.end(buf);
       });
@@ -1085,7 +1090,7 @@ const server = http.createServer(async (req, res) => {
     const receiptMatch = pathname.match(/^\/api\/receipts\/(\d+)$/);
     if (receiptMatch && req.method === 'DELETE') {
       const receipt = deleteReceipt(Number(receiptMatch[1]));
-      if (!receipt) return sendJson(res, 404, { error: 'Чек не найден' });
+      if (!receipt) return sendJson(res, 404, { error: 'Файл не найден' });
       fs.unlink(path.join(uploadsDir, receipt.file_name), () => {});
       return sendJson(res, 200, { ok: true });
     }
@@ -1389,7 +1394,7 @@ const server = http.createServer(async (req, res) => {
           operation_date: npd.localIso(operationTime).slice(0, 10),
           created_at: new Date().toISOString(),
         });
-        // Картинку чека сразу кладём в «Чеки» заказа — чтобы была под рукой. Не получилось — не страшно.
+        // Картинку чека сразу кладём в «Файлы» заказа — чтобы была под рукой. Не получилось — не страшно.
         try {
           const img = await npd.receiptImage(receipt.uuid);
           const fileName = `${crypto.randomUUID()}.${img.ext}`;
