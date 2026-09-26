@@ -231,6 +231,9 @@ function openImport() {
   });
 }
 
+// /serials.html?q=AL1R03TT0043 — переход из заказа к его серийнику.
+const initialQuery = new URLSearchParams(window.location.search).get('q');
+if (initialQuery) document.getElementById('search').value = initialQuery;
 document.getElementById('search').addEventListener('input', render);
 document.getElementById('source-filter').addEventListener('change', render);
 document.getElementById('sort-toggle').addEventListener('click', () => {
