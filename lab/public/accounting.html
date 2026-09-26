@@ -45,12 +45,18 @@
 
     <div class="acc-panels">
       <div class="card">
-        <h3>🚚 Счёт доставки</h3>
+        <h3>🚚 Счета доставки</h3>
+        <div id="carrier-accounts" class="acc-carriers"></div>
         <div id="delivery-summary"></div>
         <form id="topup-form" class="acc-inline-form">
+          <select name="carrier" title="Какой счёт пополнили" style="max-width:110px">
+            <option value="ozon">Ozon</option>
+            <option value="cdek">СДЭК</option>
+            <option value="">—</option>
+          </select>
           <input type="date" name="date" required>
           <input type="number" name="amount" min="0.01" step="0.01" placeholder="Сумма" required>
-          <input type="text" name="note" placeholder="Комментарий (Ozon, СДЭК…)">
+          <input type="text" name="note" placeholder="Комментарий">
           <button type="submit" class="small">Пополнить</button>
         </form>
         <div id="topups" class="acc-topups"></div>
@@ -146,11 +152,13 @@ function periodQuery(extra = {}) {
 // ---- Загрузка ----
 async function load() {
   const q = document.getElementById('search').value.trim();
-  const [summary, list, topups] = await Promise.all([
+  const [summary, list, topups, carriers] = await Promise.all([
     api('/api/accounting/summary' + periodQuery()),
     api('/api/accounting/ledger' + periodQuery({ q })),
     api('/api/accounting/topups'),
+    api('/api/accounting/carriers'),
   ]);
+  renderCarriers(carriers);
   rows = list;
   document.getElementById('export-link').href = '/api/export/ledger.csv' + periodQuery();
   renderStats(summary);
@@ -196,6 +204,7 @@ function renderStats(s) {
 function renderDelivery(s, topups) {
   const d = s.delivery;
   document.getElementById('delivery-summary').innerHTML = `
+    <div class="muted acc-hint" style="margin-top:12px">Всего за всё время:</div>
     <div class="acc-kv"><span>Списано за доставку</span><strong>${rub(d.spent)}</strong></div>
     <div class="acc-kv"><span>Пополнено</span><strong>${rub(d.topups)}</strong></div>
     <div class="acc-kv acc-kv-total ${d.debt > 0 ? 'neg' : 'pos'}">
@@ -208,6 +217,7 @@ function renderDelivery(s, topups) {
       <div class="acc-topup">
         <span>${ruDate(t.date)}</span>
         <strong>${rub(t.amount)}</strong>
+        <span>${t.carrier === 'ozon' ? 'Ozon' : t.carrier === 'cdek' ? 'СДЭК' : ''}</span>
         <span class="muted">${escapeHtml(t.note)}</span>
         <button type="button" class="link-btn" title="Удалить">✕</button>
       </div>`);
@@ -217,6 +227,48 @@ function renderDelivery(s, topups) {
       load();
     });
     list.appendChild(row);
+  }
+}
+
+// Остатки на счетах Ozon/СДЭК: вписанный из личного кабинета + расчёт после него.
+function renderCarriers(accounts) {
+  const mount = document.getElementById('carrier-accounts');
+  mount.innerHTML = '';
+  for (const a of accounts) {
+    const when = a.last ? new Date(a.last.recorded_at).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '';
+    const since = a.last && (a.spent_since || a.topups_since)
+      ? ` · после: ${a.spent_since ? `<span class="neg">−${rub(a.spent_since)}</span> (${a.spent_count} отпр.)` : ''}${a.topups_since ? ` <span class="pos">+${rub(a.topups_since)}</span>` : ''}`
+      : '';
+    const block = el(`
+      <div class="acc-carrier ${a.low ? 'low' : ''}">
+        <div class="acc-carrier-head">
+          <b>${escapeHtml(a.label)}</b>
+          <span class="acc-carrier-sum ${a.estimate == null ? 'muted' : a.low ? 'neg' : ''}"
+            title="${a.last ? 'Записанный остаток − доставка после записи + пополнения после записи' : ''}">
+            ${a.estimate == null ? 'остаток не записан' : `≈ ${rub(a.estimate)}`}
+          </span>
+        </div>
+        ${a.last ? `<div class="muted acc-hint">по ЛК ${rub(a.last.amount)} на ${when}${since}</div>` : ''}
+        ${a.low ? `<div class="neg acc-hint">⚠ Меньше ${rub(a.threshold)} — пора пополнить</div>` : ''}
+        <form class="acc-inline-form acc-carrier-form">
+          <input type="number" name="amount" step="0.01" placeholder="Остаток в ЛК, ₽" required>
+          <button type="submit" class="small secondary">Записать остаток</button>
+        </form>
+      </div>`);
+    block.querySelector('form').addEventListener('submit', async (ev) => {
+      ev.preventDefault();
+      try {
+        await api('/api/accounting/carriers', {
+          method: 'POST',
+          body: JSON.stringify({ carrier: a.carrier, amount: ev.target.amount.value }),
+        });
+        toast(`Остаток ${a.label} записан`, 'success');
+        load();
+      } catch (err) {
+        toast(err.message, 'error');
+      }
+    });
+    mount.appendChild(block);
   }
 }
 
@@ -519,7 +571,10 @@ function openSettings() {
   const { overlay, close } = modal(`
     <h3>Настройки бухгалтерии</h3>
     <form id="acc-settings-form">
-      <div class="field" style="max-width:220px"><label>Ставка налога, %</label><input type="number" name="tax_rate" min="0" max="100" step="0.01" value="${settings.tax_rate}"></div>
+      <div class="grid-2">
+        <div class="field"><label>Ставка налога, %</label><input type="number" name="tax_rate" min="0" max="100" step="0.01" value="${settings.tax_rate}"></div>
+        <div class="field"><label>Предупреждать, если на счёте Ozon/СДЭК меньше, ₽</label><input type="number" name="low_balance" min="0" step="1" value="${settings.low_balance}"></div>
+      </div>
       <div class="field">
         <label>Срок гарантии</label>
         <div id="warranty-periods"></div>
@@ -601,6 +656,7 @@ function openSettings() {
         method: 'POST',
         body: JSON.stringify({
           tax_rate: form.tax_rate.value,
+          low_balance: form.low_balance.value,
           warranty_periods: [...periodsBox.querySelectorAll('.acc-period-row')].map((r) => ({
             from: r.querySelector('[name="wp-from"]')?.value || '',
             days: Number(r.querySelector('[name="wp-days"]').value),
@@ -625,7 +681,7 @@ document.getElementById('topup-form').addEventListener('submit', async (ev) => {
   try {
     await api('/api/accounting/topups', {
       method: 'POST',
-      body: JSON.stringify({ date: form.date.value, amount: Number(form.amount.value), note: form.note.value }),
+      body: JSON.stringify({ date: form.date.value, amount: Number(form.amount.value), note: form.note.value, carrier: form.carrier.value }),
     });
     form.amount.value = '';
     form.note.value = '';

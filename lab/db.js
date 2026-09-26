@@ -111,6 +111,15 @@ db.exec(`
     UNIQUE (model_id, number)
   );
 
+  -- Остатки на счетах Ozon/СДЭК, списанные из личного кабинета (история; актуален последний).
+  CREATE TABLE IF NOT EXISTS carrier_balances (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    carrier TEXT NOT NULL,
+    amount REAL NOT NULL,
+    recorded_at TEXT NOT NULL,
+    note TEXT NOT NULL DEFAULT ''
+  );
+
   -- Пополнения счёта доставки (Ozon/СДЭК списывают доставку с предоплаченного счёта).
   CREATE TABLE IF NOT EXISTS delivery_topups (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -156,6 +165,8 @@ for (const stmt of [
   'ALTER TABLE ledger ADD COLUMN linked_order_id INTEGER REFERENCES orders(id) ON DELETE SET NULL',
   // Срок гарантии конкретной записи (дней); NULL — по периодам из настроек (по дате записи).
   'ALTER TABLE ledger ADD COLUMN warranty_days INTEGER',
+  // Пополнение какого счёта: 'ozon' | 'cdek' | '' (не указано).
+  "ALTER TABLE delivery_topups ADD COLUMN carrier TEXT NOT NULL DEFAULT ''",
 ]) {
   try {
     db.exec(stmt);
@@ -1004,6 +1015,7 @@ export function getAccountingSettings() {
   return {
     tax_rate: Number(getSetting('acc_tax_rate') || 4),
     warranty_periods: warrantyPeriods(),
+    low_balance: Number(getSetting('acc_low_balance') || 1000),
     warranty_days: warrantyDaysOn(localDate()), // срок для продаж, сделанных сегодня
     auto_since: getSetting('acc_auto_since'),
     bank_name: getSetting('acc_bank_name') || 'Банк',
@@ -1038,6 +1050,11 @@ export function setAccountingSettings(data) {
   if (data.auto_since != null) {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(data.auto_since)) throw httpError(400, 'Неверная дата начала автозаполнения');
     setSetting('acc_auto_since', data.auto_since);
+  }
+  if (data.low_balance != null) {
+    const v = Number(data.low_balance);
+    if (!(v >= 0)) throw httpError(400, 'Порог остатка — число от 0');
+    setSetting('acc_low_balance', String(roundMoney(v)));
   }
   if (data.bank_name != null) setSetting('acc_bank_name', String(data.bank_name).trim().slice(0, 60));
   if (data.bank_balance !== undefined) {
@@ -1173,6 +1190,7 @@ function ledgerRow(row, { periods, today }) {
     order_number: row.order_number ?? null,
     // Заказ записи для ссылки: автозапись продажи или ручная привязка.
     link_order_id: row.order_id ?? row.linked_order_id ?? null,
+    carrier: row.delivery_account ? carrierOf(`${row.order_delivery_service || ''} ${row.description}`) : null,
     link_order_number: row.order_number ?? row.linked_order_number ?? null,
     net,
     warranty_until: warrantyUntil,
@@ -1189,7 +1207,8 @@ function ledgerRows({ from, to } = {}) {
   const rows = db
     .prepare(
       `SELECT ledger.*, COALESCE(NULLIF(orders.number, ''), CAST(orders.id AS TEXT)) AS order_number,
-              COALESCE(NULLIF(linked.number, ''), CAST(linked.id AS TEXT)) AS linked_order_number
+              COALESCE(NULLIF(linked.number, ''), CAST(linked.id AS TEXT)) AS linked_order_number,
+              COALESCE(orders.delivery_service, linked.delivery_service) AS order_delivery_service
        FROM ledger LEFT JOIN orders ON orders.id = ledger.order_id
        LEFT JOIN orders AS linked ON linked.id = ledger.linked_order_id
        ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
@@ -1307,6 +1326,74 @@ export function restoreOrderLedger(orderId) {
   syncOrderLedger(orderId);
 }
 
+// --- Счета Ozon и СДЭК ---
+// API у служб баланс не отдают, поэтому остаток вписывается вручную из личного кабинета, а дальше
+// считается здесь: записанный остаток − доставка, списанная со счёта после записи + пополнения после неё.
+export const CARRIERS = [
+  { id: 'ozon', label: 'Ozon' },
+  { id: 'cdek', label: 'СДЭК' },
+];
+
+export function carrierOf(text) {
+  const s = String(text || '').toLowerCase();
+  if (/сдэк|сдек|cdek/.test(s)) return 'cdek';
+  if (/озон|ozon/.test(s)) return 'ozon';
+  return null;
+}
+
+function cleanCarrier(value) {
+  return CARRIERS.some((c) => c.id === value) ? value : '';
+}
+
+export function recordCarrierBalance(data) {
+  const carrier = cleanCarrier(data.carrier);
+  if (!carrier) throw httpError(400, 'Выберите счёт: Ozon или СДЭК');
+  const amount = Number(String(data.amount ?? '').replace(',', '.'));
+  if (!Number.isFinite(amount)) throw httpError(400, 'Укажите остаток');
+  db.prepare('INSERT INTO carrier_balances (carrier, amount, recorded_at, note) VALUES (?, ?, ?, ?)')
+    .run(carrier, roundMoney(amount), new Date().toISOString(), String(data.note || '').trim().slice(0, 120));
+  return carrierAccounts();
+}
+
+export function deleteCarrierBalance(id) {
+  return db.prepare('DELETE FROM carrier_balances WHERE id = ?').run(id).changes > 0;
+}
+
+// После момента записи остатка: запись с датой позже дня записи, или в тот же день, но созданная позже.
+function afterMoment(date, createdAt, moment) {
+  const day = localDate(moment);
+  return date > day || (date === day && createdAt > moment);
+}
+
+export function carrierAccounts() {
+  const threshold = Number(getSetting('acc_low_balance') || 1000);
+  const rows = ledgerRows().filter((r) => r.carrier && r.expense > 0);
+  const topups = listDeliveryTopups();
+  return CARRIERS.map((c) => {
+    const history = db
+      .prepare('SELECT * FROM carrier_balances WHERE carrier = ? ORDER BY recorded_at DESC, id DESC LIMIT 5')
+      .all(c.id);
+    const last = history[0] || null;
+    const spentRows = rows.filter((r) => r.carrier === c.id && (!last || afterMoment(r.date, r.created_at, last.recorded_at)));
+    const topupRows = topups.filter((t) => t.carrier === c.id && (!last || afterMoment(t.date, t.created_at, last.recorded_at)));
+    const spent = roundMoney(spentRows.reduce((sum, r) => sum + r.expense, 0));
+    const topped = roundMoney(topupRows.reduce((sum, t) => sum + t.amount, 0));
+    const estimate = last ? roundMoney(last.amount - spent + topped) : null;
+    return {
+      carrier: c.id,
+      label: c.label,
+      last,
+      history,
+      spent_since: spent,
+      spent_count: spentRows.length,
+      topups_since: topped,
+      estimate,
+      threshold,
+      low: estimate != null && estimate < threshold,
+    };
+  });
+}
+
 export function listDeliveryTopups() {
   return db.prepare('SELECT * FROM delivery_topups ORDER BY date DESC, id DESC').all();
 }
@@ -1317,8 +1404,8 @@ export function createDeliveryTopup(data) {
   const amount = roundMoney(data.amount);
   if (!(amount > 0)) throw httpError(400, 'Укажите сумму пополнения');
   const info = db
-    .prepare('INSERT INTO delivery_topups (date, amount, note, created_at) VALUES (?, ?, ?, ?)')
-    .run(date, amount, String(data.note || '').trim().slice(0, 120), new Date().toISOString());
+    .prepare('INSERT INTO delivery_topups (date, amount, note, carrier, created_at) VALUES (?, ?, ?, ?, ?)')
+    .run(date, amount, String(data.note || '').trim().slice(0, 120), cleanCarrier(data.carrier), new Date().toISOString());
   return db.prepare('SELECT * FROM delivery_topups WHERE id = ?').get(info.lastInsertRowid);
 }
 
