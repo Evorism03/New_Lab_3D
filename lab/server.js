@@ -239,7 +239,7 @@ function ledgerToCsv(rows) {
         r.warranty_until ? r.warranty_until.split('-').reverse().join('.') : '',
         r.taxable ? 'да' : '',
         r.delivery_account ? 'да' : '',
-        r.order_number ? `#${r.order_number}` : '',
+        r.link_order_number ? `#${r.link_order_number}` : '',
       ]
         .map(csvEscape)
         .join(';')
@@ -1400,7 +1400,11 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (pathname === '/api/accounting/ledger' && req.method === 'GET') {
-      return sendJson(res, 200, listLedger({ ...periodParams(url), q: url.searchParams.get('q') || undefined }));
+      return sendJson(res, 200, listLedger({
+        ...periodParams(url),
+        q: url.searchParams.get('q') || undefined,
+        orderId: Number(url.searchParams.get('order_id')) || undefined,
+      }));
     }
 
     if (pathname === '/api/accounting/ledger' && req.method === 'POST') {

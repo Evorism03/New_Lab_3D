@@ -1078,3 +1078,12 @@ a.ov-serial:hover { border-color: var(--accent); color: var(--accent); text-deco
   .ov-number, .ov-total { font-size: 22px; }
   .ov-head-side { width: 100%; justify-content: space-between; }
 }
+
+.ov-ledger-row { display: grid; grid-template-columns: 90px minmax(0, 1fr) auto; gap: 10px; align-items: center; padding: 8px 6px; border-bottom: 1px solid var(--border); color: var(--text); font-size: 14px; border-radius: 6px; }
+.ov-ledger-row:hover { background: var(--panel-2); text-decoration: none; }
+.ov-ledger-sum { white-space: nowrap; font-weight: 700; font-variant-numeric: tabular-nums; }
+.ov-ledger-open { font-size: 13px; margin-top: 6px; align-self: flex-start; }
+@media (max-width: 720px) {
+  .ov-ledger-row { grid-template-columns: minmax(0, 1fr) auto; }
+  .ov-ledger-row > span:first-child { grid-column: 1 / -1; font-size: 12px; }
+}
