@@ -7,6 +7,7 @@ import { MaterialThumb } from "@/components/MaterialThumb";
 import { ModelViewer } from "@/components/ModelViewer";
 import { formatDays, formatPrintTime, formatTemplate, type Dictionary } from "@/lib/i18n/translations";
 import { formatAmount, formatCents } from "@/lib/money";
+import { MAX_SCALE_PERCENT, MIN_SCALE_PERCENT, scaledVolume } from "@/lib/pricing/options";
 import type { FileDTO, MaterialDTO, QuoteDTO } from "@/lib/types";
 
 /** Falls back to the first option whenever `selectedId` doesn't belong to the current list
@@ -15,13 +16,20 @@ function resolveSelection(selectedId: string, options: { id: string }[]): string
   return options.some((o) => o.id === selectedId) ? selectedId : (options[0]?.id ?? "");
 }
 
+const SLIDER_MAX_SCALE = 300;
+
 export function ConfigureClient({
   file,
   materials,
+  infillLevels,
+  defaultInfill,
   dict,
 }: {
   file: FileDTO;
   materials: MaterialDTO[];
+  /** Slicer infill levels (%) the customer picks from — admin setting. */
+  infillLevels: number[];
+  defaultInfill: number;
   dict: Dictionary;
 }) {
   const t = dict.configure;
@@ -35,6 +43,10 @@ export function ConfigureClient({
   const [selectedColorId, setColorId] = useState(material?.colors[0]?.id ?? "");
   const [selectedFinishId, setFinishId] = useState(material?.finishes[0]?.id ?? "");
   const [quantity, setQuantity] = useState(1);
+  const [infill, setInfill] = useState(defaultInfill);
+  // Typed text is kept as is while editing; the price and sizes use the clamped value.
+  const [scaleText, setScaleText] = useState("100");
+  const scale = Math.min(MAX_SCALE_PERCENT, Math.max(MIN_SCALE_PERCENT, Math.round(Number(scaleText)) || 100));
   const [quote, setQuote] = useState<QuoteDTO | null>(null);
   const [quoteError, setQuoteError] = useState<string | null>(null);
   const [isQuoting, setIsQuoting] = useState(false);
@@ -65,6 +77,8 @@ export function ConfigureClient({
           colorId: colorId || undefined,
           finishId: finishId || undefined,
           quantity,
+          scalePercent: scale,
+          infillPercent: infill,
         }),
       })
         .then(async (res) => {
@@ -77,7 +91,7 @@ export function ConfigureClient({
     }, 250);
 
     return () => clearTimeout(timeout);
-  }, [file.id, material, colorId, finishId, quantity]);
+  }, [file.id, material, colorId, finishId, quantity, scale, infill]);
 
   if (!material) {
     return <p className="mx-auto max-w-2xl px-6 py-24 text-muted">{t.noMaterials}</p>;
@@ -88,14 +102,20 @@ export function ConfigureClient({
       fileId: file.id,
       materialId: material.id,
       quantity: String(quantity),
+      scale: String(scale),
+      infill: String(infill),
     });
     if (colorId) params.set("colorId", colorId);
     if (finishId) params.set("finishId", finishId);
     router.push(`/order/checkout?${params.toString()}`);
   };
 
+  const size = (mm: number | undefined) => (mm === undefined ? "—" : ((mm * scale) / 100).toFixed(1));
+  const sizeText = `${size(file.bboxMm?.x)} × ${size(file.bboxMm?.y)} × ${size(file.bboxMm?.z)} ${dict.units.mm}`;
+
   return (
-    <div className="mx-auto grid max-w-[1600px] grid-cols-1 gap-8 px-6 py-6 lg:grid-cols-[minmax(0,1fr)_minmax(600px,1.1fr)]">
+    // The settings panel keeps a fixed width; the model viewer takes all the rest of the screen.
+    <div className="grid grid-cols-1 gap-8 px-6 py-6 lg:grid-cols-[minmax(0,1fr)_minmax(600px,700px)]">
       <div>
         <div className="h-[55vh] min-h-[360px] lg:h-[calc(100vh-240px)] lg:min-h-[480px]">
           <ModelViewer fileUrl={`/api/files/${file.id}/raw`} format={file.format} />
@@ -104,14 +124,12 @@ export function ConfigureClient({
           <div>
             <dt className="font-medium text-text">{t.volume}</dt>
             <dd>
-              {file.volumeCm3?.toFixed(2)} {dict.units.cm3}
+              {file.volumeCm3 !== null && scaledVolume(file.volumeCm3, scale).toFixed(2)} {dict.units.cm3}
             </dd>
           </div>
           <div>
             <dt className="font-medium text-text">{t.boundingBox}</dt>
-            <dd>
-              {file.bboxMm?.x.toFixed(1)} × {file.bboxMm?.y.toFixed(1)} × {file.bboxMm?.z.toFixed(1)} {dict.units.mm}
-            </dd>
+            <dd>{sizeText}</dd>
           </div>
           <div>
             <dt className="font-medium text-text">{t.file}</dt>
@@ -162,7 +180,8 @@ export function ConfigureClient({
         </div>
 
         <div className="flex flex-col lg:min-h-0">
-        <div className="flex flex-col gap-4 lg:min-h-0 lg:flex-1 lg:overflow-y-auto lg:pr-2">
+        {/* Not flex-1: the price card sits right under the options instead of at the bottom. */}
+        <div className="flex flex-col gap-4 lg:min-h-0 lg:overflow-y-auto lg:pr-2">
         {material.colors.length > 0 && (
           <div>
             <label className="block text-sm font-medium text-text">{t.color}</label>
@@ -211,6 +230,65 @@ export function ConfigureClient({
             </div>
           </div>
         )}
+
+        {infillLevels.length > 1 && (
+          <div>
+            <label className="block text-sm font-medium text-text">{t.infill}</label>
+            <div className="mt-1 flex flex-wrap gap-2">
+              {infillLevels.map((level) => {
+                const name = t.infillNames[level as keyof typeof t.infillNames];
+                return (
+                  <button
+                    key={level}
+                    type="button"
+                    onClick={() => setInfill(level)}
+                    className={`pill ${infill === level ? "active" : ""}`}
+                  >
+                    {name ? `${name} ${level}%` : `${level}%`}
+                  </button>
+                );
+              })}
+            </div>
+            <p className="mt-1 text-xs text-muted">{t.infillHint}</p>
+          </div>
+        )}
+
+        <div>
+          <label className="block text-sm font-medium text-text">{t.scale}</label>
+          <div className="mt-1 flex items-center gap-3">
+            <input
+              type="range"
+              min={MIN_SCALE_PERCENT}
+              max={SLIDER_MAX_SCALE}
+              step={5}
+              value={Math.min(scale, SLIDER_MAX_SCALE)}
+              onChange={(e) => setScaleText(e.target.value)}
+              aria-label={t.scale}
+              className="min-w-0 flex-1 accent-accent"
+            />
+            <input
+              type="number"
+              min={MIN_SCALE_PERCENT}
+              max={MAX_SCALE_PERCENT}
+              value={scaleText}
+              onChange={(e) => setScaleText(e.target.value)}
+              onBlur={() => setScaleText(String(scale))}
+              className="w-20 px-3 py-1.5 text-sm"
+            />
+            <span className="text-sm text-muted">%</span>
+          </div>
+          <p className="mt-1 text-xs text-muted">
+            {formatTemplate(t.scaleSize, sizeText)}
+            {scale !== 100 && (
+              <>
+                {" · "}
+                <button type="button" onClick={() => setScaleText("100")} className="text-accent hover:underline">
+                  {t.scaleReset}
+                </button>
+              </>
+            )}
+          </p>
+        </div>
 
         <div>
           <label className="block text-sm font-medium text-text">{t.quantity}</label>

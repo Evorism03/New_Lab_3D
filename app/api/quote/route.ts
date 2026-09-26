@@ -5,6 +5,8 @@ import { availableCatalog } from "@/lib/colorSync";
 import { prisma } from "@/lib/db";
 import { PricingError } from "@/lib/pricing/engine";
 import { computeMaterialPrice } from "@/lib/pricing/material";
+import { MAX_SCALE_PERCENT, MIN_SCALE_PERCENT, scaledVolume } from "@/lib/pricing/options";
+import { getInfillOptions } from "@/lib/settings";
 
 const QuoteSchema = z.object({
   fileId: z.string(),
@@ -12,6 +14,9 @@ const QuoteSchema = z.object({
   finishId: z.string().optional(),
   colorId: z.string().optional(),
   quantity: z.number().int().min(1).max(1000).default(1),
+  scalePercent: z.number().int().min(MIN_SCALE_PERCENT).max(MAX_SCALE_PERCENT).default(100),
+  // Must be one of the admin's infill levels; omitted = the default level.
+  infillPercent: z.number().int().min(1).max(100).optional(),
 });
 
 export async function POST(request: NextRequest) {
@@ -20,7 +25,13 @@ export async function POST(request: NextRequest) {
   if (!parsed.success) {
     return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
   }
-  const { fileId, materialId, finishId, colorId, quantity } = parsed.data;
+  const { fileId, materialId, finishId, colorId, quantity, scalePercent } = parsed.data;
+
+  const infill = await getInfillOptions();
+  const infillPercent = parsed.data.infillPercent ?? infill.defaultLevel;
+  if (!infill.levels.includes(infillPercent)) {
+    return NextResponse.json({ error: "Infill level is not available" }, { status: 400 });
+  }
 
   const available = await availableCatalog();
   // Once colors come from the Bambuddy inventory, a color is required — it is what we have in stock.
@@ -49,9 +60,10 @@ export async function POST(request: NextRequest) {
     const breakdown = computeMaterialPrice(
       material,
       {
-        volumeCm3: Number(file.volumeCm3),
+        volumeCm3: scaledVolume(Number(file.volumeCm3), scalePercent),
         finishMultiplier: finish ? Number(finish.multiplier) : 1,
         quantity,
+        infillPercent,
       },
       color,
     );

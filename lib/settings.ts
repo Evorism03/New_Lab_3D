@@ -8,6 +8,9 @@ const DEFAULTS = {
   "bambuddy.lastSyncAt": "",
   /** Error of the last failed sync ("" = the last attempt succeeded). */
   "bambuddy.lastSyncError": "",
+  /** Slicer infill levels (%) customers pick from, and the one preselected. */
+  "order.infillLevels": "15,25,50,100",
+  "order.defaultInfill": "25",
 } as const;
 
 export type SettingKey = keyof typeof DEFAULTS;
@@ -26,6 +29,19 @@ export async function getSetting(key: SettingKey): Promise<string> {
 
 export async function setSetting(key: SettingKey, value: string): Promise<void> {
   await prisma.setting.upsert({ where: { key }, update: { value }, create: { key, value } });
+}
+
+/** Sorted infill levels in 1-100 and the default one (always one of the levels). */
+export async function getInfillOptions(): Promise<{ levels: number[]; defaultLevel: number }> {
+  const values = await getSettings(["order.infillLevels", "order.defaultInfill"]);
+  const parse = (raw: string) =>
+    [...new Set(raw.split(/[,\s]+/).map(Number))].filter((n) => Number.isInteger(n) && n >= 1 && n <= 100).sort((a, b) => a - b);
+  let levels = parse(values["order.infillLevels"]);
+  if (levels.length === 0) levels = parse(DEFAULTS["order.infillLevels"]);
+  const wanted = Number(values["order.defaultInfill"]);
+  // The closest level, so a removed default still resolves to something the customer can pick.
+  const defaultLevel = levels.reduce((best, n) => (Math.abs(n - wanted) < Math.abs(best - wanted) ? n : best), levels[0]);
+  return { levels, defaultLevel };
 }
 
 export async function getMinStockGrams(): Promise<number> {

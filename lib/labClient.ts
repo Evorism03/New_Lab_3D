@@ -62,7 +62,14 @@ function toLabPayload(order: OrderDTO) {
         : null;
       return {
         item_kind: "print",
-        product_name: item.material.name + (finishName ? ` — ${finishName}` : ""),
+        // lab has no fields for print settings, so infill and scale travel in the product name.
+        product_name: [
+          item.material.name + (finishName ? ` — ${finishName}` : ""),
+          item.infillPercent !== null ? `заполнение ${item.infillPercent}%` : null,
+          item.scalePercent !== 100 ? `масштаб ${item.scalePercent}%` : null,
+        ]
+          .filter(Boolean)
+          .join(" · "),
         material: item.material.name,
         finish: finishName,
         color: colorName,

@@ -16,6 +16,9 @@ function CheckoutForm({ dict }: { dict: Dictionary }) {
   const colorId = searchParams.get("colorId") ?? undefined;
   const finishId = searchParams.get("finishId") ?? undefined;
   const quantity = Number(searchParams.get("quantity") ?? 1);
+  const scalePercent = Number(searchParams.get("scale") ?? 100);
+  // Missing (old links) = the default infill level, picked on the server.
+  const infillPercent = searchParams.get("infill") ? Number(searchParams.get("infill")) : undefined;
 
   const [quote, setQuote] = useState<QuoteDTO | null>(null);
   const [form, setForm] = useState({
@@ -34,12 +37,12 @@ function CheckoutForm({ dict }: { dict: Dictionary }) {
     fetch("/api/quote", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ fileId, materialId, colorId, finishId, quantity }),
+      body: JSON.stringify({ fileId, materialId, colorId, finishId, quantity, scalePercent, infillPercent }),
     })
       .then((res) => res.json())
       .then((data) => setQuote(data.quote))
       .catch(() => setError("Failed to load quote"));
-  }, [fileId, materialId, colorId, finishId, quantity]);
+  }, [fileId, materialId, colorId, finishId, quantity, scalePercent, infillPercent]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -51,7 +54,7 @@ function CheckoutForm({ dict }: { dict: Dictionary }) {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          items: [{ fileId, materialId, colorId, finishId, quantity }],
+          items: [{ fileId, materialId, colorId, finishId, quantity, scalePercent, infillPercent }],
           email: form.email,
           shipping: {
             name: form.name,

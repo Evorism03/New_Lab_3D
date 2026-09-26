@@ -1,9 +1,10 @@
 import { BambuddyColorsAdmin } from "@/components/BambuddyColorsAdmin";
+import { InfillLevelsAdmin } from "@/components/InfillLevelsAdmin";
 import { PricingAdmin } from "@/components/PricingAdmin";
 import { isBambuddyConfigured } from "@/lib/bambuddy";
 import { ensureColorsFresh, getColorAvailability, isColorAvailable } from "@/lib/colorSync";
 import { prisma } from "@/lib/db";
-import { getSettings } from "@/lib/settings";
+import { getInfillOptions, getSettings } from "@/lib/settings";
 import { localizeCatalogText } from "@/lib/i18n/catalog";
 import { getServerLocale } from "@/lib/i18n/locale";
 import { getDictionary } from "@/lib/i18n/translations";
@@ -15,7 +16,7 @@ export default async function AdminPricingPage() {
 
   // Also kicks off the periodic Bambuddy sync, so the stock numbers below are fresh.
   await ensureColorsFresh();
-  const [materials, availability, settings] = await Promise.all([
+  const [materials, availability, settings, infill] = await Promise.all([
     prisma.material.findMany({
       orderBy: { name: "asc" },
       include: {
@@ -25,6 +26,7 @@ export default async function AdminPricingPage() {
     }),
     getColorAvailability(),
     getSettings(["bambuddy.lastSyncAt", "bambuddy.lastSyncError"]),
+    getInfillOptions(),
   ]);
 
   return (
@@ -39,6 +41,9 @@ export default async function AdminPricingPage() {
           lastSyncAt={settings["bambuddy.lastSyncAt"]}
           lastSyncError={settings["bambuddy.lastSyncError"]}
         />
+      </div>
+      <div className="mt-5">
+        <InfillLevelsAdmin dict={dict} levels={infill.levels} defaultLevel={infill.defaultLevel} />
       </div>
       <div className="mt-5">
         <PricingAdmin

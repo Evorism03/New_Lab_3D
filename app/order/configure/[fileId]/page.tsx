@@ -7,6 +7,7 @@ import { localizeCatalogText } from "@/lib/i18n/catalog";
 import { getServerLocale } from "@/lib/i18n/locale";
 import { getDictionary } from "@/lib/i18n/translations";
 import { resolvePricing } from "@/lib/pricing/defaults";
+import { getInfillOptions } from "@/lib/settings";
 import { serializeFile } from "@/lib/serializers";
 import { COLOR_ORDER, materialImageUrl } from "@/lib/types";
 
@@ -18,7 +19,7 @@ export default async function ConfigurePage({
   const { fileId } = await params;
   const dict = getDictionary(await getServerLocale());
 
-  const available = await availableCatalog();
+  const [available, infill] = await Promise.all([availableCatalog(), getInfillOptions()]);
   const [file, materials] = await Promise.all([
     prisma.uploadedFile.findUnique({ where: { id: fileId } }),
     prisma.material.findMany({
@@ -51,6 +52,8 @@ export default async function ConfigurePage({
     <ConfigureClient
       dict={dict}
       file={serializeFile(file)}
+      infillLevels={infill.levels}
+      defaultInfill={infill.defaultLevel}
       materials={materials.map((m) => ({
         id: m.id,
         name: m.name,

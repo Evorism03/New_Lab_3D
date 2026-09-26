@@ -29,6 +29,8 @@ export function serializeOrderItem(item: OrderItemWithRelations) {
   return {
     id: item.id,
     quantity: item.quantity,
+    scalePercent: item.scalePercent,
+    infillPercent: item.infillPercent,
     unitPriceCents: item.unitPriceCents,
     totalPriceCents: item.totalPriceCents,
     file: {

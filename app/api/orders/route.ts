@@ -8,6 +8,8 @@ import { OrderStatus } from "@/lib/generated/prisma/client";
 import { pushOrderToLab } from "@/lib/labClient";
 import { PricingError } from "@/lib/pricing/engine";
 import { computeMaterialPrice } from "@/lib/pricing/material";
+import { MAX_SCALE_PERCENT, MIN_SCALE_PERCENT, scaledVolume } from "@/lib/pricing/options";
+import { getInfillOptions } from "@/lib/settings";
 import { serializeOrder } from "@/lib/serializers";
 
 const OrderStatusValues = Object.values(OrderStatus) as [string, ...string[]];
@@ -18,6 +20,9 @@ const OrderItemSchema = z.object({
   finishId: z.string().optional(),
   colorId: z.string().optional(),
   quantity: z.number().int().min(1).max(1000).default(1),
+  scalePercent: z.number().int().min(MIN_SCALE_PERCENT).max(MAX_SCALE_PERCENT).default(100),
+  // Must be one of the admin's infill levels; omitted = the default level.
+  infillPercent: z.number().int().min(1).max(100).optional(),
 });
 
 const CreateOrderSchema = z.object({
@@ -47,10 +52,13 @@ export async function POST(request: NextRequest) {
     finishId: string | null;
     colorId: string | null;
     quantity: number;
+    scalePercent: number;
+    infillPercent: number;
     unitPriceCents: number;
     totalPriceCents: number;
   }[] = [];
 
+  const infill = await getInfillOptions();
   const available = await availableCatalog();
   // Once colors come from the Bambuddy inventory, a color is required — it is what we have in stock.
   const colorRequired = Object.keys(available.colors).length > 0;
@@ -72,14 +80,19 @@ export async function POST(request: NextRequest) {
     if ((item.colorId || colorRequired) && (!color || color.materialId !== material.id)) {
       return NextResponse.json({ error: "Color is not available for this material" }, { status: 400 });
     }
+    const infillPercent = item.infillPercent ?? infill.defaultLevel;
+    if (!infill.levels.includes(infillPercent)) {
+      return NextResponse.json({ error: "Infill level is not available" }, { status: 400 });
+    }
 
     try {
       const breakdown = computeMaterialPrice(
         material,
         {
-          volumeCm3: Number(file.volumeCm3),
+          volumeCm3: scaledVolume(Number(file.volumeCm3), item.scalePercent),
           finishMultiplier: finish ? Number(finish.multiplier) : 1,
           quantity: item.quantity,
+          infillPercent,
         },
         color,
       );
@@ -90,6 +103,8 @@ export async function POST(request: NextRequest) {
         finishId: finish?.id ?? null,
         colorId: color?.id ?? null,
         quantity: item.quantity,
+        scalePercent: item.scalePercent,
+        infillPercent,
         unitPriceCents: breakdown.unitPriceCents,
         totalPriceCents: breakdown.totalPriceCents,
       });

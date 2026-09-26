@@ -57,6 +57,10 @@ export type QuoteDTO = {
 export type OrderItemDTO = {
   id: string;
   quantity: number;
+  /** Model size in % of the uploaded file. */
+  scalePercent: number;
+  /** Slicer infill in %; null on orders placed before it could be picked. */
+  infillPercent: number | null;
   unitPriceCents: number;
   totalPriceCents: number;
   file: { id: string; originalName: string; format: "STL" | "OBJ"; volumeCm3: number | null };

@@ -180,6 +180,10 @@ model OrderItem {
   colorId        String?
   finishId       String?
   quantity       Int     @default(1)
+  // Customer's choices: model size in % of the uploaded file, and slicer infill in %
+  // (NULL on orders placed before infill could be picked).
+  scalePercent   Int     @default(100)
+  infillPercent  Int?
   unitPriceCents Int
   totalPriceCents Int
 
