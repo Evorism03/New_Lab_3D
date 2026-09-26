@@ -1006,3 +1006,32 @@ body.is-dragging { user-select: none; -webkit-user-select: none; }
   .acc-stat-value { font-size: 18px; }
   .toolbar #period { flex: 1 1 100%; max-width: none; }
 }
+
+/* ---- Серийные номера: таблица как лист «Продажи» ---- */
+.serial-card { padding: 6px 10px; }
+table.serial-table { width: 100%; border-collapse: collapse; }
+table.serial-table th, table.serial-table td { border-bottom: 1px solid var(--border); padding: 8px; font-size: 14px; text-align: left; vertical-align: middle; }
+table.serial-table th { color: var(--muted); font-weight: 600; font-size: 13px; }
+table.serial-table tbody tr { cursor: pointer; }
+table.serial-table tbody tr:hover, table.serial-table tbody tr:focus { background: var(--panel-2); outline: none; }
+table.serial-table td.nowrap { white-space: nowrap; }
+table.serial-table .serial { font-size: 13px; padding: 2px 8px; }
+table.serial-table .pill { margin-left: 4px; }
+table.serial-table tr.from-registry .sn-num { color: var(--muted); }
+.sn-num { font-weight: 700; font-variant-numeric: tabular-nums; }
+.sn-center { text-align: center !important; }
+.sn-full { font-size: 12px; }
+@container main (max-width: 900px) {
+  .sn-full { display: none; }
+}
+@container main (max-width: 640px) {
+  table.serial-table thead { display: none; }
+  table.serial-table tbody tr { display: grid; grid-template-columns: auto 1fr auto; gap: 4px 10px; padding: 10px 4px; border-bottom: 1px solid var(--border); }
+  table.serial-table tbody td { border: 0; padding: 0; }
+  table.serial-table tbody td:nth-child(3) { display: none; }
+  table.serial-table tbody td:nth-child(4), table.serial-table tbody td:nth-child(5) { font-size: 13px; }
+  table.serial-table tbody td:nth-child(6) { grid-column: 3; grid-row: 1; color: var(--muted); font-size: 13px; }
+  table.serial-table tbody td:nth-child(7) { grid-column: 1 / -1; font-size: 13px; }
+  table.serial-table tbody td:nth-child(8) { grid-column: 1 / -1; font-size: 13px; }
+  table.serial-table tbody td:nth-child(7):empty { display: none; }
+}

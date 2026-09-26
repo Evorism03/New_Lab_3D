@@ -61,8 +61,15 @@ import db, {
   deleteDeliveryTopup,
   importLedgerRows,
   guessLedgerCategory,
+  listSerialBook,
+  findRegistrySerial,
+  createRegistrySerial,
+  updateRegistrySerial,
+  deleteRegistrySerial,
+  importRegistrySerials,
 } from './db.js';
 import { parseLedgerText } from './lib/ledger-import.js';
+import { parseSerialsText } from './lib/serials-import.js';
 import { buildLabelPdf } from './lib/label.js';
 import * as ozon from './lib/ozon.js';
 import * as cdek from './lib/cdek.js';
@@ -254,42 +261,28 @@ function isDuplicateLedgerRow(r) {
     .get(r.date, r.income, r.expense, r.description);
 }
 
+// Как лист «Продажи»: #, С/Н, ревизия, цвет, разъём, дата сборки, примечание (+ заказ).
 function serialsToCsv(rows) {
-  const header = [
-    'ID заказа',
-    'Клиент',
-    'Телефон',
-    'Статус',
-    'Модель',
-    'Товар',
-    'Цвет',
-    'Разъём',
-    'Кол-во',
-    'Цена',
-    'Серийный номер',
-  ];
-  const statusLabel = (id) => STATUSES.find((s) => s.id === id)?.label || id;
+  const header = ['#', 'С / Н', 'Ревизия', 'Цвет', 'Разъем', 'Дата сборки', 'Прим.', 'Заказ', 'Клиент'];
   const lines = [header.map(csvEscape).join(';')];
   for (const r of rows) {
     lines.push(
       [
-        r.order_number,
+        r.number ?? '',
+        r.serial,
+        r.revision ?? '',
+        r.color,
+        r.connector,
+        r.assembled_at ? r.assembled_at.split('-').reverse().join('.') : '',
+        r.note,
+        r.order_number ? `#${r.order_number}` : '',
         r.full_name,
-        r.phone,
-        statusLabel(r.status),
-        modelLabel(r.model_id),
-        r.product_name,
-        colorLabel(r.color),
-        connectorLabel(r.connector),
-        r.quantity,
-        r.price,
-        r.serial_number,
       ]
         .map(csvEscape)
         .join(';')
     );
   }
-  return '﻿' + lines.join('\r\n');
+  return '\ufeff' + lines.join('\r\n');
 }
 
 // Приводит любой ввод телефона к формату +7XXXXXXXXXX, которого требует Ozon Delivery API.
@@ -796,6 +789,50 @@ const server = http.createServer(async (req, res) => {
 
     if (pathname === '/api/serials' && req.method === 'GET') {
       return sendJson(res, 200, listSerials());
+    }
+
+    // Книга серийных номеров (как лист «Продажи»): заказы + реестр номеров из таблицы.
+    if (pathname === '/api/serials/book' && req.method === 'GET') {
+      return sendJson(res, 200, listSerialBook());
+    }
+
+    if (pathname === '/api/serials/registry' && req.method === 'POST') {
+      return sendJson(res, 201, createRegistrySerial(await readBody(req)));
+    }
+
+    const registryMatch = pathname.match(/^\/api\/serials\/registry\/(\d+)$/);
+    if (registryMatch && req.method === 'PATCH') {
+      const row = updateRegistrySerial(Number(registryMatch[1]), await readBody(req));
+      if (!row) return sendJson(res, 404, { error: 'Номер не найден' });
+      return sendJson(res, 200, row);
+    }
+    if (registryMatch && req.method === 'DELETE') {
+      if (!deleteRegistrySerial(Number(registryMatch[1]))) return sendJson(res, 404, { error: 'Номер не найден' });
+      return sendJson(res, 200, { ok: true });
+    }
+
+    // Импорт листа «Продажи»: предпросмотр (commit: false), потом запись.
+    if (pathname === '/api/serials/import' && req.method === 'POST') {
+      const data = await readBody(req);
+      const { rows, errors } = parseSerialsText(data.text);
+      const seen = new Set();
+      const prepared = rows.map((r) => {
+        const inRegistry = findRegistrySerial(r.serial);
+        const owner = findSerialOwner(r.serial);
+        const number = Number(r.serial.slice(-4));
+        const repeated = seen.has(number);
+        seen.add(number);
+        return {
+          ...r,
+          number,
+          duplicate: !!(inRegistry || owner || repeated),
+          reason: inRegistry ? 'уже в реестре' : owner ? `в заказе #${owner.order_number}` : repeated ? 'номер повторяется' : '',
+        };
+      });
+      const fresh = prepared.filter((r) => !r.duplicate).length;
+      if (!data.commit) return sendJson(res, 200, { rows: prepared, errors, new_count: fresh });
+      const imported = importRegistrySerials(prepared);
+      return sendJson(res, 200, { imported, skipped: prepared.length - imported, errors });
     }
 
     const itemMatch = pathname.match(/^\/api\/items\/(\d+)$/);
@@ -1441,7 +1478,7 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (pathname === '/api/export/serials.csv' && req.method === 'GET') {
-      const csv = serialsToCsv(listSerials());
+      const csv = serialsToCsv(listSerialBook());
       res.writeHead(200, {
         'Content-Type': 'text/csv; charset=utf-8',
         'Content-Disposition': 'attachment; filename="serials.csv"',
