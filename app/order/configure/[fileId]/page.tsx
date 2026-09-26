@@ -1,7 +1,7 @@
 import { notFound } from "next/navigation";
 
 import { ConfigureClient } from "@/components/ConfigureClient";
-import { availableColorsWhere } from "@/lib/colorSync";
+import { availableCatalog } from "@/lib/colorSync";
 import { prisma } from "@/lib/db";
 import { localizeCatalogText } from "@/lib/i18n/catalog";
 import { getServerLocale } from "@/lib/i18n/locale";
@@ -18,12 +18,12 @@ export default async function ConfigurePage({
   const { fileId } = await params;
   const dict = getDictionary(await getServerLocale());
 
-  const availableColors = await availableColorsWhere();
+  const available = await availableCatalog();
   const [file, materials] = await Promise.all([
     prisma.uploadedFile.findUnique({ where: { id: fileId } }),
     prisma.material.findMany({
-      where: { active: true },
-      include: { colors: { where: availableColors, orderBy: COLOR_ORDER }, finishes: true },
+      where: available.materials,
+      include: { colors: { where: available.colors, orderBy: COLOR_ORDER }, finishes: true },
       orderBy: { name: "asc" },
     }),
   ]);

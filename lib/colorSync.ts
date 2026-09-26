@@ -176,6 +176,20 @@ export async function availableColorsWhere(): Promise<Prisma.ColorWhereInput> {
   return { source: "bambuddy", stockGrams: { gte: minStockGrams } };
 }
 
+/**
+ * What customers may order: colors as in availableColorsWhere(), and materials that are active
+ * and — once colors come from the Bambuddy inventory — have at least one of those colors.
+ * A material with nothing in stock is not offered at all.
+ */
+export async function availableCatalog(): Promise<{
+  colors: Prisma.ColorWhereInput;
+  materials: Prisma.MaterialWhereInput;
+}> {
+  const colors = await availableColorsWhere();
+  const inventoryDriven = Object.keys(colors).length > 0;
+  return { colors, materials: { active: true, ...(inventoryDriven ? { colors: { some: colors } } : {}) } };
+}
+
 /** The same rule as availableColorsWhere(), for marking colors in the admin. */
 export async function getColorAvailability() {
   const inventoryDriven = isBambuddyConfigured() && Boolean(await getSetting("bambuddy.lastSyncAt"));

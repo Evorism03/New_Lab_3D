@@ -95,7 +95,7 @@ export function ConfigureClient({
   };
 
   return (
-    <div className="mx-auto grid max-w-[1600px] grid-cols-1 gap-8 px-6 py-6 lg:grid-cols-[minmax(0,2fr)_minmax(380px,1fr)]">
+    <div className="mx-auto grid max-w-[1600px] grid-cols-1 gap-8 px-6 py-6 lg:grid-cols-[minmax(0,1fr)_minmax(600px,1.1fr)]">
       <div>
         <div className="h-[55vh] min-h-[360px] lg:h-[calc(100vh-240px)] lg:min-h-[480px]">
           <ModelViewer fileUrl={`/api/files/${file.id}/raw`} format={file.format} />
@@ -121,10 +121,12 @@ export function ConfigureClient({
       </div>
 
       <div className="flex flex-col lg:sticky lg:top-[80px] lg:h-[calc(100vh-104px)]">
-        <div className="lg:min-h-0 lg:flex-1 lg:overflow-y-auto lg:pr-2">
         <h1 className="text-xl font-bold text-text">{t.title}</h1>
 
-        <div className="mt-6">
+        {/* Plastics in their own column, and right next to it everything about the chosen one
+            (color, finish, quantity, price) — no scrolling down past all the materials. */}
+        <div className="mt-4 grid grid-cols-1 gap-6 sm:grid-cols-2 lg:min-h-0 lg:flex-1">
+        <div className="lg:min-h-0 lg:overflow-y-auto lg:pr-2">
           <label className="block text-sm font-medium text-text">{t.material}</label>
           <div className="mt-2 grid grid-cols-2 gap-3">
             {materials.map((m) => {
@@ -159,8 +161,10 @@ export function ConfigureClient({
           )}
         </div>
 
+        <div className="flex flex-col lg:min-h-0">
+        <div className="flex flex-col gap-4 lg:min-h-0 lg:flex-1 lg:overflow-y-auto lg:pr-2">
         {material.colors.length > 0 && (
-          <div className="mt-4">
+          <div>
             <label className="block text-sm font-medium text-text">{t.color}</label>
             {colorGroups.map((group) => (
               <div key={group.variant}>
@@ -191,7 +195,7 @@ export function ConfigureClient({
         )}
 
         {material.finishes.length > 0 && (
-          <div className="mt-4">
+          <div>
             <label className="block text-sm font-medium text-text">{t.finish}</label>
             <div className="mt-1 flex flex-wrap gap-2">
               {material.finishes.map((f) => (
@@ -208,7 +212,7 @@ export function ConfigureClient({
           </div>
         )}
 
-        <div className="mt-4">
+        <div>
           <label className="block text-sm font-medium text-text">{t.quantity}</label>
           <input
             type="number"
@@ -254,6 +258,8 @@ export function ConfigureClient({
           >
             {t.continueToCheckout}
           </button>
+        </div>
+        </div>
         </div>
       </div>
     </div>

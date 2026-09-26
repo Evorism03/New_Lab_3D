@@ -252,6 +252,32 @@ function Invoke-Native([scriptblock]$Command) {
     finally { $ErrorActionPreference = $previous }
 }
 
+# prisma db push asks "Do you want to ignore the warning(s)? (y/N)" when a change might not fit
+# existing data - and the desktop app runs steps with nobody to answer, so the update hung with
+# the site stopped. With stdin closed Prisma fails instead of asking; if every warning is only
+# "a unique constraint will be added" (it either applies or fails, nothing is deleted) we push
+# again with --accept-data-loss, otherwise stop - that needs a human decision.
+function Invoke-DbPush {
+    $push = Invoke-Native { "" | & npx prisma db push }
+    $lines = @($push.Output | Where-Object { $_ -notmatch "RemoteException" })
+    $lines | ForEach-Object { Write-Host "    $_" }
+    if ($push.ExitCode -eq 0) { return $true }
+
+    $start = [Array]::FindIndex($lines, [Predicate[string]] { param($l) $l -match "There might be data loss" })
+    if ($start -lt 0) { return $false }
+    $warnings = @($lines[($start + 1)..($lines.Count - 1)] | Where-Object { $_.Trim() -and $_ -notmatch "^\s*Error:" })
+    $onlyNewUniques = $warnings.Count -gt 0 -and -not ($warnings | Where-Object { $_ -notmatch "A unique constraint covering the columns .* will be added" })
+    if (-not $onlyNewUniques) {
+        Write-Warn "Изменение схемы может удалить данные - автоматически не применяется. Проверьте предупреждения выше и, если согласны, выполните в консоли: server.bat db-push"
+        return $false
+    }
+
+    Write-Ok "Добавляются только уникальные индексы (данные не удаляются) - подтверждаю автоматически."
+    $push = Invoke-Native { & npx prisma db push --accept-data-loss }
+    $push.Output | Where-Object { $_ -notmatch "RemoteException" } | ForEach-Object { Write-Host "    $_" }
+    return ($push.ExitCode -eq 0)
+}
+
 function Stop-ProcessTree($ProcessId) {
     if ($ProcessId) { [void](Invoke-Native { & taskkill /PID $ProcessId /T /F }) }
 }

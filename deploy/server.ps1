@@ -14,6 +14,7 @@
   server.bat autostart      # включить/выключить запуск вместе с Windows
   server.bat cleanup        # очистка лишних файлов
   server.bat uninstall
+  server.bat db-push        # применить схему базы вручную (с вопросом о рисках)
 #>
 param(
     [Parameter(Position = 0)][string]$Command = "menu",
@@ -286,10 +287,17 @@ function Invoke-Update {
         Write-Good "Код обновлён. Сервер здесь не установлен, поэтому зависимости, сборка и перезапуск пропущены."
         return
     }
-    Write-Step "Зависимости";  & npm install --no-audit --no-fund;  if ($LASTEXITCODE -ne 0) { Write-Bad "npm install не удался."; return }
-    Write-Step "Клиент базы";  & npx prisma generate;               if ($LASTEXITCODE -ne 0) { Write-Bad "prisma generate не удался."; return }
-    Write-Step "Схема базы";   & npx prisma db push;                if ($LASTEXITCODE -ne 0) { Write-Bad "prisma db push не удался."; return }
-    Write-Step "Сборка сайта"; & npm run build;                     if ($LASTEXITCODE -ne 0) { Write-Bad "Сборка не удалась."; return }
+    # A failed step must not leave the site down: the previous build is started again.
+    $failed = $null
+    Write-Step "Зависимости";  & npm install --no-audit --no-fund;  if ($LASTEXITCODE -ne 0) { $failed = "npm install не удался." }
+    if (-not $failed) { Write-Step "Клиент базы"; & npx prisma generate; if ($LASTEXITCODE -ne 0) { $failed = "prisma generate не удался." } }
+    if (-not $failed) { Write-Step "Схема базы"; if (-not (Invoke-DbPush)) { $failed = "prisma db push не удался." } }
+    if (-not $failed) { Write-Step "Сборка сайта"; & npm run build; if ($LASTEXITCODE -ne 0) { $failed = "Сборка не удалась." } }
+    if ($failed) {
+        Write-Bad $failed
+        if ($wasRunning) { Write-Info "Запускаю сайт снова, чтобы он не остался выключенным."; Invoke-Start }
+        return
+    }
     Write-Good "Обновление завершено."
     if ($wasRunning) { Invoke-Start }
     else { Write-Info "Сервер был остановлен - запустите его пунктом [1]." }
@@ -608,6 +616,8 @@ try {
         "bambuddy-stop" { Invoke-BambuddyService "stop" }
         "bambuddy-restart" { Invoke-BambuddyService "restart" }
         "bambuddy-site" { Invoke-BambuddySite }
+        # Interactive schema push (asks y/N itself) for changes setup/update refuse to apply unattended.
+        "db-push" { Import-EnvFile $script:EnvFile | Out-Null; & npx prisma db push; if ($LASTEXITCODE -ne 0) { Write-Bad "prisma db push не удался." } }
         default {
             Write-Bad "Неизвестная команда: $Command"
             Write-Info "Доступно: menu, start, stop, restart, status, logs, update, setup, autostart, cleanup, uninstall"

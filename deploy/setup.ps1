@@ -95,8 +95,7 @@ Write-Ok $script:EnvFile
 Write-Step "Подготовка базы данных"
 & npx prisma generate
 if ($LASTEXITCODE -ne 0) { throw "prisma generate завершился с ошибкой." }
-& npx prisma db push
-if ($LASTEXITCODE -ne 0) { throw "prisma db push завершился с ошибкой." }
+if (-not (Invoke-DbPush)) { throw "prisma db push завершился с ошибкой." }
 
 $generatedPassword = $false
 if (-not $AdminPassword -and $firstRun) { $AdminPassword = (New-Secret 12); $generatedPassword = $true }

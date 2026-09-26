@@ -6,7 +6,7 @@ import { ScrollParallax } from "@/components/ScrollParallax";
 import { StatCounter } from "@/components/StatCounter";
 import { TextMask } from "@/components/TextMask";
 import { TiltFrame } from "@/components/TiltFrame";
-import { availableColorsWhere } from "@/lib/colorSync";
+import { availableCatalog } from "@/lib/colorSync";
 import { prisma } from "@/lib/db";
 import { localizeCatalogText } from "@/lib/i18n/catalog";
 import { getServerLocale } from "@/lib/i18n/locale";
@@ -30,18 +30,20 @@ export default async function HomePage() {
   const dict = getDictionary(await getServerLocale());
   const { home } = dict;
 
+  // Only what can be ordered right now (lib/colorSync.ts) — no out-of-stock plastics.
+  const available = await availableCatalog();
   const [materialsCount, ordersCount, fastestMaterial, materials, showcaseItems] =
     await Promise.all([
-      prisma.material.count({ where: { active: true } }),
+      prisma.material.count({ where: available.materials }),
       prisma.order.count({ where: { status: { not: "DRAFT" } } }),
       prisma.material.findFirst({
-        where: { active: true },
+        where: available.materials,
         orderBy: { leadTimeDays: "asc" },
         select: { leadTimeDays: true },
       }),
       prisma.material.findMany({
-        where: { active: true },
-        include: { colors: { where: await availableColorsWhere(), orderBy: COLOR_ORDER } },
+        where: available.materials,
+        include: { colors: { where: available.colors, orderBy: COLOR_ORDER } },
       }),
       prisma.showcaseItem.findMany({
         orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }],

@@ -1544,7 +1544,12 @@ $btnApply.Add_Click({
 
     $steps = @()
     if ($wasRunning) { $steps += (New-ServerStep "Остановка сервера" "stop") }
-    $steps += @{ Title = "Установка и настройка"; Script = (Join-Path $PSScriptRoot "setup.ps1"); Args = $setupArgs; Silent = $false }
+    # If setup fails, start the site again - it was stopped above and must not stay down.
+    $script:ApplyWasRunning = $wasRunning
+    $steps += @{
+        Title = "Установка и настройка"; Script = (Join-Path $PSScriptRoot "setup.ps1"); Args = $setupArgs; Silent = $false
+        OnFail = { param($text) if ($script:ApplyWasRunning) { Add-Steps @((New-ServerStep "Запуск сервера" "start")) } }
+    }
     if ($wantAutostart -ne $hadAutostart) {
         $steps += @{ Title = $(if ($wantAutostart) { "Включение автозапуска" } else { "Выключение автозапуска" }); Script = (Join-Path $PSScriptRoot "install-autostart.ps1"); Args = $(if ($wantAutostart) { "" } else { "-Remove" }); Silent = $false }
     }

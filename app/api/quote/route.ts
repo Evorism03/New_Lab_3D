@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
-import { availableColorsWhere } from "@/lib/colorSync";
+import { availableCatalog } from "@/lib/colorSync";
 import { prisma } from "@/lib/db";
 import { PricingError } from "@/lib/pricing/engine";
 import { computeMaterialPrice } from "@/lib/pricing/material";
@@ -22,12 +22,14 @@ export async function POST(request: NextRequest) {
   }
   const { fileId, materialId, finishId, colorId, quantity } = parsed.data;
 
-  const available = await availableColorsWhere();
+  const available = await availableCatalog();
+  // Once colors come from the Bambuddy inventory, a color is required — it is what we have in stock.
+  const colorRequired = Object.keys(available.colors).length > 0;
   const [file, material, finish, color] = await Promise.all([
     prisma.uploadedFile.findUnique({ where: { id: fileId } }),
-    prisma.material.findUnique({ where: { id: materialId } }),
+    prisma.material.findFirst({ where: { id: materialId, ...available.materials } }),
     finishId ? prisma.finish.findUnique({ where: { id: finishId } }) : Promise.resolve(null),
-    colorId ? prisma.color.findFirst({ where: { id: colorId, ...available } }) : Promise.resolve(null),
+    colorId ? prisma.color.findFirst({ where: { id: colorId, ...available.colors } }) : Promise.resolve(null),
   ]);
 
   if (!file || file.status !== "READY" || file.volumeCm3 === null) {
@@ -39,7 +41,7 @@ export async function POST(request: NextRequest) {
   if (finishId && (!finish || finish.materialId !== material.id)) {
     return NextResponse.json({ error: "Finish does not belong to this material" }, { status: 400 });
   }
-  if (colorId && (!color || color.materialId !== material.id)) {
+  if ((colorId || colorRequired) && (!color || color.materialId !== material.id)) {
     return NextResponse.json({ error: "Color is not available for this material" }, { status: 400 });
   }
 
