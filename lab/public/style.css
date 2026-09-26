@@ -1087,3 +1087,16 @@ a.ov-serial:hover { border-color: var(--accent); color: var(--accent); text-deco
   .ov-ledger-row { grid-template-columns: minmax(0, 1fr) auto; }
   .ov-ledger-row > span:first-child { grid-column: 1 / -1; font-size: 12px; }
 }
+
+/* ---- Новый заказ: расчёт доставки ---- */
+.dq { margin-top: 14px; padding: 14px 16px; border: 1px solid var(--border); border-radius: 12px; background: var(--panel-2); display: flex; flex-direction: column; gap: 10px; }
+.dq-row { display: flex; align-items: flex-end; gap: 14px; flex-wrap: wrap; }
+.dq-box { margin: 0; min-width: 240px; flex: 0 1 360px; }
+.dq-box select { background: var(--panel); }
+.dq-parcel { font-size: 13px; padding-bottom: 8px; line-height: 1.5; }
+.dq-point { font-size: 14px; }
+.dq-candidates { display: flex; flex-direction: column; gap: 6px; align-items: flex-start; }
+.dq-cand { text-align: left; white-space: normal; }
+.dq-price { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.dq-price b { font-size: 20px; color: var(--accent-2); }
+.dq-result:empty { display: none; }

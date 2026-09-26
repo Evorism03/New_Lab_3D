@@ -31,8 +31,8 @@
     <h2>Внести заказ (из ВК, после оплаты)</h2>
     <div class="wizard-steps" id="wizard-steps">
       <button type="button" data-go="0"><span>1</span>Клиент</button>
-      <button type="button" data-go="1"><span>2</span>Доставка</button>
-      <button type="button" data-go="2"><span>3</span>Товары</button>
+      <button type="button" data-go="1"><span>2</span>Товары</button>
+      <button type="button" data-go="2"><span>3</span>Доставка</button>
       <button type="button" data-go="3"><span>4</span>Проверка</button>
     </div>
     <form id="order-form" novalidate>
@@ -54,6 +54,28 @@
       </section>
 
       <section class="wizard-step" data-step="1">
+        <table class="items-table" id="items-table">
+          <thead>
+            <tr>
+              <th>Товар</th>
+              <th>Модель</th>
+              <th>Цвет</th>
+              <th>Разъём</th>
+              <th style="width:70px">Кол-во</th>
+              <th style="width:110px">Цена, ₽</th>
+              <th style="width:190px">Серийный номер</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="items-body"></tbody>
+        </table>
+        <div class="quick-add">
+          <button type="button" class="secondary small" id="add-item">+ Добавить товар</button>
+          <div id="quick-add" class="quick-add-list"></div>
+        </div>
+      </section>
+
+      <section class="wizard-step" data-step="2">
         <div class="grid-3">
           <div class="field">
             <label>Транспортная компания</label>
@@ -74,27 +96,18 @@
           <div class="field"><label>Дом</label><input data-part="house" placeholder="5"></div>
           <div class="field"><label>Дополнительно</label><input data-part="extra" placeholder="ТЦ, ПВЗ №…"></div>
         </div>
-      </section>
-
-      <section class="wizard-step" data-step="2">
-        <table class="items-table" id="items-table">
-          <thead>
-            <tr>
-              <th>Товар</th>
-              <th>Модель</th>
-              <th>Цвет</th>
-              <th>Разъём</th>
-              <th style="width:70px">Кол-во</th>
-              <th style="width:110px">Цена, ₽</th>
-              <th style="width:190px">Серийный номер</th>
-              <th></th>
-            </tr>
-          </thead>
-          <tbody id="items-body"></tbody>
-        </table>
-        <div class="quick-add">
-          <button type="button" class="secondary small" id="add-item">+ Добавить товар</button>
-          <div id="quick-add" class="quick-add-list"></div>
+        <div class="dq" id="delivery-quote">
+          <div class="dq-row">
+            <div class="field dq-box">
+              <label>Коробка <span class="muted" style="font-weight:normal">(Настройки → Каталог)</span></label>
+              <select id="dq-box"></select>
+            </div>
+            <div class="dq-parcel muted" id="dq-parcel"></div>
+            <div class="spacer"></div>
+            <button type="button" class="secondary" id="dq-calc">↻ Рассчитать доставку</button>
+          </div>
+          <div id="dq-point"></div>
+          <div id="dq-result" class="dq-result"></div>
         </div>
       </section>
 
@@ -229,6 +242,7 @@ addItemBtn.addEventListener('click', () => addItemRow());
   }
   addItemRow();
   renderQuickAdd(document.getElementById('quick-add'), addItemRow);
+  fillBoxes();
 })();
 
 LabAddress.bindAddressFields(document.querySelector('[name="pvz_address"]'), document.getElementById('address-parts'));
@@ -250,7 +264,7 @@ function stepValid(n) {
     }
     input.classList.remove('invalid');
   }
-  if (n === 2) {
+  if (n === 1) {
     const items = readItems().filter((it) => it.product_name);
     if (!items.length) {
       toast('Добавьте хотя бы один товар', 'error');
@@ -284,8 +298,9 @@ function showStep(n) {
   document.getElementById('wizard-next').hidden = step === steps.length - 1;
   document.getElementById('wizard-submit').hidden = step !== steps.length - 1;
   if (step === steps.length - 1) renderSummary();
+  if (step === 2) quoteSoon(0); // шаг «Доставка»: сразу считаем по адресу и товарам
   const first = current.querySelector('input:not([type=hidden]):not([readonly]), select, textarea');
-  if (first && step !== 2) setTimeout(() => first.focus(), 50);
+  if (first && step !== 1) setTimeout(() => first.focus(), 50);
 }
 
 function goNext() {
@@ -342,12 +357,14 @@ function renderSummary() {
       ${form.number.value.trim() ? `<div class="muted">Заказ #${escapeHtml(form.number.value.trim())}</div>` : ''}
     </div>
     <div class="ws-block">
-      <div class="ws-head">Доставка <button type="button" class="link-btn" data-edit="1">изменить</button></div>
+      <div class="ws-head">Доставка <button type="button" class="link-btn" data-edit="2">изменить</button></div>
       <div>${deliveryDot(form.delivery_service.value, catalog.delivery_services)}<strong>${escapeHtml(form.delivery_service.value)}</strong> · ${money(delivery)}</div>
       <div class="muted">${escapeHtml(form.pvz_address.value)}</div>
+      ${quote?.point ? `<div class="muted">ПВЗ: ${escapeHtml(quote.point.label || quote.point.id)}</div>` : ''}
+      ${quote?.parcel?.weight_g ? `<div class="muted">Посылка: ${escapeHtml(quote.parcel.box_name || '')} ${quote.parcel.weight_g} г</div>` : ''}
     </div>
     <div class="ws-block">
-      <div class="ws-head">Товары <button type="button" class="link-btn" data-edit="2">изменить</button></div>
+      <div class="ws-head">Товары <button type="button" class="link-btn" data-edit="1">изменить</button></div>
       ${items.map((it) => `
         <div class="ws-item">
           <span>${escapeHtml(it.product_name)}
@@ -359,6 +376,127 @@ function renderSummary() {
     <div class="ws-total"><span>Товары ${money(goods)} + доставка ${money(delivery)}</span><strong>${money(goods + delivery)}</strong></div>
   `;
   document.querySelectorAll('#wizard-summary [data-edit]').forEach((b) => b.addEventListener('click', () => showStep(Number(b.dataset.edit))));
+}
+
+
+// ---- Доставка: коробка, вес, ПВЗ и стоимость считаются сами ----
+let quote = null;          // последний расчёт
+let chosenPoint = '';      // ПВЗ, выбранный из вариантов вручную
+let manualPrice = false;   // сумму доставки поправили руками — автоматически не перезаписываем
+let quoteTimer = null;
+let quoteSeq = 0;
+const boxSelectEl = document.getElementById('dq-box');
+
+function quoteInput() {
+  const form = document.getElementById('order-form');
+  return {
+    delivery_service: form.delivery_service.value,
+    pvz_address: form.pvz_address.value.trim(),
+    phone: form.phone.value,
+    items: readItems().filter((it) => it.product_name),
+    box_index: boxSelectEl.value === '' ? null : Number(boxSelectEl.value),
+    point: chosenPoint || undefined,
+  };
+}
+function quoteKey() {
+  return JSON.stringify(quoteInput());
+}
+
+function quoteSoon(delay = 700) {
+  clearTimeout(quoteTimer);
+  quoteTimer = setTimeout(() => runQuote(), delay);
+}
+
+function renderParcel(parcel) {
+  const el2 = document.getElementById('dq-parcel');
+  if (!parcel) { el2.textContent = ''; return; }
+  const dims = parcel.length_mm ? `${parcel.length_mm}×${parcel.width_mm}×${parcel.height_mm} мм · ` : '';
+  el2.innerHTML = `${dims}вес <b>${parcel.weight_g} г</b> <span class="muted">(коробка ${parcel.box_weight_g} г + товары ${parcel.items_weight_g} г)</span>`
+    + (parcel.missing_weight?.length ? `<br><span style="color:var(--warn)">нет веса в каталоге: ${escapeHtml(parcel.missing_weight.join(', '))}</span>` : '');
+}
+
+async function runQuote({ force = false } = {}) {
+  const input = quoteInput();
+  const result = document.getElementById('dq-result');
+  const pointBox = document.getElementById('dq-point');
+  if (force) manualPrice = false;
+  const seq = ++quoteSeq;
+  const kind = /сдэк|cdek/i.test(input.delivery_service) ? 'СДЭК' : /озон|ozon/i.test(input.delivery_service) ? 'Ozon' : null;
+  if (kind && !input.pvz_address && !input.point) {
+    result.innerHTML = '<span class="muted">Вставьте адрес ПВЗ — доставка посчитается сама.</span>';
+    pointBox.innerHTML = '';
+    return;
+  }
+  result.innerHTML = kind ? `<span class="muted">Считаю доставку ${kind}…</span>` : '';
+  try {
+    const res = await api('/api/delivery/quote', { method: 'POST', body: JSON.stringify(input) });
+    if (seq !== quoteSeq) return; // пришёл устаревший ответ
+    quote = { ...res, key: JSON.stringify(input) };
+    renderParcel(res.parcel);
+    if (res.parcel.box_index >= 0 && boxSelectEl.value === '') boxSelectEl.value = String(res.parcel.box_index);
+    if (!res.kind) {
+      pointBox.innerHTML = '';
+      result.innerHTML = '<span class="muted">Для этой службы сумму доставки введите вручную.</span>';
+      return;
+    }
+    // ПВЗ: найденный или выбор из вариантов.
+    if (res.point) {
+      pointBox.innerHTML = `<div class="dq-point">📍 ПВЗ: <b>${escapeHtml(res.point.label || res.point.id)}</b>
+        ${res.candidates.length > 1 ? '<button type="button" class="link-btn" id="dq-other">другой пункт</button>' : ''}</div>`;
+      pointBox.querySelector('#dq-other')?.addEventListener('click', () => renderCandidates(res.candidates));
+    } else {
+      renderCandidates(res.candidates, 'По адресу подходит несколько пунктов — выберите нужный:');
+    }
+    if (res.price) {
+      const p = res.price;
+      const period = p.period_min != null ? ` · ${p.period_min === p.period_max ? p.period_min : `${p.period_min}–${p.period_max}`} дн.` : '';
+      result.innerHTML = `<div class="dq-price"><b>${money(p.total)}</b>
+        <span class="muted">доставка ${money(p.delivery)}${p.insurance ? ` + страховка ${money(p.insurance)}` : ''}${period}</span></div>`;
+      if (!manualPrice) {
+        deliveryInput.value = p.total;
+        updatePreview();
+      } else {
+        result.innerHTML += `<button type="button" class="link-btn" id="dq-apply">подставить ${money(p.total)} в сумму доставки</button>`;
+        result.querySelector('#dq-apply').addEventListener('click', () => {
+          manualPrice = false;
+          deliveryInput.value = p.total;
+          updatePreview();
+          result.querySelector('#dq-apply').remove();
+        });
+      }
+    } else {
+      result.innerHTML = '';
+    }
+  } catch (err) {
+    if (seq !== quoteSeq) return;
+    quote = null;
+    result.innerHTML = `<span class="neg">${escapeHtml(err.message)}</span> <span class="muted">— сумму можно ввести вручную.</span>`;
+  }
+}
+
+function renderCandidates(candidates, title = 'Выберите пункт выдачи:') {
+  const pointBox = document.getElementById('dq-point');
+  pointBox.innerHTML = `<div class="muted" style="font-size:13px;margin-bottom:6px">${title}</div>
+    <div class="dq-candidates">${candidates.map((c) => `
+      <button type="button" class="secondary small dq-cand" data-id="${escapeHtml(c.id)}">${escapeHtml(c.label || c.id)}</button>`).join('')}</div>`;
+  pointBox.querySelectorAll('.dq-cand').forEach((b) => b.addEventListener('click', () => {
+    chosenPoint = b.dataset.id;
+    runQuote();
+  }));
+}
+
+// Что влияет на расчёт: ТК, адрес, коробка. Ручная правка суммы — не перезаписывать.
+document.getElementById('delivery-service').addEventListener('change', () => { chosenPoint = ''; quoteSoon(0); });
+document.querySelector('[name="pvz_address"]').addEventListener('input', () => { chosenPoint = ''; quoteSoon(900); });
+boxSelectEl.addEventListener('change', () => quoteSoon(0));
+document.getElementById('dq-calc').addEventListener('click', () => runQuote({ force: true }));
+deliveryInput.addEventListener('input', () => { manualPrice = true; });
+
+function fillBoxes() {
+  const boxes = catalog.boxes || [];
+  boxSelectEl.innerHTML = boxes.length
+    ? boxes.map((b, i) => `<option value="${i}">${escapeHtml(b.name)} — ${b.length_mm}×${b.width_mm}×${b.height_mm} мм</option>`).join('')
+    : '<option value="">— добавьте коробки в Настройках → Каталог —</option>';
 }
 
 showStep(0);
@@ -379,6 +517,12 @@ document.getElementById('order-form').addEventListener('submit', async (e) => {
     notes: form.notes.value,
     items: readItems(),
   };
+  // Посылка, ПВЗ и расчёт уходят в заказ, если расчёт сделан для текущих данных формы.
+  if (quote && quote.key === quoteKey()) {
+    data.delivery = { kind: quote.kind, parcel: quote.parcel, point: quote.point, price: quote.price, checkout: quote.checkout };
+  } else if (quote?.parcel) {
+    data.delivery = { kind: null, parcel: quote.parcel };
+  }
   try {
     const order = await api('/api/orders', { method: 'POST', body: JSON.stringify(data) });
     window.location.href = `/order.html?id=${order.id}`;
