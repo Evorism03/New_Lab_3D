@@ -3,7 +3,7 @@ import path from 'node:path';
 import fs from 'node:fs';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import {
+import db, {
   STATUSES,
   MODELS,
   COLORS,
@@ -46,7 +46,30 @@ import {
   createSession,
   getSessionUser,
   deleteSession,
+  LEDGER_CATEGORIES,
+  getAccountingSettings,
+  setAccountingSettings,
+  listLedger,
+  createLedgerEntry,
+  updateLedgerEntry,
+  deleteLedgerEntry,
+  restoreOrderLedger,
+  syncAllOrdersLedger,
+  ledgerSummary,
+  listDeliveryTopups,
+  createDeliveryTopup,
+  deleteDeliveryTopup,
+  importLedgerRows,
+  guessLedgerCategory,
+  listSerialBook,
+  findRegistrySerial,
+  createRegistrySerial,
+  updateRegistrySerial,
+  deleteRegistrySerial,
+  importRegistrySerials,
 } from './db.js';
+import { parseLedgerText } from './lib/ledger-import.js';
+import { parseSerialsText } from './lib/serials-import.js';
 import { buildLabelPdf } from './lib/label.js';
 import * as ozon from './lib/ozon.js';
 import * as cdek from './lib/cdek.js';
@@ -201,42 +224,65 @@ function ordersToCsv(orders) {
   return '﻿' + lines.join('\r\n');
 }
 
-function serialsToCsv(rows) {
-  const header = [
-    'ID заказа',
-    'Клиент',
-    'Телефон',
-    'Статус',
-    'Модель',
-    'Товар',
-    'Цвет',
-    'Разъём',
-    'Кол-во',
-    'Цена',
-    'Серийный номер',
-  ];
-  const statusLabel = (id) => STATUSES.find((s) => s.id === id)?.label || id;
+function ledgerToCsv(rows) {
+  const header = ['Дата', 'Поступление', 'Списание', 'Назначение', 'Категория', 'Гарантия', 'Гарантия до', 'Налог', 'Доставка со счёта ТК', 'Заказ'];
   const lines = [header.map(csvEscape).join(';')];
   for (const r of rows) {
     lines.push(
       [
-        r.order_number,
-        r.full_name,
-        r.phone,
-        statusLabel(r.status),
-        modelLabel(r.model_id),
-        r.product_name,
-        colorLabel(r.color),
-        connectorLabel(r.connector),
-        r.quantity,
-        r.price,
-        r.serial_number,
+        r.date.split('-').reverse().join('.'),
+        r.income ? String(r.income).replace('.', ',') : '',
+        r.expense ? String(r.expense).replace('.', ',') : '',
+        r.description,
+        r.category,
+        r.warranty ? 'да' : '',
+        r.warranty_until ? r.warranty_until.split('-').reverse().join('.') : '',
+        r.taxable ? 'да' : '',
+        r.delivery_account ? 'да' : '',
+        r.link_order_number ? `#${r.link_order_number}` : '',
       ]
         .map(csvEscape)
         .join(';')
     );
   }
-  return '﻿' + lines.join('\r\n');
+  return '\ufeff' + lines.join('\r\n');
+}
+
+// Период из ?from=YYYY-MM-DD&to=YYYY-MM-DD (любая из дат может отсутствовать).
+function periodParams(url) {
+  const valid = (v) => (/^\d{4}-\d{2}-\d{2}$/.test(v || '') ? v : undefined);
+  return { from: valid(url.searchParams.get('from')), to: valid(url.searchParams.get('to')) };
+}
+
+// Строка из импорта уже есть в журнале (повторная вставка того же куска таблицы).
+function isDuplicateLedgerRow(r) {
+  return !!db
+    .prepare('SELECT 1 FROM ledger WHERE date = ? AND income = ? AND expense = ? AND description = ? LIMIT 1')
+    .get(r.date, r.income, r.expense, r.description);
+}
+
+// Как лист «Продажи»: #, С/Н, ревизия, цвет, разъём, дата сборки, примечание (+ заказ).
+function serialsToCsv(rows) {
+  const header = ['#', 'С / Н', 'Ревизия', 'Цвет', 'Разъем', 'Дата сборки', 'Прим.', 'Заказ', 'Клиент'];
+  const lines = [header.map(csvEscape).join(';')];
+  for (const r of rows) {
+    lines.push(
+      [
+        r.number ?? '',
+        r.serial,
+        r.revision ?? '',
+        r.color,
+        r.connector,
+        r.assembled_at ? r.assembled_at.split('-').reverse().join('.') : '',
+        r.note,
+        r.order_number ? `#${r.order_number}` : '',
+        r.full_name,
+      ]
+        .map(csvEscape)
+        .join(';')
+    );
+  }
+  return '\ufeff' + lines.join('\r\n');
 }
 
 // Приводит любой ввод телефона к формату +7XXXXXXXXXX, которого требует Ozon Delivery API.
@@ -493,6 +539,135 @@ function cdekOrderBody(order, point) {
   return body;
 }
 
+// Стоимость доставки СДЭК до ПВЗ point (со страховкой от стоимости товаров).
+// order — заказ или его черновик из формы: goods_total + вес/габариты посылки.
+async function cdekPriceFor(order, point) {
+  const from = cdekShipmentPoint();
+  const body = {
+    tariff_code: cdekTariffFor(point),
+    from_location: from.city_code ? { code: Number(from.city_code) } : undefined,
+    to_location: point.city_code ? { code: Number(point.city_code) } : undefined,
+    shipment_point: from.code,
+    delivery_point: point.code,
+    packages: [cdekPackageSize(order)],
+    services: cdekInsuranceService(order),
+  };
+  const result = await cdek.calculateTariff(body);
+  if (result.errors?.length) throw new Error(`СДЭК расчёт: ${result.errors.map((e) => e.message).join('; ')}`);
+  const deliverySum = Number(result.delivery_sum) || 0;
+  const total = Number(result.total_sum ?? deliverySum);
+  const insurance = (result.services || []).filter((x) => x.code === 'INSURANCE')
+    .reduce((sum, x) => sum + Number(x.total_sum ?? x.sum ?? 0), 0);
+  return {
+    delivery: Math.round((total - insurance) * 100) / 100,
+    insurance: Math.round(insurance * 100) / 100,
+    total: Math.round(total * 100) / 100,
+    period_min: result.period_min ?? null,
+    period_max: result.period_max ?? null,
+    tariff_code: body.tariff_code,
+  };
+}
+
+// ---- Расчёт доставки для нового заказа (ещё не сохранённого) ----
+// Посылка: коробка из Настроек → Каталог (по умолчанию первая) + вес товаров по каталогу.
+function parcelFor(items, boxIndex) {
+  const boxes = readBoxTemplates();
+  const index = Number.isInteger(boxIndex) && boxes[boxIndex] ? boxIndex : boxes.length ? 0 : -1;
+  const box = boxes[index] || null;
+  const products = readProductTemplates();
+  let itemsWeight = 0;
+  const missing = [];
+  for (const it of items) {
+    const qty = Number(it.quantity) || 0;
+    if (!it.product_name || !qty) continue;
+    const w = products.find((p) => p.name === it.product_name)?.weight_g || 0;
+    if (w > 0) itemsWeight += w * qty;
+    else if (!missing.includes(it.product_name)) missing.push(it.product_name);
+  }
+  return {
+    box_index: index,
+    box_name: box?.name || '',
+    box_weight_g: box ? Number(box.weight_g) || 0 : 0,
+    items_weight_g: itemsWeight,
+    missing_weight: missing,
+    weight_g: (box ? Number(box.weight_g) || 0 : 0) + itemsWeight,
+    length_mm: box ? Number(box.length_mm) || 0 : 0,
+    width_mm: box ? Number(box.width_mm) || 0 : 0,
+    height_mm: box ? Number(box.height_mm) || 0 : 0,
+  };
+}
+
+// Подбор ПВЗ по адресу для черновика: если однозначно — выбранный, иначе — варианты на выбор.
+async function quotePoint(kind, address, chosen) {
+  if (kind === 'cdek') {
+    if (chosen) {
+      const info = await cdek.pointInfo(String(chosen));
+      if (!info) throw new Error(`ПВЗ СДЭК с кодом ${chosen} не найден`);
+      return { point: info, candidates: [] };
+    }
+    const found = await cdek.findPointsByAddress(address, 5);
+    if (!found.length) throw new Error(`ПВЗ СДЭК по адресу «${address}» не найден — проверьте адрес`);
+    const [best, second] = found;
+    return { point: second && second.score >= best.score ? null : best, candidates: found };
+  }
+  if (chosen) return { point: { delivery_point_id: Number(chosen) }, candidates: [] };
+  const found = await ozon.findDeliveryPointsByAddress(address, 5);
+  if (!found.length) throw new Error(`ПВЗ Ozon по адресу «${address}» не найден — проверьте адрес`);
+  const [best, second] = found;
+  return { point: best.relaxed || (second && second.score >= best.score) ? null : best, candidates: found };
+}
+
+function carrierKind(service) {
+  const s = String(service || '').toLowerCase();
+  if (s.includes('сдэк') || s.includes('cdek')) return 'cdek';
+  if (s.includes('озон') || s.includes('ozon')) return 'ozon';
+  return null;
+}
+
+// data: { delivery_service, pvz_address, phone, items, box_index, point } → посылка, ПВЗ и стоимость.
+async function quoteDelivery(data) {
+  const items = Array.isArray(data.items) ? data.items : [];
+  const kind = carrierKind(data.delivery_service);
+  const parcel = parcelFor(items, data.box_index == null || data.box_index === '' ? null : Number(data.box_index));
+  const goodsTotal = items.reduce((sum, it) => sum + (Number(it.price) || 0) * (Number(it.quantity) || 0), 0);
+  const result = { kind, parcel, point: null, candidates: [], price: null };
+  if (!kind) return result; // Почта/другое — сумма вручную
+  if (!String(data.pvz_address || '').trim() && !data.point) throw new Error('Укажите адрес ПВЗ');
+  if (!(parcel.weight_g > 0 && parcel.length_mm > 0 && parcel.width_mm > 0 && parcel.height_mm > 0)) {
+    throw new Error('Для расчёта нужна коробка с габаритами и весом — добавьте её в Настройках → Каталог');
+  }
+  const draft = { goods_total: goodsTotal, ...parcel };
+  if (kind === 'cdek') {
+    const { point, candidates } = await quotePoint('cdek', data.pvz_address, data.point);
+    result.candidates = candidates.map((c) => ({ id: String(c.code), label: c.full_address || c.name, type: c.type }));
+    if (!point) return result;
+    result.point = { id: String(point.code), label: point.full_address || point.name || '', raw: point };
+    result.price = await cdekPriceFor(draft, point);
+  } else {
+    const { point, candidates } = await quotePoint('ozon', data.pvz_address, data.point);
+    result.candidates = candidates.map((c) => ({ id: String(c.delivery_point_id), label: c.full_address || c.name, type: c.type }));
+    if (!point) return result;
+    const checkout = await ozon.orderCheckout({
+      recipient: { phone_number: normalizePhone(data.phone) },
+      postings: [{
+        request_id: 1,
+        shipment_method_id: ozonShipmentMethodId(),
+        cutoff_at: ozonCutoffAt(),
+        declared_value: { amount: goodsTotal.toFixed(2), currency_code: 'RUB' },
+        dimensions: ozonDimensions(draft),
+      }],
+      delivery: { delivery_point: { delivery_point_id: Number(point.delivery_point_id) } },
+    });
+    const first = checkout.results?.[0] || checkout;
+    const cost = ozonCheckoutCost(first);
+    result.point = { id: String(point.delivery_point_id), label: point.full_address || '' };
+    result.checkout = first;
+    result.price = cost != null ? ozonDeliveryPriceFor(draft, cost) : null;
+    if (!result.price) throw new Error('Ozon не вернул стоимость доставки');
+  }
+  return result;
+}
+
 // Статусы СДЭК — массив; берём самый свежий. Ошибки валидации — в requests[].errors.
 function cdekSummary(result) {
   const entity = result?.entity || {};
@@ -700,7 +875,41 @@ const server = http.createServer(async (req, res) => {
 
     if (pathname === '/api/orders' && req.method === 'POST') {
       const data = await readBody(req);
-      return sendJson(res, 201, createOrder(data));
+      const order = createOrder(data);
+      // Из формы «Новый заказ» сразу приходят посылка, ПВЗ и расчёт доставки — кладём их в заказ,
+      // чтобы в карточке заказа всё было заполнено.
+      const d = data.delivery;
+      if (d && typeof d === 'object') {
+        const parcel = d.parcel || {};
+        setOrderOzonParams(order.id, {
+          weight_g: parcel.weight_g || null,
+          length_mm: parcel.length_mm || null,
+          width_mm: parcel.width_mm || null,
+          height_mm: parcel.height_mm || null,
+          ozon_delivery_point_id: d.kind === 'ozon' && d.point?.id ? d.point.id : '',
+        });
+        if (d.kind === 'cdek' && d.point?.raw?.code) {
+          const p = d.point.raw;
+          setOrderCdekPoint(order.id, {
+            code: String(p.code), full_address: p.full_address || '', city_code: p.city_code ?? null,
+            type: p.type || '', name: p.name || '',
+          });
+          if (d.price) patchOrderCdekShipment(order.id, { price: d.price, calculated_at: new Date().toISOString() });
+        }
+        if (d.kind === 'ozon' && d.price) {
+          patchOrderOzonShipment(order.id, { price: d.price, checkout: d.checkout || null, checked_out_at: new Date().toISOString() });
+        }
+      }
+      return sendJson(res, 201, getOrder(order.id));
+    }
+
+    // Расчёт доставки в форме нового заказа — без сохранения заказа и без создания отправления.
+    if (pathname === '/api/delivery/quote' && req.method === 'POST') {
+      try {
+        return sendJson(res, 200, await quoteDelivery(await readBody(req)));
+      } catch (err) {
+        return sendJson(res, 502, { error: err.message });
+      }
     }
 
     if (pathname === '/api/integrations/settings' && req.method === 'GET') {
@@ -755,6 +964,50 @@ const server = http.createServer(async (req, res) => {
 
     if (pathname === '/api/serials' && req.method === 'GET') {
       return sendJson(res, 200, listSerials());
+    }
+
+    // Книга серийных номеров (как лист «Продажи»): заказы + реестр номеров из таблицы.
+    if (pathname === '/api/serials/book' && req.method === 'GET') {
+      return sendJson(res, 200, listSerialBook());
+    }
+
+    if (pathname === '/api/serials/registry' && req.method === 'POST') {
+      return sendJson(res, 201, createRegistrySerial(await readBody(req)));
+    }
+
+    const registryMatch = pathname.match(/^\/api\/serials\/registry\/(\d+)$/);
+    if (registryMatch && req.method === 'PATCH') {
+      const row = updateRegistrySerial(Number(registryMatch[1]), await readBody(req));
+      if (!row) return sendJson(res, 404, { error: 'Номер не найден' });
+      return sendJson(res, 200, row);
+    }
+    if (registryMatch && req.method === 'DELETE') {
+      if (!deleteRegistrySerial(Number(registryMatch[1]))) return sendJson(res, 404, { error: 'Номер не найден' });
+      return sendJson(res, 200, { ok: true });
+    }
+
+    // Импорт листа «Продажи»: предпросмотр (commit: false), потом запись.
+    if (pathname === '/api/serials/import' && req.method === 'POST') {
+      const data = await readBody(req);
+      const { rows, errors } = parseSerialsText(data.text);
+      const seen = new Set();
+      const prepared = rows.map((r) => {
+        const inRegistry = findRegistrySerial(r.serial);
+        const owner = findSerialOwner(r.serial);
+        const number = Number(r.serial.slice(-4));
+        const repeated = seen.has(number);
+        seen.add(number);
+        return {
+          ...r,
+          number,
+          duplicate: !!(inRegistry || owner || repeated),
+          reason: inRegistry ? 'уже в реестре' : owner ? `в заказе #${owner.order_number}` : repeated ? 'номер повторяется' : '',
+        };
+      });
+      const fresh = prepared.filter((r) => !r.duplicate).length;
+      if (!data.commit) return sendJson(res, 200, { rows: prepared, errors, new_count: fresh });
+      const imported = importRegistrySerials(prepared);
+      return sendJson(res, 200, { imported, skipped: prepared.length - imported, errors });
     }
 
     const itemMatch = pathname.match(/^\/api\/items\/(\d+)$/);
@@ -1207,30 +1460,7 @@ const server = http.createServer(async (req, res) => {
 
         if (action === 'calculate' && req.method === 'POST') {
           const point = await cdekRecipientPoint(order);
-          const from = cdekShipmentPoint();
-          const body = {
-            tariff_code: cdekTariffFor(point),
-            from_location: from.city_code ? { code: Number(from.city_code) } : undefined,
-            to_location: point.city_code ? { code: Number(point.city_code) } : undefined,
-            shipment_point: from.code,
-            delivery_point: point.code,
-            packages: [cdekPackageSize(order)],
-            services: cdekInsuranceService(order),
-          };
-          const result = await cdek.calculateTariff(body);
-          if (result.errors?.length) throw new Error(`СДЭК расчёт: ${result.errors.map((e) => e.message).join('; ')}`);
-          const deliverySum = Number(result.delivery_sum) || 0;
-          const total = Number(result.total_sum ?? deliverySum);
-          const insurance = (result.services || []).filter((x) => x.code === 'INSURANCE')
-            .reduce((sum, x) => sum + Number(x.total_sum ?? x.sum ?? 0), 0);
-          const price = {
-            delivery: Math.round((total - insurance) * 100) / 100,
-            insurance: Math.round(insurance * 100) / 100,
-            total: Math.round(total * 100) / 100,
-            period_min: result.period_min ?? null,
-            period_max: result.period_max ?? null,
-            tariff_code: body.tariff_code,
-          };
+          const price = await cdekPriceFor(order, point);
           updateOrder(orderId, { delivery_price: price.total });
           return sendJson(res, 200, patchOrderCdekShipment(orderId, { price, calculated_at: new Date().toISOString() }));
         }
@@ -1303,6 +1533,97 @@ const server = http.createServer(async (req, res) => {
       }
     }
 
+    // ---- Бухгалтерия (только администратор) ----
+    if (pathname.startsWith('/api/accounting/') || pathname === '/api/export/ledger.csv') {
+      if (user.role !== 'admin') return sendJson(res, 403, { error: 'Бухгалтерия доступна только администратору' });
+    }
+
+    if (pathname === '/api/accounting/settings' && req.method === 'GET') {
+      return sendJson(res, 200, { ...getAccountingSettings(), categories: LEDGER_CATEGORIES });
+    }
+
+    if (pathname === '/api/accounting/settings' && req.method === 'POST') {
+      const data = await readBody(req);
+      const before = getAccountingSettings();
+      const saved = setAccountingSettings(data);
+      // Сменили дату начала автозаполнения — пересобрать продажи из заказов.
+      if (saved.auto_since !== before.auto_since) syncAllOrdersLedger();
+      return sendJson(res, 200, { ...saved, categories: LEDGER_CATEGORIES });
+    }
+
+    if (pathname === '/api/accounting/ledger' && req.method === 'GET') {
+      return sendJson(res, 200, listLedger({
+        ...periodParams(url),
+        q: url.searchParams.get('q') || undefined,
+        orderId: Number(url.searchParams.get('order_id')) || undefined,
+      }));
+    }
+
+    if (pathname === '/api/accounting/ledger' && req.method === 'POST') {
+      return sendJson(res, 201, createLedgerEntry(await readBody(req)));
+    }
+
+    const ledgerMatch = pathname.match(/^\/api\/accounting\/ledger\/(\d+)$/);
+    if (ledgerMatch && req.method === 'PATCH') {
+      const entry = updateLedgerEntry(Number(ledgerMatch[1]), await readBody(req));
+      if (!entry) return sendJson(res, 404, { error: 'Запись не найдена' });
+      return sendJson(res, 200, entry);
+    }
+    if (ledgerMatch && req.method === 'DELETE') {
+      if (!deleteLedgerEntry(Number(ledgerMatch[1]))) return sendJson(res, 404, { error: 'Запись не найдена' });
+      return sendJson(res, 200, { ok: true });
+    }
+
+    const ledgerRestoreMatch = pathname.match(/^\/api\/accounting\/orders\/(\d+)\/restore$/);
+    if (ledgerRestoreMatch && req.method === 'POST') {
+      restoreOrderLedger(Number(ledgerRestoreMatch[1]));
+      return sendJson(res, 200, { ok: true });
+    }
+
+    if (pathname === '/api/accounting/summary' && req.method === 'GET') {
+      return sendJson(res, 200, ledgerSummary(periodParams(url)));
+    }
+
+    if (pathname === '/api/accounting/sync' && req.method === 'POST') {
+      return sendJson(res, 200, { orders: syncAllOrdersLedger() });
+    }
+
+    if (pathname === '/api/accounting/topups' && req.method === 'GET') {
+      return sendJson(res, 200, listDeliveryTopups());
+    }
+    if (pathname === '/api/accounting/topups' && req.method === 'POST') {
+      return sendJson(res, 201, createDeliveryTopup(await readBody(req)));
+    }
+    const topupMatch = pathname.match(/^\/api\/accounting\/topups\/(\d+)$/);
+    if (topupMatch && req.method === 'DELETE') {
+      if (!deleteDeliveryTopup(Number(topupMatch[1]))) return sendJson(res, 404, { error: 'Запись не найдена' });
+      return sendJson(res, 200, { ok: true });
+    }
+
+    // Импорт из Google-таблицы: сначала предпросмотр (commit: false), потом запись.
+    if (pathname === '/api/accounting/import' && req.method === 'POST') {
+      const data = await readBody(req);
+      const { rows, errors } = parseLedgerText(data.text);
+      const prepared = rows.map((r) => ({
+        ...r,
+        category: r.category || guessLedgerCategory(r.description, r.income),
+        duplicate: isDuplicateLedgerRow(r),
+      }));
+      const fresh = prepared.filter((r) => !r.duplicate);
+      if (!data.commit) return sendJson(res, 200, { rows: prepared, errors, new_count: fresh.length });
+      const imported = importLedgerRows(fresh);
+      return sendJson(res, 200, { imported, skipped_duplicates: prepared.length - fresh.length, errors });
+    }
+
+    if (pathname === '/api/export/ledger.csv' && req.method === 'GET') {
+      const csv = ledgerToCsv(listLedger(periodParams(url)));
+      res.writeHead(200, {
+        'Content-Type': 'text/csv; charset=utf-8',
+        'Content-Disposition': 'attachment; filename="ledger.csv"',
+      });
+      return res.end(csv);
+    }
+
     if (pathname === '/api/export/orders.csv' && req.method === 'GET') {
       const csv = ordersToCsv(listOrders());
       res.writeHead(200, {
@@ -1313,7 +1634,7 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (pathname === '/api/export/serials.csv' && req.method === 'GET') {
-      const csv = serialsToCsv(listSerials());
+      const csv = serialsToCsv(listSerialBook());
       res.writeHead(200, {
         'Content-Type': 'text/csv; charset=utf-8',
         'Content-Disposition': 'attachment; filename="serials.csv"',

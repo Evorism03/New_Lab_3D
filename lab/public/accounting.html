@@ -1,0 +1,649 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Бухгалтерия — Order Automation</title>
+<link rel="stylesheet" href="/style.css">
+<link rel="manifest" href="/manifest.webmanifest">
+<meta name="theme-color" content="#171d2b">
+</head>
+<body>
+<div class="layout">
+<aside class="sidebar" id="sidebar">
+  <div class="sidebar-top">
+    <span class="brand">📦 Заказы</span>
+    <button type="button" class="sidebar-toggle" id="sidebar-toggle" title="Свернуть/развернуть меню">☰</button>
+  </div>
+  <a href="/" class="new-order-btn"><span class="nav-icon">➕</span><span class="label">Новый заказ</span></a>
+  <nav class="sidebar-nav">
+    <a href="/board.html"><span class="nav-icon">🗂</span><span class="label">Доска</span></a>
+    <a href="/assembly.html"><span class="nav-icon">🔧</span><span class="label">Сборка</span></a>
+    <a href="/orders.html"><span class="nav-icon">📋</span><span class="label">Все заказы</span></a>
+    <a href="/serials.html"><span class="nav-icon">#️⃣</span><span class="label">Серийные номера</span></a>
+    <a href="/accounting.html" class="active" data-admin-only hidden><span class="nav-icon">💰</span><span class="label">Бухгалтерия</span></a>
+    <a href="/settings.html"><span class="nav-icon">⚙️</span><span class="label">Настройки</span></a>
+  </nav>
+  <div class="sidebar-bottom" id="sidebar-user"></div>
+</aside>
+<main>
+  <div id="denied" class="card empty-state" style="display:none">Бухгалтерия доступна только администратору.</div>
+
+  <div id="page" style="display:none">
+    <div class="toolbar">
+      <select id="period" title="Период"></select>
+      <input type="search" id="search" placeholder="Поиск по назначению, категории, № заказа...">
+      <div class="spacer"></div>
+      <button type="button" id="add-income">＋ Поступление</button>
+      <button type="button" class="secondary" id="add-expense">－ Списание</button>
+      <button type="button" class="secondary" id="open-import" title="Перенести историю из Google-таблицы">⬆ Импорт</button>
+      <a id="export-link" href="/api/export/ledger.csv"><button type="button" class="secondary">⬇ CSV</button></a>
+      <button type="button" class="secondary" id="open-settings" title="Налог, гарантия, постоянные расходы">⚙</button>
+    </div>
+
+    <div class="acc-stats" id="stats"></div>
+
+    <div class="acc-panels">
+      <div class="card">
+        <h3>🚚 Счёт доставки</h3>
+        <div id="delivery-summary"></div>
+        <form id="topup-form" class="acc-inline-form">
+          <input type="date" name="date" required>
+          <input type="number" name="amount" min="0.01" step="0.01" placeholder="Сумма" required>
+          <input type="text" name="note" placeholder="Комментарий (Ozon, СДЭК…)">
+          <button type="submit" class="small">Пополнить</button>
+        </form>
+        <div id="topups" class="acc-topups"></div>
+      </div>
+
+      <div class="card">
+        <h3>🏦 Сверка с банком</h3>
+        <p class="muted acc-hint">Введите фактический остаток на счёте — увидите расхождение с журналом (как «Разница теории с практикой» в таблице).</p>
+        <form id="bank-form" class="acc-inline-form">
+          <input type="text" name="bank_name" placeholder="Банк" style="max-width:140px">
+          <input type="number" name="bank_balance" step="0.01" placeholder="Остаток на счёте">
+          <button type="submit" class="small">Сохранить</button>
+        </form>
+        <div id="bank-summary"></div>
+      </div>
+
+      <div class="card">
+        <h3>📊 По категориям</h3>
+        <div id="categories"></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="acc-journal-head">
+        <h3>История платежей</h3>
+        <span class="muted" id="journal-count"></span>
+      </div>
+      <div id="journal" class="acc-journal"></div>
+      <div id="journal-empty" class="empty-state" style="display:none">
+        Записей пока нет. Продажи из заказов будут появляться здесь сами, а историю из Google-таблицы можно перенести кнопкой «⬆ Импорт».
+      </div>
+    </div>
+  </div>
+</main>
+</div>
+
+<datalist id="category-list"></datalist>
+<datalist id="order-list"></datalist>
+
+<script src="/app.js"></script>
+<script>
+let settings = null;
+let rows = [];
+
+const MONTHS = ['Январь', 'Февраль', 'Март', 'Апрель', 'Май', 'Июнь', 'Июль', 'Август', 'Сентябрь', 'Октябрь', 'Ноябрь', 'Декабрь'];
+
+function isoDate(d) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+function today() { return isoDate(new Date()); }
+function ruDate(iso) { return iso ? iso.split('-').reverse().join('.') : ''; }
+function rub(n) {
+  return Number(n || 0).toLocaleString('ru-RU', { maximumFractionDigits: 2 }) + ' ₽';
+}
+function signed(n) {
+  return (n > 0 ? '+' : n < 0 ? '−' : '') + rub(Math.abs(n));
+}
+
+// ---- Период: «всё время», текущий и 11 прошлых месяцев ----
+function buildPeriods() {
+  const select = document.getElementById('period');
+  select.appendChild(el('<option value="all">Всё время</option>'));
+  const now = new Date();
+  for (let i = 0; i < 12; i++) {
+    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    const from = isoDate(d);
+    const to = isoDate(new Date(d.getFullYear(), d.getMonth() + 1, 0));
+    const label = `${MONTHS[d.getMonth()]} ${d.getFullYear()}${i === 0 ? ' (текущий)' : ''}`;
+    select.appendChild(el(`<option value="${from}|${to}">${label}</option>`));
+  }
+  try {
+    const saved = localStorage.getItem('acc-period');
+    if (saved && [...select.options].some((o) => o.value === saved)) select.value = saved;
+  } catch {
+    // без запоминания периода
+  }
+}
+
+function period() {
+  const value = document.getElementById('period').value;
+  if (value === 'all') return {};
+  const [from, to] = value.split('|');
+  return { from, to };
+}
+
+function periodQuery(extra = {}) {
+  const params = new URLSearchParams();
+  for (const [k, v] of Object.entries({ ...period(), ...extra })) if (v) params.set(k, v);
+  const s = params.toString();
+  return s ? `?${s}` : '';
+}
+
+// ---- Загрузка ----
+async function load() {
+  const q = document.getElementById('search').value.trim();
+  const [summary, list, topups] = await Promise.all([
+    api('/api/accounting/summary' + periodQuery()),
+    api('/api/accounting/ledger' + periodQuery({ q })),
+    api('/api/accounting/topups'),
+  ]);
+  rows = list;
+  document.getElementById('export-link').href = '/api/export/ledger.csv' + periodQuery();
+  renderStats(summary);
+  renderDelivery(summary, topups);
+  renderBank(summary);
+  renderCategories(summary);
+  renderJournal();
+}
+
+function tile(label, value, note = '', cls = '') {
+  return `
+    <div class="acc-stat ${cls}">
+      <div class="acc-stat-label">${label}</div>
+      <div class="acc-stat-value">${value}</div>
+      ${note ? `<div class="acc-stat-note">${note}</div>` : ''}
+    </div>`;
+}
+
+function renderStats(s) {
+  const isMonth = !!s.period.from;
+  const tiles = [
+    tile('Поступления', rub(s.income), `${s.count} записей`, 'pos'),
+    tile('Списания', rub(s.expense), '', 'neg'),
+    tile('Грязные', signed(s.dirty), 'поступления − списания', s.dirty >= 0 ? 'pos' : 'neg'),
+    tile(
+      'Чистые',
+      signed(s.clean),
+      s.frozen
+        ? `без ${rub(s.frozen)} на гарантии` +
+          (s.next_unlock ? `<br>${ruDate(s.next_unlock.date)} освободится ${rub(s.next_unlock.amount)}` : '')
+        : 'денег на гарантии нет',
+      s.clean >= 0 ? 'pos' : 'neg'
+    ),
+    tile(`Налог ${String(s.tax_rate).replace('.', ',')}%`, rub(s.tax), `с ${rub(s.tax_base)} облагаемых поступлений`),
+  ];
+  if (isMonth && s.fixed_costs > 0) {
+    const profit = s.dirty - s.fixed_costs;
+    tiles.push(tile('Прибыль месяца', signed(profit), `грязные − постоянные расходы ${rub(s.fixed_costs)}`, profit >= 0 ? 'pos' : 'neg'));
+  }
+  document.getElementById('stats').innerHTML = tiles.join('');
+}
+
+function renderDelivery(s, topups) {
+  const d = s.delivery;
+  document.getElementById('delivery-summary').innerHTML = `
+    <div class="acc-kv"><span>Списано за доставку</span><strong>${rub(d.spent)}</strong></div>
+    <div class="acc-kv"><span>Пополнено</span><strong>${rub(d.topups)}</strong></div>
+    <div class="acc-kv acc-kv-total ${d.debt > 0 ? 'neg' : 'pos'}">
+      <span>${d.debt > 0 ? 'Долг перед доставкой' : 'Остаток на счёте доставки'}</span><strong>${rub(Math.abs(d.debt))}</strong>
+    </div>`;
+  const list = document.getElementById('topups');
+  list.innerHTML = topups.length ? '<div class="muted acc-hint">Пополнения:</div>' : '';
+  for (const t of topups) {
+    const row = el(`
+      <div class="acc-topup">
+        <span>${ruDate(t.date)}</span>
+        <strong>${rub(t.amount)}</strong>
+        <span class="muted">${escapeHtml(t.note)}</span>
+        <button type="button" class="link-btn" title="Удалить">✕</button>
+      </div>`);
+    row.querySelector('button').addEventListener('click', async () => {
+      if (!(await confirmDialog(`Удалить пополнение ${rub(t.amount)} от ${ruDate(t.date)}?`, { okLabel: 'Удалить' }))) return;
+      await api(`/api/accounting/topups/${t.id}`, { method: 'DELETE' });
+      load();
+    });
+    list.appendChild(row);
+  }
+}
+
+function renderBank(s) {
+  const form = document.getElementById('bank-form');
+  form.bank_name.value = settings.bank_name || '';
+  form.bank_balance.value = settings.bank_balance ?? '';
+  const mount = document.getElementById('bank-summary');
+  if (!s.bank) {
+    mount.innerHTML = '';
+    return;
+  }
+  const ok = Math.abs(s.bank.diff) < 0.01;
+  mount.innerHTML = `
+    <div class="acc-kv"><span>По журналу должно быть</span><strong>${rub(s.bank.expected)}</strong></div>
+    <div class="acc-kv"><span>На счёте ${escapeHtml(s.bank.name)}${s.bank.date ? ` (на ${ruDate(s.bank.date)})` : ''}</span><strong>${rub(s.bank.balance)}</strong></div>
+    <div class="acc-kv acc-kv-total ${ok ? 'pos' : 'warn'}"><span>Разница</span><strong>${ok ? 'сходится ✓' : signed(s.bank.diff)}</strong></div>
+    <div class="muted acc-hint">Ожидаемый остаток = грязные за всё время + долг перед доставкой.</div>`;
+}
+
+function renderCategories(s) {
+  const mount = document.getElementById('categories');
+  if (!s.categories.length) {
+    mount.innerHTML = '<div class="muted">Нет данных за период.</div>';
+    return;
+  }
+  mount.innerHTML = s.categories
+    .map(
+      (c) => `
+      <button type="button" class="acc-cat" data-category="${escapeHtml(c.category)}" title="Показать записи категории">
+        <span>${escapeHtml(c.category)} <span class="muted">· ${c.count}</span></span>
+        <span>${c.income ? `<span class="pos">+${rub(c.income)}</span>` : ''} ${c.expense ? `<span class="neg">−${rub(c.expense)}</span>` : ''}</span>
+      </button>`
+    )
+    .join('');
+  mount.querySelectorAll('.acc-cat').forEach((b) =>
+    b.addEventListener('click', () => {
+      const search = document.getElementById('search');
+      search.value = b.dataset.category === 'Без категории' ? '' : b.dataset.category;
+      load();
+    })
+  );
+}
+
+function renderJournal() {
+  const mount = document.getElementById('journal');
+  mount.innerHTML = '';
+  document.getElementById('journal-empty').style.display = rows.length ? 'none' : 'block';
+  document.getElementById('journal-count').textContent = rows.length ? `${rows.length} записей` : '';
+  for (const r of rows) {
+    const chips = [];
+    if (r.category) chips.push(`<span class="chip">${escapeHtml(r.category)}</span>`);
+    if (r.auto) {
+      chips.push(`<a class="chip acc-chip-order" href="/order.html?id=${r.order_id}" title="Заполнено из заказа автоматически">⚡ заказ #${escapeHtml(r.order_number)}</a>`);
+    } else if (r.link_order_id) {
+      chips.push(`<a class="chip acc-chip-order" href="/order.html?id=${r.link_order_id}" title="Открыть заказ">🔗 заказ #${escapeHtml(r.link_order_number)}</a>`);
+    } else if (r.locked) {
+      chips.push('<span class="chip" title="Заказ удалён">заказ удалён</span>');
+    }
+    if (r.locked && r.auto) chips.push('<span class="chip" title="Исправлено вручную — изменения заказа сюда больше не попадают">✎ вручную</span>');
+    if (r.warranty) {
+      chips.push(r.frozen
+        ? `<span class="chip acc-chip-frozen" title="Деньги считаются «чистыми» после окончания гарантии">🛡 до ${ruDate(r.warranty_until)}</span>`
+        : '<span class="chip" title="Гарантия закончилась">🛡 гарантия прошла</span>');
+    }
+    if (r.delivery_account) chips.push('<span class="chip" title="Списание — доставка со счёта ТК">🚚 доставка</span>');
+    if (r.taxable) chips.push('<span class="chip" title="Облагается налогом">% налог</span>');
+
+    const row = el(`
+      <div class="acc-row" tabindex="0">
+        <div class="acc-date">${ruDate(r.date)}</div>
+        <div class="acc-desc">
+          <div class="acc-title">${escapeHtml(r.description)}</div>
+          <div class="acc-chips">${chips.join('')}</div>
+        </div>
+        <div class="acc-amounts">
+          ${r.income ? `<span class="pos">+${rub(r.income)}</span>` : ''}
+          ${r.expense ? `<span class="neg">−${rub(r.expense)}</span>` : ''}
+        </div>
+      </div>`);
+    row.querySelectorAll('a').forEach((a) => a.addEventListener('click', (e) => e.stopPropagation()));
+    row.addEventListener('click', () => openEntry(r));
+    row.addEventListener('keydown', (e) => { if (e.key === 'Enter') openEntry(r); });
+    mount.appendChild(row);
+  }
+}
+
+// Открыли записи заказа (поиск «#12») — новая запись сразу привязывается к нему.
+function searchOrderRef() {
+  const q = document.getElementById('search').value.trim();
+  return /^#\S+$/.test(q) ? q : '';
+}
+
+// Подсказки для поля «Заказ»: номер, клиент, сумма. Загружаются один раз при первом открытии.
+let orderListLoaded = false;
+async function loadOrderList() {
+  if (orderListLoaded) return;
+  orderListLoaded = true;
+  try {
+    const orders = await api('/api/orders');
+    document.getElementById('order-list').innerHTML = orders
+      .map((o) => `<option value="#${escapeHtml(o.display_number)}">${escapeHtml(o.full_name || '')} · ${rub(o.grand_total)} · ${new Date(o.created_at).toLocaleDateString('ru-RU')}</option>`)
+      .join('');
+  } catch {
+    orderListLoaded = false;
+  }
+}
+
+// ---- Модальные окна ----
+function modal(html) {
+  const overlay = el(`<div class="modal-overlay"><div class="modal-box acc-modal">${html}</div></div>`);
+  document.body.appendChild(overlay);
+  const close = () => overlay.remove();
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+  overlay.querySelectorAll('[data-close]').forEach((b) => b.addEventListener('click', close));
+  return { overlay, close };
+}
+
+// Новая запись (kind = 'income' | 'expense') или правка существующей (entry).
+function openEntry(entry, kind) {
+  const e = entry || {
+    date: today(),
+    income: 0,
+    expense: 0,
+    description: '',
+    category: '',
+    warranty: false,
+    taxable: kind === 'income',
+    delivery_account: false,
+  };
+  const { overlay, close } = modal(`
+    <h3>${entry ? 'Запись' : kind === 'income' ? 'Новое поступление' : 'Новое списание'}</h3>
+    ${entry?.auto ? `<p class="muted acc-hint">Создано автоматически из <a href="/order.html?id=${entry.order_id}">заказа #${escapeHtml(entry.order_number)}</a>. ${
+      entry.locked ? 'Исправлено вручную — изменения заказа сюда не попадают.' : 'Если исправить вручную, запись перестанет обновляться из заказа.'
+    }</p>` : ''}
+    <form id="entry-form">
+      <div class="grid-2">
+        <div class="field"><label>Дата</label><input type="date" name="date" required value="${e.date}"></div>
+        <div class="field"><label>Категория</label><input type="text" name="category" list="category-list" value="${escapeHtml(e.category)}" placeholder="Материалы, Логистика…"></div>
+      </div>
+      ${entry?.auto ? '' : `
+      <div class="field"><label>Заказ <span class="muted" style="font-weight:normal">— необязательно, чтобы открыть его отсюда</span></label>
+        <input type="text" name="order" list="order-list" placeholder="#12" value="${entry ? (entry.link_order_number ? `#${escapeHtml(entry.link_order_number)}` : '') : escapeHtml(searchOrderRef())}">
+      </div>`}
+      <div class="field"><label>Назначение</label><input type="text" name="description" required value="${escapeHtml(e.description)}" placeholder="Например: Пластик (4кг)"></div>
+      <div class="grid-2">
+        <div class="field"><label>Поступление, ₽</label><input type="number" name="income" min="0" step="0.01" value="${e.income || ''}" placeholder="0"></div>
+        <div class="field"><label>Списание, ₽</label><input type="number" name="expense" min="0" step="0.01" value="${e.expense || ''}" placeholder="0"></div>
+      </div>
+      <label class="acc-check"><input type="checkbox" name="warranty" ${e.warranty ? 'checked' : ''}> На гарантии — деньги станут «чистыми» через ${settings.warranty_days} дн.</label>
+      <label class="acc-check"><input type="checkbox" name="taxable" ${e.taxable ? 'checked' : ''}> Облагается налогом (${String(settings.tax_rate).replace('.', ',')}% с поступления)</label>
+      <label class="acc-check"><input type="checkbox" name="delivery_account" ${e.delivery_account ? 'checked' : ''}> Списание — доставка со счёта ТК (Ozon/СДЭК)</label>
+      <div class="modal-actions acc-modal-actions">
+        ${entry ? '<button type="button" class="danger" id="entry-delete">Удалить</button>' : ''}
+        ${entry?.auto && entry.locked ? '<button type="button" class="secondary" id="entry-unlock" title="Пересчитать запись из заказа">⚡ Из заказа</button>' : ''}
+        <div class="spacer"></div>
+        <button type="button" class="secondary" data-close>Отмена</button>
+        <button type="submit">Сохранить</button>
+      </div>
+    </form>
+  `);
+  const form = overlay.querySelector('#entry-form');
+  if (form.order) loadOrderList();
+  (kind === 'expense' ? form.expense : kind === 'income' ? form.income : form.description).focus();
+
+  form.addEventListener('submit', async (ev) => {
+    ev.preventDefault();
+    const body = {
+      date: form.date.value,
+      category: form.category.value.trim(),
+      description: form.description.value.trim(),
+      income: Number(form.income.value) || 0,
+      expense: Number(form.expense.value) || 0,
+      warranty: form.warranty.checked,
+      taxable: form.taxable.checked,
+      delivery_account: form.delivery_account.checked,
+    };
+    if (form.order) body.order = form.order.value.trim();
+    try {
+      if (entry) await api(`/api/accounting/ledger/${entry.id}`, { method: 'PATCH', body: JSON.stringify(body) });
+      else await api('/api/accounting/ledger', { method: 'POST', body: JSON.stringify(body) });
+      close();
+      toast('Сохранено', 'success');
+      load();
+    } catch (err) {
+      toast(err.message, 'error');
+    }
+  });
+
+  overlay.querySelector('#entry-delete')?.addEventListener('click', async () => {
+    const note = entry.auto && entry.order_id
+      ? `<br><span class="muted">Продажа заказа #${escapeHtml(entry.order_number)} больше не будет добавляться автоматически (вернуть — в ⚙).</span>`
+      : '';
+    if (!(await confirmDialog(`Удалить запись «${escapeHtml(entry.description)}»?${note}`, { okLabel: 'Удалить' }))) return;
+    await api(`/api/accounting/ledger/${entry.id}`, { method: 'DELETE' });
+    close();
+    load();
+  });
+
+  overlay.querySelector('#entry-unlock')?.addEventListener('click', async () => {
+    const res = await api(`/api/accounting/ledger/${entry.id}`, { method: 'PATCH', body: JSON.stringify({ unlock: true }) });
+    close();
+    toast(res.removed ? 'Заказ сейчас не даёт продажи (отменён или не оплачен) — запись убрана' : 'Запись пересчитана из заказа', 'success');
+    load();
+  });
+}
+
+function openImport() {
+  const { overlay, close } = modal(`
+    <h3>Импорт из Google-таблицы</h3>
+    <p class="muted acc-hint">
+      Откройте лист «Бухгалтерия», выделите колонки <b>A–E</b> (Поступление, Списание, Назначение, Дата, Гарантия?)
+      вместе со строкой заголовков, скопируйте (Ctrl+C) и вставьте сюда. Категории подберутся по назначению,
+      строки, которые уже есть в журнале, повторно не добавятся.
+    </p>
+    <textarea id="import-text" rows="8" placeholder="Поступление	Списание	Назначение	Дата	Гарантия?"></textarea>
+    <div id="import-preview"></div>
+    <div class="modal-actions acc-modal-actions">
+      <div class="spacer"></div>
+      <button type="button" class="secondary" data-close>Отмена</button>
+      <button type="button" class="secondary" id="import-check">Проверить</button>
+      <button type="button" id="import-commit" disabled>Импортировать</button>
+    </div>
+  `);
+  const text = overlay.querySelector('#import-text');
+  const preview = overlay.querySelector('#import-preview');
+  const commit = overlay.querySelector('#import-commit');
+  text.focus();
+  text.addEventListener('input', () => { commit.disabled = true; });
+
+  overlay.querySelector('#import-check').addEventListener('click', async () => {
+    try {
+      const res = await api('/api/accounting/import', { method: 'POST', body: JSON.stringify({ text: text.value }) });
+      const dup = res.rows.length - res.new_count;
+      preview.innerHTML = `
+        <p class="acc-hint">Будет добавлено: <b>${res.new_count}</b>${dup ? `, уже есть в журнале: ${dup}` : ''}${res.errors.length ? `, <span class="neg">с ошибками: ${res.errors.length}</span>` : ''}</p>
+        ${res.errors.length ? `<div class="acc-import-errors">${res.errors.map((e) => `<div>Строка ${e.line}: ${escapeHtml(e.error)} <span class="muted">${escapeHtml(e.text)}</span></div>`).join('')}</div>` : ''}
+        <div class="acc-import-rows">${res.rows.slice(0, 200).map((r) => `
+          <div class="acc-import-row ${r.duplicate ? 'dup' : ''}">
+            <span>${ruDate(r.date)}</span>
+            <span class="acc-import-desc">${escapeHtml(r.description)} <span class="chip">${escapeHtml(r.category)}</span>${r.warranty ? ' 🛡' : ''}</span>
+            <span>${r.income ? `<span class="pos">+${rub(r.income)}</span>` : ''} ${r.expense ? `<span class="neg">−${rub(r.expense)}</span>` : ''}</span>
+          </div>`).join('')}</div>`;
+      commit.disabled = !res.new_count;
+      commit.textContent = res.new_count ? `Импортировать ${res.new_count}` : 'Импортировать';
+    } catch (err) {
+      toast(err.message, 'error');
+    }
+  });
+
+  commit.addEventListener('click', async () => {
+    commit.disabled = true;
+    try {
+      const res = await api('/api/accounting/import', { method: 'POST', body: JSON.stringify({ text: text.value, commit: true }) });
+      close();
+      toast(`Импортировано записей: ${res.imported}`, 'success');
+      load();
+    } catch (err) {
+      commit.disabled = false;
+      toast(err.message, 'error');
+    }
+  });
+}
+
+function fixedCostRow(c = { name: '', amount: '' }) {
+  return el(`
+    <div class="acc-fixed-row">
+      <input type="text" name="fc-name" placeholder="Аренда, интернет…" value="${escapeHtml(c.name)}">
+      <input type="number" name="fc-amount" min="0" step="0.01" placeholder="₽ в месяц" value="${c.amount || ''}">
+      <button type="button" class="secondary small" title="Убрать">✕</button>
+    </div>`);
+}
+
+function openSettings() {
+  const excluded = settings.excluded_orders || [];
+  const { overlay, close } = modal(`
+    <h3>Настройки бухгалтерии</h3>
+    <form id="acc-settings-form">
+      <div class="grid-2">
+        <div class="field"><label>Ставка налога, %</label><input type="number" name="tax_rate" min="0" max="100" step="0.01" value="${settings.tax_rate}"></div>
+        <div class="field"><label>Гарантия, дней</label><input type="number" name="warranty_days" min="0" max="3650" step="1" value="${settings.warranty_days}"></div>
+      </div>
+      <div class="field">
+        <label>Продажи из заказов — начиная с даты</label>
+        <input type="date" name="auto_since" value="${settings.auto_since}">
+        <div class="muted acc-hint">Каждый оплаченный заказ с этой даты сам становится записью «Продажа»: поступление — сумма заказа, списание — доставка, гарантия — если в заказе изделие. Более ранние продажи переносятся импортом из таблицы, чтобы не задвоить.</div>
+      </div>
+      <div class="field">
+        <label>Постоянные расходы в месяц</label>
+        <div id="fixed-costs"></div>
+        <button type="button" class="secondary small" id="add-fixed">＋ Добавить</button>
+        <div class="muted acc-hint">Для плитки «Прибыль месяца» (как лист «Финансы компании»). В журнал сами не записываются.</div>
+      </div>
+      ${excluded.length ? `
+      <div class="field">
+        <label>Продажи, удалённые из журнала вручную</label>
+        <div class="acc-excluded">${excluded.map((o) => `<button type="button" class="secondary small" data-restore="${o.id}">↩ Вернуть заказ #${escapeHtml(o.number)}</button>`).join(' ')}</div>
+      </div>` : ''}
+      <div class="modal-actions acc-modal-actions">
+        <button type="button" class="secondary" id="acc-sync" title="Пересчитать продажи по всем заказам">⚡ Обновить из заказов</button>
+        <div class="spacer"></div>
+        <button type="button" class="secondary" data-close>Отмена</button>
+        <button type="submit">Сохранить</button>
+      </div>
+    </form>
+  `);
+  const list = overlay.querySelector('#fixed-costs');
+  const addRow = (c) => {
+    const row = fixedCostRow(c);
+    row.querySelector('button').addEventListener('click', () => row.remove());
+    list.appendChild(row);
+  };
+  (settings.fixed_costs.length ? settings.fixed_costs : [undefined]).forEach(addRow);
+  overlay.querySelector('#add-fixed').addEventListener('click', () => addRow());
+
+  overlay.querySelectorAll('[data-restore]').forEach((b) =>
+    b.addEventListener('click', async () => {
+      await api(`/api/accounting/orders/${b.dataset.restore}/restore`, { method: 'POST' });
+      b.remove();
+      settings = await api('/api/accounting/settings');
+      toast('Продажа заказа возвращена в журнал', 'success');
+      load();
+    })
+  );
+
+  overlay.querySelector('#acc-sync').addEventListener('click', async () => {
+    const res = await api('/api/accounting/sync', { method: 'POST' });
+    toast(`Проверено заказов: ${res.orders}`, 'success');
+    load();
+  });
+
+  const form = overlay.querySelector('#acc-settings-form');
+  form.addEventListener('submit', async (ev) => {
+    ev.preventDefault();
+    const fixed_costs = [...list.querySelectorAll('.acc-fixed-row')]
+      .map((r) => ({ name: r.querySelector('[name="fc-name"]').value.trim(), amount: Number(r.querySelector('[name="fc-amount"]').value) || 0 }))
+      .filter((c) => c.name);
+    try {
+      settings = await api('/api/accounting/settings', {
+        method: 'POST',
+        body: JSON.stringify({
+          tax_rate: form.tax_rate.value,
+          warranty_days: form.warranty_days.value,
+          auto_since: form.auto_since.value,
+          fixed_costs,
+        }),
+      });
+      close();
+      toast('Настройки сохранены', 'success');
+      load();
+    } catch (err) {
+      toast(err.message, 'error');
+    }
+  });
+}
+
+// ---- Формы на странице ----
+document.getElementById('topup-form').addEventListener('submit', async (ev) => {
+  ev.preventDefault();
+  const form = ev.target;
+  try {
+    await api('/api/accounting/topups', {
+      method: 'POST',
+      body: JSON.stringify({ date: form.date.value, amount: Number(form.amount.value), note: form.note.value }),
+    });
+    form.amount.value = '';
+    form.note.value = '';
+    toast('Пополнение добавлено', 'success');
+    load();
+  } catch (err) {
+    toast(err.message, 'error');
+  }
+});
+
+document.getElementById('bank-form').addEventListener('submit', async (ev) => {
+  ev.preventDefault();
+  const form = ev.target;
+  try {
+    settings = await api('/api/accounting/settings', {
+      method: 'POST',
+      body: JSON.stringify({ bank_name: form.bank_name.value, bank_balance: form.bank_balance.value === '' ? null : Number(form.bank_balance.value) }),
+    });
+    toast('Остаток сохранён', 'success');
+    load();
+  } catch (err) {
+    toast(err.message, 'error');
+  }
+});
+
+document.getElementById('period').addEventListener('change', (e) => {
+  try {
+    localStorage.setItem('acc-period', e.target.value);
+  } catch {
+    // см. buildPeriods
+  }
+  load();
+});
+let searchTimer = null;
+document.getElementById('search').addEventListener('input', () => {
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(load, 200);
+});
+document.getElementById('add-income').addEventListener('click', () => openEntry(null, 'income'));
+document.getElementById('add-expense').addEventListener('click', () => openEntry(null, 'expense'));
+document.getElementById('open-import').addEventListener('click', openImport);
+document.getElementById('open-settings').addEventListener('click', openSettings);
+
+async function init() {
+  try {
+    settings = await api('/api/accounting/settings');
+  } catch {
+    document.getElementById('denied').style.display = 'block';
+    return;
+  }
+  document.getElementById('page').style.display = 'block';
+  document.getElementById('topup-form').date.value = today();
+  document.getElementById('category-list').innerHTML = settings.categories.map((c) => `<option value="${escapeHtml(c)}">`).join('');
+  buildPeriods();
+  // /accounting.html?q=%2312 — переход из заказа к его записям (за всё время).
+  const q = new URLSearchParams(window.location.search).get('q');
+  if (q) {
+    document.getElementById('search').value = q;
+    document.getElementById('period').value = 'all';
+  }
+  load();
+}
+init();
+</script>
+</body>
+</html>

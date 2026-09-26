@@ -21,18 +21,35 @@
     <a href="/assembly.html"><span class="nav-icon">🔧</span><span class="label">Сборка</span></a>
     <a href="/orders.html"><span class="nav-icon">📋</span><span class="label">Все заказы</span></a>
     <a href="/serials.html" class="active"><span class="nav-icon">#️⃣</span><span class="label">Серийные номера</span></a>
+    <a href="/accounting.html" data-admin-only hidden><span class="nav-icon">💰</span><span class="label">Бухгалтерия</span></a>
     <a href="/settings.html"><span class="nav-icon">⚙️</span><span class="label">Настройки</span></a>
   </nav>
   <div class="sidebar-bottom" id="sidebar-user"></div>
 </aside>
 <main>
   <div class="toolbar">
-    <input type="search" id="search" placeholder="Поиск по товару, серийнику, клиенту...">
+    <input type="search" id="search" placeholder="Поиск: номер, серийник, примечание, клиент...">
+    <select id="source-filter" title="Откуда номер">
+      <option value="">Все номера</option>
+      <option value="order">Из заказов</option>
+      <option value="registry">Из таблицы (без заказа)</option>
+    </select>
+    <button type="button" class="secondary" id="sort-toggle" title="Порядок">↑ по номеру</button>
     <div class="spacer"></div>
-    <a href="/api/export/serials.csv"><button class="secondary" type="button">⬇ Экспорт в CSV (для Google Таблиц)</button></a>
+    <span class="muted" id="serial-stats"></span>
+    <button type="button" class="secondary" id="add-serial" title="Занести номер, выданный вне заказов">＋ Номер</button>
+    <button type="button" class="secondary" id="open-import" title="Перенести номера с листа «Продажи»">⬆ Импорт</button>
+    <a href="/api/export/serials.csv"><button class="secondary" type="button">⬇ CSV</button></a>
   </div>
-  <div id="tbody" class="list"></div>
-  <div id="empty" class="card empty-state" style="display:none">Серийных номеров пока нет.</div>
+  <div class="card serial-card">
+    <table class="serial-table">
+      <thead>
+        <tr><th>#</th><th>С / Н</th><th>Ревизия</th><th>Цвет</th><th>Разъём</th><th>Дата сборки</th><th>Прим.</th><th>Заказ</th></tr>
+      </thead>
+      <tbody id="tbody"></tbody>
+    </table>
+    <div id="empty" class="empty-state" style="display:none">Серийных номеров пока нет. Номера из таблицы можно перенести кнопкой «⬆ Импорт».</div>
+  </div>
 </main>
 </div>
 <script src="/app.js"></script>
@@ -40,53 +57,192 @@
 let statuses = [];
 let catalog = { models: [], colors: [], connectors: [] };
 let all = [];
+let ascending = true;
+try { ascending = localStorage.getItem('serials-sort') !== 'desc'; } catch { /* без запоминания */ }
 
-function modelLabel(id) { return catalog.models.find((m) => m.id === id)?.label || id || ''; }
-function colorLabel(letter) { return catalog.colors.find((c) => c.letter === letter)?.label || letter || ''; }
-function connectorLabel(letter) { return catalog.connectors.find((c) => c.letter === letter)?.label || letter || ''; }
+function ruDate(iso) { return iso ? iso.split('-').reverse().join('.') : ''; }
+function colorOf(letter) { return catalog.colors.find((c) => c.letter === letter); }
+function connectorOf(letter) { return catalog.connectors.find((c) => c.letter === letter); }
 
 async function load() {
-  [statuses, catalog, all] = await Promise.all([api('/api/statuses'), api('/api/catalog'), api('/api/serials')]);
+  [statuses, catalog, all] = await Promise.all([api('/api/statuses'), api('/api/catalog'), api('/api/serials/book')]);
   render();
 }
 
 function render() {
   const q = document.getElementById('search').value.trim().toLowerCase();
-  const rows = q
-    ? all.filter((r) =>
-        [r.product_name, r.serial_number, r.full_name, r.phone, colorLabel(r.color), connectorLabel(r.connector), modelLabel(r.model_id)]
-          .join(' ')
-          .toLowerCase()
-          .includes(q)
-      )
-    : all;
+  const source = document.getElementById('source-filter').value;
+  document.getElementById('sort-toggle').textContent = ascending ? '↑ по номеру' : '↓ по номеру';
+  let rows = all.filter((r) => !source || r.source === source);
+  if (q) {
+    rows = rows.filter((r) =>
+      [r.number, r.serial, r.note, r.full_name, r.order_number ? `#${r.order_number}` : '', colorOf(r.color)?.label, connectorOf(r.connector)?.label]
+        .join(' ')
+        .toLowerCase()
+        .includes(q)
+    );
+  }
+  if (!ascending) rows = rows.slice().reverse();
+
+  const numbers = all.map((r) => r.number).filter((n) => n != null);
+  document.getElementById('serial-stats').textContent = numbers.length
+    ? `${all.length} номеров · последний №${Math.max(...numbers)}`
+    : '';
+
   const tbody = document.getElementById('tbody');
   tbody.innerHTML = '';
   document.getElementById('empty').style.display = rows.length ? 'none' : 'block';
   for (const r of rows) {
-    const row = el(`
-      <div class="list-card clickable">
-        <div class="lc-main">
-          <div class="lc-head">
-            <span class="lc-title">${escapeHtml(r.product_name || 'Товар')}</span>
-            ${itemChips(r)}
-          </div>
-          <div class="lc-line"><span class="serial">${escapeHtml(r.serial_number || '—')}</span></div>
-          <div class="lc-sub">
-            <span>Заказ #${escapeHtml(r.order_number)}</span>
-            <span>${escapeHtml(r.full_name || '')}</span>
-            <span>${escapeHtml(r.phone || '')}</span>
-          </div>
-        </div>
-        <div class="lc-side">${statusPill(r.status, statuses)}</div>
-      </div>
+    const color = colorOf(r.color);
+    const conn = connectorOf(r.connector);
+    const order = r.order_id
+      ? `<a href="/order.html?id=${r.order_id}">#${escapeHtml(r.order_number)}</a> ${statusPill(r.status, statuses)}`
+      : '<span class="muted" title="Номер перенесён из таблицы, заказа в CRM нет">из таблицы</span>';
+    const tr = el(`
+      <tr class="${r.source === 'registry' ? 'from-registry' : ''}" tabindex="0">
+        <td class="sn-num">${r.number ?? ''}</td>
+        <td><span class="serial">${escapeHtml(r.serial)}</span></td>
+        <td class="sn-center">${r.revision ?? ''}</td>
+        <td title="${escapeHtml(color?.label || '')}">${dot(color?.swatch)}<b>${escapeHtml(r.color)}</b> <span class="muted sn-full">${escapeHtml(color?.shortLabel || '')}</span></td>
+        <td title="${escapeHtml(conn?.label || '')}">${dot(conn?.swatch)}<b>${escapeHtml(r.connector)}</b> <span class="muted sn-full">${escapeHtml(conn?.plugLabel || '')}</span></td>
+        <td class="nowrap">${ruDate(r.assembled_at)}</td>
+        <td class="sn-note">${escapeHtml(r.note)}${r.full_name ? ` <span class="muted">· ${escapeHtml(r.full_name)}</span>` : ''}</td>
+        <td class="nowrap">${order}</td>
+      </tr>
     `);
-    row.addEventListener('click', () => { window.location.href = `/order.html?id=${r.order_id}`; });
-    tbody.appendChild(row);
+    tr.querySelectorAll('a').forEach((a) => a.addEventListener('click', (e) => e.stopPropagation()));
+    const open = () => {
+      if (r.source === 'order') window.location.href = `/order.html?id=${r.order_id}`;
+      else openRegistry(r);
+    };
+    tr.addEventListener('click', open);
+    tr.addEventListener('keydown', (e) => { if (e.key === 'Enter') open(); });
+    tbody.appendChild(tr);
   }
 }
 
+function modal(html) {
+  const overlay = el(`<div class="modal-overlay"><div class="modal-box acc-modal">${html}</div></div>`);
+  document.body.appendChild(overlay);
+  const close = () => overlay.remove();
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+  overlay.querySelectorAll('[data-close]').forEach((b) => b.addEventListener('click', close));
+  return { overlay, close };
+}
+
+// Номер из таблицы (без заказа): новый или правка даты/примечания.
+function openRegistry(r) {
+  const { overlay, close } = modal(`
+    <h3>${r ? `Номер ${r.number}` : 'Занести номер'}</h3>
+    <p class="muted acc-hint">${r
+      ? 'Номер перенесён из таблицы и не привязан к заказу. Он занят — генератор его не выдаст.'
+      : 'Для номера, выданного вне CRM: генератор больше его не выдаст.'}</p>
+    <form id="reg-form">
+      <div class="field"><label>Серийный номер</label>
+        <input type="text" name="serial" required placeholder="AL1R03TT0043" value="${escapeHtml(r?.serial || '')}" ${r ? 'disabled' : ''} style="text-transform:uppercase">
+      </div>
+      <div class="grid-2">
+        <div class="field"><label>Дата сборки</label><input type="date" name="assembled_at" value="${r?.assembled_at || ''}"></div>
+        <div class="field"><label>Примечание</label><input type="text" name="note" value="${escapeHtml(r?.note || '')}" placeholder="Город, ремонт, возврат…"></div>
+      </div>
+      <div class="modal-actions acc-modal-actions">
+        ${r ? '<button type="button" class="danger" id="reg-delete">Удалить</button>' : ''}
+        <div class="spacer"></div>
+        <button type="button" class="secondary" data-close>Отмена</button>
+        <button type="submit">Сохранить</button>
+      </div>
+    </form>
+  `);
+  const form = overlay.querySelector('#reg-form');
+  (r ? form.note : form.serial).focus();
+  form.addEventListener('submit', async (ev) => {
+    ev.preventDefault();
+    const body = { assembled_at: form.assembled_at.value, note: form.note.value };
+    try {
+      if (r) await api(`/api/serials/registry/${r.registry_id}`, { method: 'PATCH', body: JSON.stringify(body) });
+      else await api('/api/serials/registry', { method: 'POST', body: JSON.stringify({ ...body, serial: form.serial.value.trim().toUpperCase() }) });
+      close();
+      toast('Сохранено', 'success');
+      load();
+    } catch (err) {
+      toast(err.message, 'error');
+    }
+  });
+  overlay.querySelector('#reg-delete')?.addEventListener('click', async () => {
+    if (!(await confirmDialog(`Удалить номер ${escapeHtml(r.serial)}? Он снова станет свободным для генератора.`, { okLabel: 'Удалить' }))) return;
+    await api(`/api/serials/registry/${r.registry_id}`, { method: 'DELETE' });
+    close();
+    load();
+  });
+}
+
+function openImport() {
+  const { overlay, close } = modal(`
+    <h3>Импорт с листа «Продажи»</h3>
+    <p class="muted acc-hint">
+      Выделите в таблице колонки <b>A–G</b> (#, С / Н, Ревизия, Цвет, Разъем, Дата сборки, Прим.) вместе со строкой
+      заголовков, скопируйте и вставьте сюда. Номера станут занятыми — генератор продолжит со следующего.
+      Заготовки без цвета/разъёма (AL1R030059…) пропускаются, уже известные номера не задваиваются.
+    </p>
+    <textarea id="import-text" rows="8" placeholder="#	С / Н	Ревизия	Цвет	Разъем	Дата сборки	Прим."></textarea>
+    <div id="import-preview"></div>
+    <div class="modal-actions acc-modal-actions">
+      <div class="spacer"></div>
+      <button type="button" class="secondary" data-close>Отмена</button>
+      <button type="button" class="secondary" id="import-check">Проверить</button>
+      <button type="button" id="import-commit" disabled>Импортировать</button>
+    </div>
+  `);
+  const text = overlay.querySelector('#import-text');
+  const preview = overlay.querySelector('#import-preview');
+  const commit = overlay.querySelector('#import-commit');
+  text.focus();
+  text.addEventListener('input', () => { commit.disabled = true; });
+  overlay.querySelector('#import-check').addEventListener('click', async () => {
+    try {
+      const res = await api('/api/serials/import', { method: 'POST', body: JSON.stringify({ text: text.value }) });
+      const dup = res.rows.length - res.new_count;
+      preview.innerHTML = `
+        <p class="acc-hint">Будет добавлено: <b>${res.new_count}</b>${dup ? `, пропущено (уже есть): ${dup}` : ''}${res.errors.length ? `, <span class="neg">с ошибками: ${res.errors.length}</span>` : ''}</p>
+        ${res.errors.length ? `<div class="acc-import-errors">${res.errors.map((e) => `<div>Строка ${e.line}: ${escapeHtml(e.error)}</div>`).join('')}</div>` : ''}
+        <div class="acc-import-rows">${res.rows.map((r) => `
+          <div class="acc-import-row ${r.duplicate ? 'dup' : ''}">
+            <span>№${r.number}</span>
+            <span class="acc-import-desc"><span class="serial">${escapeHtml(r.serial)}</span> ${escapeHtml(r.note)}${r.reason ? ` <span class="muted">— ${escapeHtml(r.reason)}</span>` : ''}</span>
+            <span>${ruDate(r.assembled_at)}</span>
+          </div>`).join('')}</div>`;
+      commit.disabled = !res.new_count;
+      commit.textContent = res.new_count ? `Импортировать ${res.new_count}` : 'Импортировать';
+    } catch (err) {
+      toast(err.message, 'error');
+    }
+  });
+  commit.addEventListener('click', async () => {
+    commit.disabled = true;
+    try {
+      const res = await api('/api/serials/import', { method: 'POST', body: JSON.stringify({ text: text.value, commit: true }) });
+      close();
+      toast(`Импортировано номеров: ${res.imported}`, 'success');
+      load();
+    } catch (err) {
+      commit.disabled = false;
+      toast(err.message, 'error');
+    }
+  });
+}
+
+// /serials.html?q=AL1R03TT0043 — переход из заказа к его серийнику.
+const initialQuery = new URLSearchParams(window.location.search).get('q');
+if (initialQuery) document.getElementById('search').value = initialQuery;
 document.getElementById('search').addEventListener('input', render);
+document.getElementById('source-filter').addEventListener('change', render);
+document.getElementById('sort-toggle').addEventListener('click', () => {
+  ascending = !ascending;
+  try { localStorage.setItem('serials-sort', ascending ? 'asc' : 'desc'); } catch { /* см. выше */ }
+  render();
+});
+document.getElementById('add-serial').addEventListener('click', () => openRegistry(null));
+document.getElementById('open-import').addEventListener('click', openImport);
 load();
 </script>
 </body>

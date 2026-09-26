@@ -21,16 +21,24 @@
     <a href="/assembly.html"><span class="nav-icon">🔧</span><span class="label">Сборка</span></a>
     <a href="/orders.html"><span class="nav-icon">📋</span><span class="label">Все заказы</span></a>
     <a href="/serials.html"><span class="nav-icon">#️⃣</span><span class="label">Серийные номера</span></a>
+    <a href="/accounting.html" data-admin-only hidden><span class="nav-icon">💰</span><span class="label">Бухгалтерия</span></a>
     <a href="/settings.html"><span class="nav-icon">⚙️</span><span class="label">Настройки</span></a>
   </nav>
   <div class="sidebar-bottom" id="sidebar-user"></div>
 </aside>
 <main>
+  <!-- Просмотр (по умолчанию): заказ только для чтения. Правка — кнопкой «Редактировать». -->
+  <div id="order-view" class="ov">
+    <div class="ov-loading muted">Загрузка…</div>
+  </div>
+
+  <div id="order-edit" hidden>
   <div class="card">
     <div class="toolbar">
       <h2 id="title" style="margin:0">Заказ</h2>
       <div class="spacer"></div>
       <select id="status-select" style="max-width:200px"></select>
+      <button type="button" class="secondary" id="view-btn" title="Закрыть редактирование без сохранения">Отмена</button>
       <button type="button" class="danger" id="delete-btn">Удалить</button>
     </div>
     <div id="external-info" class="muted" style="margin-bottom:10px"></div>
@@ -103,6 +111,7 @@
       </div>
 
       <button type="submit">Сохранить изменения</button>
+      <button type="button" class="secondary" id="view-btn-bottom">Отмена</button>
     </form>
   </div>
 
@@ -201,6 +210,7 @@
       <div class="muted">Перетащите файл сюда или</div>
       <input type="file" id="receipt-file" accept="image/*,.pdf" multiple>
     </div>
+  </div>
   </div>
 </main>
 </div>
@@ -961,6 +971,185 @@ document.getElementById('ozon-approve').addEventListener('click', async () => {
   }
 });
 
+// ---- Режим просмотра ----
+let currentOrder = null;
+
+function ruDateTime(iso) {
+  return iso ? new Date(iso).toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric' }) : '';
+}
+
+function viewItem(it) {
+  const isPrint = it.item_kind === 'print';
+  const sum = Number(it.price) * Number(it.quantity);
+  const title = isPrint
+    ? `${escapeHtml(it.material || it.product_name || 'Печать')}${it.finish ? ` <span class="muted">— ${escapeHtml(it.finish)}</span>` : ''}`
+    : escapeHtml(it.product_name || 'Товар');
+  const file = isPrint && (it.source_file_url || it.source_file)
+    ? `<div class="ov-item-line">${it.source_file_url
+        ? `<a href="${escapeHtml(it.source_file_url)}" target="_blank" rel="noopener">📄 ${escapeHtml(it.source_file || 'файл')} ⬇</a>`
+        : `📄 ${escapeHtml(it.source_file)}`}</div>`
+    : '';
+  const serial = !isPrint && it.serial_number
+    ? `<a class="serial ov-serial" href="/serials.html?q=${encodeURIComponent(it.serial_number)}" title="Открыть в серийных номерах">${escapeHtml(it.serial_number)}</a>`
+    : !isPrint ? '<span class="muted ov-item-line">серийник не присвоен</span>' : '';
+  const assembled = it.assembled_at ? `<span class="muted">собран ${it.assembled_at.split('-').reverse().join('.')}</span>` : '';
+  const label = !isPrint && it.id
+    ? `<a href="/api/items/${it.id}/label.pdf" target="_blank" title="Этикетка 58×40"><button type="button" class="secondary small">🏷 PDF</button></a>`
+    : '';
+  return `
+    <div class="ov-item">
+      <div class="ov-item-main">
+        <div class="ov-item-title">${title} ${isPrint ? '' : itemChips({ ...it, quantity: 1 })}</div>
+        ${file}
+        <div class="ov-item-line">${serial} ${assembled}</div>
+      </div>
+      <div class="ov-item-side">
+        <div class="ov-item-sum">${money(sum)}</div>
+        <div class="muted ov-item-qty">${it.quantity} × ${money(it.price)}</div>
+        ${label}
+      </div>
+    </div>`;
+}
+
+function viewShipment(order) {
+  const lines = [];
+  const oz = order.ozon_shipment;
+  if (oz?.posting_number) {
+    lines.push(`<div class="ov-kv"><span>Ozon, трек</span><b>${escapeHtml(oz.posting_number)}</b> <span class="pill">${escapeHtml(ozonStatusLabel(oz.live_status || oz.status))}</span></div>`);
+  }
+  const cd = order.cdek_shipment;
+  if (cd?.uuid) {
+    lines.push(`<div class="ov-kv"><span>СДЭК, трек</span><b>${escapeHtml(cd.cdek_number || 'присваивается…')}</b>${cd.status_name ? ` <span class="pill">${escapeHtml(cd.status_name)}</span>` : ''}</div>`);
+  }
+  if (cd?.point?.code) lines.push(`<div class="ov-kv"><span>ПВЗ СДЭК</span><span>${escapeHtml(cd.point.code)}</span></div>`);
+  if (order.ozon_delivery_point_id) lines.push(`<div class="ov-kv"><span>ПВЗ Ozon</span><span>${escapeHtml(order.ozon_delivery_point_id)}</span></div>`);
+  if (order.weight_g) {
+    const dims = order.length_mm ? ` · ${order.length_mm}×${order.width_mm}×${order.height_mm} мм` : '';
+    lines.push(`<div class="ov-kv"><span>Посылка</span><span>${order.weight_g} г${dims}</span></div>`);
+  }
+  return lines.join('');
+}
+
+function renderView(order) {
+  const view = document.getElementById('order-view');
+  const npd = order.npd_receipt;
+  const npdLine = npd?.uuid
+    ? npd.canceled_at
+      ? `<div class="ov-kv"><span>Чек «Мой налог»</span><span class="neg">аннулирован</span></div>`
+      : `<div class="ov-kv"><span>Чек «Мой налог»</span><a href="${escapeHtml(npd.url)}" target="_blank" rel="noopener">открыть ↗</a></div>`
+    : '';
+  const paid = order.source === 'new_lab_3d'
+    ? order.payment_status === 'paid' ? '<span class="pill delivered">Оплачен</span>' : '<span class="pill new">Не оплачен</span>'
+    : '';
+  const receipts = (order.receipts || []).map((r) => (r.mime_type || '').startsWith('image/')
+    ? `<a class="ov-receipt" href="/api/receipts/${r.id}/file" target="_blank" title="${escapeHtml(r.original_name)}"><img src="/api/receipts/${r.id}/file" alt=""></a>`
+    : `<a class="ov-receipt ov-receipt-file" href="/api/receipts/${r.id}/file" target="_blank" title="${escapeHtml(r.original_name)}">📄<span>${escapeHtml(r.original_name)}</span></a>`).join('');
+  const phoneHref = String(order.phone || '').replace(/[^\d+]/g, '');
+
+  view.innerHTML = `
+    <div class="card ov-head">
+      <div class="ov-head-main">
+        <div class="ov-title">
+          <span class="ov-number">#${escapeHtml(order.display_number)}</span>
+          ${tagBadge(order)} ${statusPill(order.status, statuses)} ${paid}
+        </div>
+        <div class="muted ov-sub">Создан ${ruDateTime(order.created_at)}${order.customer_email ? ` · ${escapeHtml(order.customer_email)}` : ''}</div>
+      </div>
+      <div class="ov-head-side">
+        <div class="ov-total">${money(order.grand_total)}</div>
+        <button type="button" id="edit-btn">✎ Редактировать</button>
+      </div>
+    </div>
+
+    <div class="ov-grid">
+      <div class="card ov-block">
+        <h3>👤 Получатель</h3>
+        <div class="ov-name">${escapeHtml(order.full_name || 'Без имени')}</div>
+        ${order.phone ? `<a class="ov-phone" href="tel:${escapeHtml(phoneHref)}">${escapeHtml(order.phone)}</a>` : ''}
+        ${order.notes ? `<div class="ov-notes">${escapeHtml(order.notes)}</div>` : ''}
+      </div>
+      <div class="card ov-block">
+        <h3>🚚 Доставка</h3>
+        <div class="ov-carrier">${deliveryDot(order.delivery_service, catalog.delivery_services)}<b>${escapeHtml(order.delivery_service || '—')}</b></div>
+        <div class="ov-address">${escapeHtml(order.pvz_address || order.shipping_address || 'адрес не указан')}</div>
+        ${viewShipment(order)}
+      </div>
+    </div>
+
+    <div class="card ov-block">
+      <h3>📦 Товары</h3>
+      <div class="ov-items">${order.items.map(viewItem).join('') || '<div class="muted">Товаров нет</div>'}</div>
+      <div class="ov-totals">
+        <div class="ov-kv"><span>Товары</span><span>${money(order.goods_total)}</span></div>
+        <div class="ov-kv"><span>Доставка</span><span>${money(order.delivery_price)}</span></div>
+        <div class="ov-kv ov-grand"><span>Итого</span><span>${money(order.grand_total)}</span></div>
+      </div>
+    </div>
+
+    <div id="ov-ledger"></div>
+
+    ${receipts || npdLine ? `
+    <div class="card ov-block">
+      <h3>🧾 Чеки</h3>
+      ${npdLine}
+      ${receipts ? `<div class="ov-receipts">${receipts}</div>` : ''}
+    </div>` : ''}
+  `;
+  view.querySelector('#edit-btn').addEventListener('click', () => setMode('edit'));
+  renderViewLedger(order);
+}
+
+// Записи бухгалтерии по заказу (продажа, возвраты и т.п.) — только администратору.
+async function renderViewLedger(order) {
+  const mount = document.getElementById('ov-ledger');
+  let rows;
+  try {
+    rows = await api(`/api/accounting/ledger?order_id=${order.id}`);
+  } catch {
+    return; // не администратор — блока нет
+  }
+  const date = (iso) => iso.split('-').reverse().join('.');
+  const accLink = `/accounting.html?q=${encodeURIComponent(`#${order.display_number}`)}`;
+  mount.innerHTML = `
+    <div class="card ov-block">
+      <h3>💰 Бухгалтерия</h3>
+      ${rows.length
+        ? rows.map((r) => `
+          <a class="ov-ledger-row" href="${accLink}">
+            <span class="muted">${date(r.date)}</span>
+            <span class="ov-ledger-desc">${escapeHtml(r.description)}${r.frozen ? ` <span class="chip acc-chip-frozen">🛡 до ${date(r.warranty_until)}</span>` : ''}</span>
+            <span class="ov-ledger-sum">${r.income ? `<span class="pos">+${money(r.income)}</span>` : ''} ${r.expense ? `<span class="neg">−${money(r.expense)}</span>` : ''}</span>
+          </a>`).join('')
+        : `<div class="muted">Записей нет${order.status === 'cancelled' ? ' — заказ отменён' : ''}.</div>`}
+      <a class="ov-ledger-open" href="${accLink}">Открыть в бухгалтерии →</a>
+    </div>`;
+}
+
+// Режим хранится в адресе (?edit=1), чтобы обновление страницы его не сбрасывало.
+async function setMode(mode) {
+  const editing = mode === 'edit';
+  const url = new URL(window.location.href);
+  if (editing) url.searchParams.set('edit', '1');
+  else url.searchParams.delete('edit');
+  history.replaceState(null, '', url);
+  document.getElementById('order-edit').hidden = !editing;
+  document.getElementById('order-view').hidden = editing;
+  if (!editing) {
+    // Действия в режиме правки (статус, Ozon, СДЭК, чеки) могли изменить заказ.
+    currentOrder = await api(`/api/orders/${id}`);
+    renderView(currentOrder);
+  }
+  window.scrollTo(0, 0);
+}
+
+// Отмена: несохранённые правки формы отбрасываются — форма перерисовывается из заказа.
+for (const btnId of ['view-btn', 'view-btn-bottom']) {
+  document.getElementById(btnId).addEventListener('click', async () => {
+    await setMode('view');
+    fillForm(currentOrder);
+  });
+}
+
 async function load() {
   [statuses, catalog] = await Promise.all([api('/api/statuses'), api('/api/catalog')]);
   renderQuickAdd(document.getElementById('quick-add'), addItemRow);
@@ -993,19 +1182,12 @@ async function load() {
   } else {
     infoEl.innerHTML = `${tagBadge(order)} Создан в CRM`;
   }
-  sel.value = order.status;
-  const form = document.getElementById('order-form');
-  form.delivery_service.value = order.delivery_service || 'СДЭК';
-  form.full_name.value = order.full_name || '';
-  form.phone.value = order.phone || '';
-  form.pvz_address.value = order.pvz_address || '';
-  addressFields.refresh();
-  form.delivery_price.value = order.delivery_price || 0;
-  form.notes.value = order.notes || '';
-  order.items.forEach((it) => addItemRow(it));
-  if (!order.items.length) addItemRow();
-  updatePreview();
-  renderReceipts(order.receipts || []);
+  fillForm(order);
+  currentOrder = order;
+  renderView(order);
+  const startEditing = new URLSearchParams(window.location.search).get('edit') === '1';
+  document.getElementById('order-edit').hidden = !startEditing;
+  document.getElementById('order-view').hidden = startEditing;
 
   document.getElementById('ozon-weight').value = order.weight_g || '';
   document.getElementById('ozon-length').value = order.length_mm || '';
@@ -1021,6 +1203,26 @@ async function load() {
   sel.addEventListener('change', async () => {
     await api(`/api/orders/${id}`, { method: 'PATCH', body: JSON.stringify({ status: sel.value }) });
   });
+}
+
+// Форма правки из заказа (при открытии и при отмене правки).
+function fillForm(order) {
+  document.getElementById('status-select').value = order.status;
+  const form = document.getElementById('order-form');
+  form.number.value = order.number || '';
+  form.delivery_service.value = order.delivery_service || 'СДЭК';
+  form.full_name.value = order.full_name || '';
+  form.phone.value = order.phone || '';
+  form.pvz_address.value = order.pvz_address || '';
+  addressFields.refresh();
+  form.delivery_price.value = order.delivery_price || 0;
+  form.notes.value = order.notes || '';
+  itemsBody.innerHTML = '';
+  order.items.forEach((it) => addItemRow(it));
+  if (!order.items.length) addItemRow();
+  updatePreview();
+  renderReceipts(order.receipts || []);
+  syncCarrierCards();
 }
 
 document.getElementById('order-form').addEventListener('submit', async (e) => {
@@ -1051,6 +1253,7 @@ document.getElementById('order-form').addEventListener('submit', async (e) => {
     if (!order.items.length) addItemRow();
     updatePreview();
     toast('Сохранено', 'success');
+    await setMode('view');
   } catch (err) {
     toast(err.message, 'error');
   }
