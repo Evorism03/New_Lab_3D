@@ -343,7 +343,8 @@ $sidebar.Controls.AddRange(@($logo, $brand, $brandSub))
 $script:Pages = @{}
 $script:NavButtons = @{}
 $navItems = @(
-    @("overview", "Обзор", (G 0xE80F)), @("orders", "Заказы", (G 0xE7BF)), @("logs", "Логи", (G 0xE8FD)), @("updates", "Обновления", (G 0xE895)),
+    @("overview", "Обзор", (G 0xE80F)), @("orders", "Заказы", (G 0xE7BF)), @("printers", "Принтеры", (G 0xE749)),
+    @("logs", "Логи", (G 0xE8FD)), @("updates", "Обновления", (G 0xE895)),
     @("settings", "Настройки", (G 0xE713)), @("cleanup", "Очистка", (G 0xE74D))
 )
 $navY = 108
@@ -382,6 +383,7 @@ function Show-Page([string]$Name) {
     if ($Name -eq "logs") { Reset-LogView }
     if ($Name -eq "updates") { Update-UpdatesView }
     if ($Name -eq "settings") { Load-SettingsValues }
+    if ($Name -eq "printers") { $script:BbPollTick = 0; Update-BambuddyStatus }
 }
 
 function Add-Page([string]$Name, $Control) {
@@ -582,6 +584,115 @@ $pOrders.Controls.Add($journalHeadOrders, 0, 3)
 $consoleOrders = New-Console
 $pOrders.Controls.Add((New-ConsoleCard $consoleOrders), 0, 4)
 Add-Page "orders" $pOrders
+
+# ---------------------------------------------------------------- страница: принтеры (Bambuddy)
+$pPrinters = New-Table @(80, 184, 120, 70, "*")
+$pPrinters.Controls.Add((New-Heading "Принтеры" "Bambuddy - служба управления принтерами Bambu Lab"), 0, 0)
+
+$cardBbHero = New-Card $ColCard 18
+$cardBbHero.Dock = "Fill"
+$cardBbHero.Margin = New-Object Windows.Forms.Padding(0, 0, 0, 16)
+$dotBb = New-Object Lab3D.StatusDot
+$dotBb.SetBounds(24, 24, 34, 34)
+$lblBbState = New-Label "..." 22 $ColInk $true
+$lblBbState.Location = New-Object Drawing.Point(64, 20)
+$lblBbSub = New-Label "" 10 $ColMuted
+$lblBbSub.Location = New-Object Drawing.Point(66, 66)
+$cardBbHero.Controls.AddRange(@($dotBb, $lblBbState, $lblBbSub))
+
+$actionsBb = New-Object Windows.Forms.FlowLayoutPanel
+$actionsBb.Dock = "Bottom"
+$actionsBb.Height = 74
+$actionsBb.BackColor = [Drawing.Color]::Transparent
+$actionsBb.Padding = New-Object Windows.Forms.Padding(22, 6, 0, 18)
+$btnBbStart = New-Button "Запустить" "primary" 156 (G 0xE768)
+$btnBbStop = New-Button "Остановить" "secondary" 158 (G 0xE71A)
+$btnBbRestart = New-Button "Перезапустить" "secondary" 176 (G 0xE72C)
+$btnBbOpen = New-Button "Открыть" "secondary" 150 (G 0xE774)
+$actionsBb.Controls.AddRange(@($btnBbStart, $btnBbStop, $btnBbRestart, $btnBbOpen))
+$cardBbHero.Controls.Add($actionsBb)
+# логи Bambuddy пишет сам (C:\ProgramData\Bambuddy\logs) - кнопка просто открывает папку
+$btnBbLogs = New-Button "Логи" "ghost" 104 (G 0xE8FD)
+$btnBbLogs.Height = 32
+$btnBbLogs.Anchor = "Top,Right"
+$btnBbLogs.Location = New-Object Drawing.Point(($cardBbHero.Width - 120), 16)
+$cardBbHero.Add_Resize({ $btnBbLogs.Left = $cardBbHero.Width - $btnBbLogs.Width - 16 })
+$cardBbHero.Controls.Add($btnBbLogs)
+$pPrinters.Controls.Add($cardBbHero, 0, 1)
+
+# плитки: адрес / поддомен / принтеры / ключ API
+$tilesBb = New-Table @(100) 4
+$tilesBb.Margin = New-Object Windows.Forms.Padding(0, 0, 0, 16)
+$script:BbFieldValues = @{}
+$col = 0
+foreach ($name in @("Адрес", "Поддомен", "Принтеры", "Ключ API")) {
+    $tile = New-Card $ColCard 14
+    $tile.Dock = "Fill"
+    $tile.Padding = New-Object Windows.Forms.Padding(18, 16, 12, 8)
+    $tile.Margin = New-Object Windows.Forms.Padding(0, 0, $(if ($col -lt 3) { 14 } else { 0 }), 0)
+    if ($name -eq "Адрес") {
+        $v = New-Object Windows.Forms.LinkLabel
+        $v.LinkColor = $ColBlue
+        $v.ActiveLinkColor = $ColAccent
+        $v.VisitedLinkColor = $ColBlue
+        $v.LinkBehavior = "HoverUnderline"
+        $v.Add_LinkClicked({ if ($script:BbUrl) { Start-Process $script:BbUrl } })
+    }
+    else { $v = New-Object Windows.Forms.Label; $v.ForeColor = $ColInk }
+    $v.AutoSize = $false
+    $v.AutoEllipsis = $true
+    $v.Dock = "Top"
+    $v.Height = 34
+    $v.BackColor = $ColCard
+    $v.Font = New-Font 12 $true
+    $v.Text = "-"
+    $k = New-Label $name 9 $ColMuted $false $ColCard
+    $k.AutoSize = $false
+    $k.Dock = "Top"
+    $k.Height = 22
+    $tile.Controls.Add($v)
+    $tile.Controls.Add($k)
+    $tilesBb.Controls.Add($tile, $col, 0)
+    $script:BbFieldValues[$name] = $v
+    $col++
+}
+$pPrinters.Controls.Add($tilesBb, 0, 2)
+
+# ключ API (для страницы «Принтеры» в админке сайта) и подключение поддомена
+$bbKeyBar = New-Object Windows.Forms.FlowLayoutPanel
+$bbKeyBar.Dock = "Fill"
+$bbKeyBar.BackColor = $ColBg
+$bbKeyBar.WrapContents = $false
+$lblBbKey = New-Label "Ключ API" 10 $ColMuted $false $ColBg
+$lblBbKey.Margin = New-Object Windows.Forms.Padding(2, 20, 12, 0)
+$inBbKey = New-Input "" $true "Bambuddy → Settings → API Keys"
+$inBbKey.Dock = "None"
+$inBbKey.Width = 270
+$inBbKey.Height = 38
+$inBbKey.Margin = New-Object Windows.Forms.Padding(0, 10, 10, 0)
+$btnBbKey = New-Button "Сохранить" "secondary" 140 (G 0xE74E)
+$btnBbKey.Margin = New-Object Windows.Forms.Padding(0, 8, 10, 0)
+$btnBbSite = New-Button "Подключить поддомен" "secondary" 210 (G 0xE71B)
+$btnBbSite.Margin = New-Object Windows.Forms.Padding(0, 8, 0, 0)
+$bbKeyBar.Controls.AddRange(@($lblBbKey, $inBbKey, $btnBbKey, $btnBbSite))
+$pPrinters.Controls.Add($bbKeyBar, 0, 3)
+
+# слева - принтеры (живой статус из API Bambuddy), справа - журнал действий этой вкладки
+$bbBottom = New-Table @("*") 2
+$bbBottom.ColumnStyles.Clear()
+[void]$bbBottom.ColumnStyles.Add((New-Object Windows.Forms.ColumnStyle("Percent", 58)))
+[void]$bbBottom.ColumnStyles.Add((New-Object Windows.Forms.ColumnStyle("Percent", 42)))
+$printerView = New-Console
+$printerView.Font = New-Object Drawing.Font("Segoe UI", 10)
+$printerCard = New-ConsoleCard $printerView
+$printerCard.Margin = New-Object Windows.Forms.Padding(0, 0, 14, 0)
+$bbBottom.Controls.Add($printerCard, 0, 0)
+$consoleBb = New-Console
+$bbJournal = New-ConsoleCard $consoleBb
+$bbJournal.Margin = New-Object Windows.Forms.Padding(0)
+$bbBottom.Controls.Add($bbJournal, 1, 0)
+$pPrinters.Controls.Add($bbBottom, 0, 4)
+Add-Page "printers" $pPrinters
 
 # ---------------------------------------------------------------- страница: логи
 $pLogs = New-Table @(80, 52, "*")
@@ -848,6 +959,7 @@ function Set-Busy([bool]$Value) {
     $script:Busy = $Value
     Update-Status
     Update-LabStatus
+    Update-BambuddyStatus $false
 }
 
 function Add-Steps([object[]]$Steps, [scriptblock]$OnFinish = $null) {
@@ -1083,6 +1195,163 @@ function Update-LabStatus {
     $btnOrdersOpen.Enabled = [bool]$script:LabSiteUrl
 }
 
+# Принтеры (Bambuddy) - служба Windows «Bambuddy» от его собственного установщика. Статус службы
+# обновляется вместе с остальными; принтеры запрашиваются из API Bambuddy только пока открыта
+# вкладка, раз в 3 тика (~6 с), с коротким таймаутом - запросы идут на localhost.
+$script:BbUrl = ""
+$script:BbPollTick = 0
+$script:BbPrintersText = "-"
+$script:BbLogDir = Join-Path $env:ProgramData "Bambuddy\logs"
+$script:BbStates = @{ IDLE = "Свободен"; PREPARE = "Подготовка"; SLICING = "Нарезка"; RUNNING = "Печатает"; PAUSE = "Пауза"; FINISH = "Готово"; FAILED = "Ошибка печати" }
+
+function Get-BambuddyBase($Config) {
+    if ($Config["BAMBUDDY_URL"]) { return $Config["BAMBUDDY_URL"].TrimEnd("/") }
+    return "http://127.0.0.1:{0}" -f (Get-BambuddyPort $Config)
+}
+
+# HttpWebRequest, а не Invoke-RestMethod: PowerShell 5.1 читает JSON без charset как Latin-1
+# и портит кириллицу в именах принтеров.
+function Invoke-BambuddyApi([string]$Base, [string]$Path, [string]$Key = "") {
+    $request = [Net.HttpWebRequest]::Create($Base + $Path)
+    $request.Timeout = 2000
+    $request.ReadWriteTimeout = 2000
+    $request.Proxy = $null
+    if ($Key) { $request.Headers.Add("X-API-Key", $Key) }
+    $response = $request.GetResponse()
+    try {
+        $reader = New-Object IO.StreamReader($response.GetResponseStream(), [Text.Encoding]::UTF8)
+        return ($reader.ReadToEnd() | ConvertFrom-Json)
+    }
+    finally { $response.Close() }
+}
+
+function Format-Minutes([int]$Minutes) {
+    if ($Minutes -lt 60) { return "$Minutes мин" }
+    if ($Minutes -lt 1440) { return "{0} ч {1} мин" -f [Math]::Floor($Minutes / 60), ($Minutes % 60) }
+    return "{0} д {1} ч" -f [Math]::Floor($Minutes / 1440), [Math]::Floor(($Minutes % 1440) / 60)
+}
+
+function Format-Temp($Current, $Target) {
+    if ($null -eq $Current) { return "-" }
+    if ($Target) { return "{0} / {1}°C" -f [Math]::Round($Current), [Math]::Round($Target) }
+    return "{0}°C" -f [Math]::Round($Current)
+}
+
+function Show-PrinterMessage([string]$Text, $Color = $null) {
+    $printerView.Clear()
+    Add-ConsoleText $printerView $Text $Color
+}
+
+function Update-PrinterList($Config) {
+    $base = Get-BambuddyBase $Config
+    $key = $Config["BAMBUDDY_API_KEY"]
+    try { [void](Invoke-BambuddyApi $base "/health") }
+    catch { $script:BbPrintersText = "-"; Show-PrinterMessage "Bambuddy не отвечает на $base.`nЕсли служба только что запущена - подождите полминуты." $ColYellow; return }
+    if (-not $key) {
+        $script:BbPrintersText = "нужен ключ"
+        Show-PrinterMessage "Bambuddy работает. Чтобы увидеть здесь принтеры, создайте ключ API в Bambuddy (Settings → API Keys, права printers:read и printers:control) и сохраните его ниже." $ColMuted
+        return
+    }
+    try { $printers = @(Invoke-BambuddyApi $base "/api/v1/printers/" $key) | Where-Object { $_.is_active } }
+    catch {
+        $code = $null
+        if ($_.Exception.InnerException -is [Net.WebException] -and $_.Exception.InnerException.Response) { $code = [int]$_.Exception.InnerException.Response.StatusCode }
+        $script:BbPrintersText = "ошибка"
+        $message = if ($code -eq 401 -or $code -eq 403) { "Bambuddy не принял ключ API ($code) - проверьте ключ и его права." } else { "Не удалось получить список принтеров: " + $_.Exception.Message }
+        Show-PrinterMessage $message $ColRed
+        return
+    }
+    if (-not $printers) { $script:BbPrintersText = "0"; Show-PrinterMessage "В Bambuddy пока нет принтеров - добавьте их в самом Bambuddy." $ColMuted; return }
+
+    $online = 0
+    $printerView.Clear()
+    foreach ($printer in $printers) {
+        $status = $null
+        try { $status = Invoke-BambuddyApi $base ("/api/v1/printers/{0}/status" -f $printer.id) $key } catch { }
+        $connected = $status -and $status.connected
+        if ($connected) { $online++ }
+        $state = if (-not $connected) { "OFFLINE" } elseif ($status.state) { [string]$status.state } else { "IDLE" }
+        $stateText = if ($state -eq "OFFLINE") { "Не в сети" } elseif ($script:BbStates.ContainsKey($state)) { $script:BbStates[$state] } else { $state }
+        $color = switch ($state) { "OFFLINE" { $ColRed } "FAILED" { $ColRed } "PAUSE" { $ColYellow } "RUNNING" { $ColAccent } "PREPARE" { $ColAccent } default { $ColInk } }
+
+        $title = "● " + $printer.name + $(if ($printer.model) { "  ($($printer.model))" } else { "" })
+        Add-ConsoleText $printerView ($title + "   ") $color
+        Add-ConsoleText $printerView ($stateText + "`n") $color
+        if ($state -in @("RUNNING", "PAUSE", "PREPARE")) {
+            $job = if ($status.subtask_name) { $status.subtask_name } else { $status.current_print }
+            $parts = @("{0}%" -f [Math]::Round([double]$status.progress))
+            if ($status.total_layers) { $parts += "слой {0}/{1}" -f $status.layer_num, $status.total_layers }
+            if ($null -ne $status.remaining_time) { $parts += "осталось " + (Format-Minutes ([int]$status.remaining_time)) }
+            if ($job) { Add-ConsoleText $printerView ("    $job`n") $ColInk }
+            Add-ConsoleText $printerView ("    " + ($parts -join "  ·  ") + "`n") $ColMuted
+        }
+        if ($connected -and $status.temperatures) {
+            $t = $status.temperatures
+            Add-ConsoleText $printerView ("    сопло {0}  ·  стол {1}`n" -f (Format-Temp $t.nozzle $t.nozzle_target), (Format-Temp $t.bed $t.bed_target)) $ColMuted
+        }
+        if ($status -and @($status.hms_errors).Count -gt 0) { Add-ConsoleText $printerView ("    ошибок на принтере: {0}`n" -f @($status.hms_errors).Count) $ColRed }
+        Add-ConsoleText $printerView "`n"
+    }
+    $printerView.SelectionStart = 0
+    $printerView.ScrollToCaret()
+    $script:BbPrintersText = "{0} из {1} в сети" -f $online, @($printers).Count
+}
+
+function Update-BambuddyStatus([bool]$Poll = $true) {
+    $config = Read-EnvFile $script:EnvFile
+    $port = Get-BambuddyPort $config
+    $service = Get-Service -Name $script:BambuddyService -ErrorAction SilentlyContinue
+    $domain = Get-BambuddyDomain $config["DEPLOY_DOMAIN"]
+    $siteOn = Test-Path $script:BambuddySiteFile
+    $script:BbUrl = if ($domain -and $siteOn) { "https://$domain" } else { "http://localhost:$port" }
+    $running = $service -and $service.Status -eq "Running"
+
+    if (-not $service) {
+        $lblBbState.Text = "Не установлен"
+        $lblBbState.ForeColor = $ColMuted
+        $dotBb.DotColor = $ColMuted; $dotBb.Pulse = $false
+        $lblBbSub.Text = "Установите Bambuddy: github.com/maziggy/bambuddy/releases (bambuddy-windows-x64-setup.exe)"
+    }
+    elseif ($running) {
+        $lblBbState.Text = "Работает"
+        $lblBbState.ForeColor = $ColAccent
+        $dotBb.DotColor = $ColAccent; $dotBb.Pulse = $false
+        $lblBbSub.Text = "служба Windows «Bambuddy», порт $port - обновляется из самого Bambuddy (Settings)"
+    }
+    elseif ([string]$service.Status -like "*Pending") {
+        $lblBbState.Text = $(if ([string]$service.Status -eq "StopPending") { "Останавливается..." } else { "Запускается..." })
+        $lblBbState.ForeColor = $ColYellow
+        $dotBb.DotColor = $ColYellow; $dotBb.Pulse = $true
+        $lblBbSub.Text = ""
+    }
+    else {
+        $lblBbState.Text = "Остановлен"
+        $lblBbState.ForeColor = $ColRed
+        $dotBb.DotColor = $ColRed; $dotBb.Pulse = $false
+        $lblBbSub.Text = "служба Windows «Bambuddy», порт $port"
+    }
+
+    $script:BbFieldValues["Адрес"].Text = $script:BbUrl
+    $script:BbFieldValues["Поддомен"].Text = $(if (-not $domain) { "нет домена сайта" } elseif ($siteOn) { "подключён" } else { "не подключён" })
+    $script:BbFieldValues["Ключ API"].Text = $(if ($config["BAMBUDDY_API_KEY"]) { "задан" } else { "не задан" })
+
+    if ($Poll -and $script:CurrentPage -eq "printers") {
+        if (-not $running) { $script:BbPrintersText = "-"; Show-PrinterMessage "Служба Bambuddy не запущена." $ColMuted }
+        elseif ($script:BbPollTick % 3 -eq 0) { Update-PrinterList $config }
+        $script:BbPollTick++
+    }
+    $script:BbFieldValues["Принтеры"].Text = $script:BbPrintersText
+
+    $free = -not $script:Busy
+    $btnBbStart.Enabled = $free -and $service -and -not $running
+    $btnBbStop.Enabled = $free -and $running
+    $btnBbRestart.Enabled = $free -and [bool]$service
+    $btnBbOpen.Enabled = [bool]$running
+    $btnBbLogs.Enabled = Test-Path $script:BbLogDir
+    $btnBbKey.Enabled = $free -and (Test-Path $script:EnvFile)
+    $btnBbSite.Enabled = $free -and [bool]$domain
+}
+
 # ---------------------------------------------------------------- обновления из git
 $script:Git = $null
 $script:ScanFound = $false
@@ -1217,6 +1486,32 @@ $btnOrdersStop.Add_Click({ Add-Steps @((New-LabServerStep "Остановка «
 $btnOrdersRestart.Add_Click({ Add-Steps @((New-LabServerStep "Перезапуск «Заказы»" "restart")) })
 $btnOrdersOpen.Add_Click({ if ($script:LabSiteUrl) { Start-Process $script:LabSiteUrl } })
 $btnOrdersClearJournal.Add_Click({ $consoleOrders.Clear() })
+function New-BambuddyStep([string]$Title, [string]$Arguments) {
+    return (New-ServerStep $Title $Arguments @{ Console = $consoleBb })
+}
+$btnBbStart.Add_Click({ Add-Steps @((New-BambuddyStep "Запуск Bambuddy" "bambuddy-start")) })
+$btnBbStop.Add_Click({ Add-Steps @((New-BambuddyStep "Остановка Bambuddy" "bambuddy-stop")) })
+$btnBbRestart.Add_Click({ Add-Steps @((New-BambuddyStep "Перезапуск Bambuddy" "bambuddy-restart")) })
+$btnBbOpen.Add_Click({ if ($script:BbUrl) { Start-Process $script:BbUrl } })
+$btnBbLogs.Add_Click({ if (Test-Path $script:BbLogDir) { Start-Process explorer.exe $script:BbLogDir } })
+$btnBbSite.Add_Click({ Add-Steps @((New-BambuddyStep "Подключение поддомена Bambuddy" "bambuddy-site")) })
+$btnBbKey.Add_Click({
+    $key = $inBbKey.Text.Trim()
+    if (-not $key) { [void][Windows.Forms.MessageBox]::Show("Вставьте ключ API из Bambuddy (Settings → API Keys).", "Ключ API", "OK", "Information"); return }
+    $config = Read-EnvFile $script:EnvFile
+    $config["BAMBUDDY_API_KEY"] = $key
+    if (-not $config["BAMBUDDY_URL"]) { $config["BAMBUDDY_URL"] = Get-BambuddyBase $config }
+    Write-EnvFile $script:EnvFile $config
+    $inBbKey.Text = ""
+    Add-ConsoleText $consoleBb "Ключ API сохранён.`n" $ColAccent
+    $script:BbPollTick = 0
+    Update-BambuddyStatus
+    # Сайт читает .env.production только при запуске - без перезапуска админка ключа не увидит.
+    if (Get-ServerState) {
+        $answer = [Windows.Forms.MessageBox]::Show("Перезапустить сайт, чтобы страница «Принтеры» в админке начала работать с новым ключом?", "Ключ API", "YesNo", "Question")
+        if ($answer -eq "Yes") { Add-Steps @((New-BambuddyStep "Перезапуск сайта" "restart")) }
+    }
+})
 $btnCheck.Add_Click({ Start-GitCheck $true })
 $btnUpdate.Add_Click({ Start-Update })
 $btnBanner.Add_Click({ Start-Update })
@@ -1317,7 +1612,7 @@ $pump.Add_Tick({
 })
 $statusTimer = New-Object Windows.Forms.Timer
 $statusTimer.Interval = 2000
-$statusTimer.Add_Tick({ Update-Status; Update-LabStatus })
+$statusTimer.Add_Tick({ Update-Status; Update-LabStatus; Update-BambuddyStatus })
 $updateTimer = New-Object Windows.Forms.Timer
 $updateTimer.Interval = 30 * 60 * 1000
 $updateTimer.Add_Tick({ if ([bool](Get-Settings).autoCheck) { Start-GitCheck } })
@@ -1333,6 +1628,7 @@ $form.Add_Shown({
     try { $dark = 1; [void][Native.Win]::DwmSetWindowAttribute($form.Handle, 20, [ref]$dark, 4) } catch { }
     Update-Status
     Update-LabStatus
+    Update-BambuddyStatus $false
     Show-Page "overview"
     $pump.Start()
     $statusTimer.Start()
@@ -1353,7 +1649,7 @@ if ($Snapshot) {
         Wait-Idle
         for ($i = 0; $i -lt 25; $i++) { [Windows.Forms.Application]::DoEvents(); Start-Sleep -Milliseconds 100 }
     }
-    foreach ($name in @("overview", "logs", "updates", "settings", "cleanup")) {
+    foreach ($name in @("overview", "printers", "logs", "updates", "settings", "cleanup")) {
         Show-Page $name
         for ($i = 0; $i -lt 8; $i++) { [Windows.Forms.Application]::DoEvents(); Start-Sleep -Milliseconds 60 }
         $bitmap = New-Object Drawing.Bitmap($form.Width, $form.Height)

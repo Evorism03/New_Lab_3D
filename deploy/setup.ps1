@@ -131,7 +131,7 @@ else { Write-Warn "Caddy не установлен: winget install CaddyServer.C
 # Bambuddy ставится своим установщиком как служба Windows; здесь только публикуем его
 # на поддомене bambu.<домен> через общий Caddy (подхватится при следующем запуске сервера).
 Write-Step "Bambuddy (принтеры)"
-$bambuddySite = Join-Path $script:ExtraSitesDir "bambuddy.caddy"
+$BambuddyPort = Get-BambuddyPort $settings
 if (-not (Get-PortOwner $BambuddyPort)) {
     Write-Warn "Bambuddy не отвечает на порту $BambuddyPort - страница «Принтеры» в админке работать не будет."
 }
@@ -139,9 +139,8 @@ elseif (-not $Domain) {
     Write-Warn "Без домена поддомен для Bambuddy не создаётся - он доступен по http://${Ip}:$BambuddyPort"
 }
 else {
-    $bambuddyDomain = "bambu." + ($Domain -replace '^www\.', '')
-    New-Item -ItemType Directory -Force -Path $script:ExtraSitesDir | Out-Null
-    [IO.File]::WriteAllText($bambuddySite, (New-BambuddyCaddySiteText $bambuddyDomain $Ip $BambuddyPort), (New-Object Text.UTF8Encoding($false)))
+    Write-BambuddySite $Domain $Ip $BambuddyPort
+    $bambuddyDomain = Get-BambuddyDomain $Domain
     Write-Ok "https://$bambuddyDomain -> 127.0.0.1:$BambuddyPort (DNS-запись A: $bambuddyDomain -> $(if ($publicIp) { $publicIp } else { $Ip }))"
 }
 if (-not $settings["BAMBUDDY_API_KEY"]) {

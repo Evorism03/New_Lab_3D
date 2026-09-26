@@ -150,6 +150,26 @@ $importLine
 
 # Bambuddy's site block for sites.d (see deploy/setup.ps1). reverse_proxy passes its
 # WebSocket through as is; the body limit is raised for large 3MF/G-code uploads.
+# Bambuddy ставится своим установщиком как служба Windows «Bambuddy» (порт 8000) - мы им
+# только управляем и публикуем его на bambu.<домен>. Порт берётся из BAMBUDDY_URL.
+$script:BambuddyService = "Bambuddy"
+$script:BambuddySiteFile = Join-Path $script:ExtraSitesDir "bambuddy.caddy"
+
+function Get-BambuddyPort($Config) {
+    try { if ($Config["BAMBUDDY_URL"]) { return ([Uri]$Config["BAMBUDDY_URL"]).Port } } catch { }
+    return 8000
+}
+
+function Get-BambuddyDomain([string]$Domain) {
+    if (-not $Domain) { return "" }
+    return "bambu." + ($Domain -replace '^www\.', '')
+}
+
+function Write-BambuddySite([string]$Domain, [string]$Ip, [int]$Port) {
+    New-Item -ItemType Directory -Force -Path $script:ExtraSitesDir | Out-Null
+    [IO.File]::WriteAllText($script:BambuddySiteFile, (New-BambuddyCaddySiteText (Get-BambuddyDomain $Domain) $Ip $Port), (New-Object Text.UTF8Encoding($false)))
+}
+
 function New-BambuddyCaddySiteText([string]$Domain, [string]$Ip, [int]$Port) {
     return @"
 $Domain {

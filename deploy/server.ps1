@@ -547,6 +547,45 @@ function Show-Menu {
     }
 }
 
+# ---------------------------------------------------------------- Bambuddy (принтеры)
+function Invoke-BambuddyService([string]$Action) {
+    $service = Get-Service -Name $script:BambuddyService -ErrorAction SilentlyContinue
+    if (-not $service) {
+        Write-Bad "Служба Bambuddy не найдена. Установите Bambuddy: https://github.com/maziggy/bambuddy/releases (bambuddy-windows-x64-setup.exe)"
+        return
+    }
+    try {
+        switch ($Action) {
+            "start" { Start-Service -Name $script:BambuddyService -ErrorAction Stop }
+            "stop" { Stop-Service -Name $script:BambuddyService -Force -ErrorAction Stop }
+            "restart" { Restart-Service -Name $script:BambuddyService -Force -ErrorAction Stop }
+        }
+    }
+    catch { Write-Bad $_.Exception.Message; return }
+    Write-Good ("Служба Bambuddy: {0}" -f (Get-Service -Name $script:BambuddyService).Status)
+}
+
+function Invoke-BambuddySite {
+    $config = Read-EnvFile $script:EnvFile
+    $domain = $config["DEPLOY_DOMAIN"]
+    if (-not $domain) { Write-Bad "У сайта не задан домен - сначала укажите его в «Настройках»."; return }
+    $port = Get-BambuddyPort $config
+    Write-BambuddySite $domain $config["DEPLOY_IP"] $port
+    $bambuddyDomain = Get-BambuddyDomain $domain
+    Write-Good "https://$bambuddyDomain -> 127.0.0.1:$port"
+    Write-Info "Нужна DNS-запись A: $bambuddyDomain -> внешний IP сервера."
+
+    $state = Get-ServerState
+    $caddy = if ($config["DEPLOY_CADDY"] -and (Test-Path $config["DEPLOY_CADDY"])) { $config["DEPLOY_CADDY"] } else { Find-Caddy }
+    if (-not ($state -and $state.caddyPid -and $caddy -and (Test-Path $script:CaddyFile))) {
+        Write-Info "Caddy сейчас не запущен - поддомен заработает при следующем запуске сервера."
+        return
+    }
+    $reload = Invoke-Native { & $caddy reload --config $script:CaddyFile --adapter caddyfile }
+    if ($reload.ExitCode -eq 0) { Write-Good "Caddy подхватил поддомен без перезапуска." }
+    else { Write-Bad ("Caddy не принял настройку: {0}" -f ($reload.Output -join " ")) }
+}
+
 try {
     switch ($Command.ToLower()) {
         "menu" { Show-Menu }
@@ -565,6 +604,10 @@ try {
         "cleanup-cache" { Clear-BuildAndLogs }
         "uploads-scan" { Invoke-UploadsScan $Rest[0] "scan" }
         "uploads-delete" { Invoke-UploadsScan $Rest[0] "delete" }
+        "bambuddy-start" { Invoke-BambuddyService "start" }
+        "bambuddy-stop" { Invoke-BambuddyService "stop" }
+        "bambuddy-restart" { Invoke-BambuddyService "restart" }
+        "bambuddy-site" { Invoke-BambuddySite }
         default {
             Write-Bad "Неизвестная команда: $Command"
             Write-Info "Доступно: menu, start, stop, restart, status, logs, update, setup, autostart, cleanup, uninstall"
