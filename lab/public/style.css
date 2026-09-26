@@ -1100,3 +1100,13 @@ a.ov-serial:hover { border-color: var(--accent); color: var(--accent); text-deco
 .dq-price { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
 .dq-price b { font-size: 20px; color: var(--accent-2); }
 .dq-result:empty { display: none; }
+
+.acc-warranty { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.acc-warranty .acc-check { margin: 8px 0; }
+.acc-warranty input[type="number"] { width: 80px; }
+.acc-warranty input:disabled { opacity: 0.5; }
+.acc-period-row { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.acc-period-row input[type="date"], .acc-period-from { width: 160px; flex-shrink: 0; }
+.acc-period-row input[type="number"] { width: 90px; }
+.acc-warranty .muted { font-size: 13px; white-space: nowrap; }
+.acc-period-from { font-size: 14px; }

@@ -154,6 +154,8 @@ for (const stmt of [
   'ALTER TABLE items ADD COLUMN source_file_url TEXT',
   // Бухгалтерия: ручная привязка записи к заказу (возврат, доплата, старая продажа). Автозапись продажи — ledger.order_id.
   'ALTER TABLE ledger ADD COLUMN linked_order_id INTEGER REFERENCES orders(id) ON DELETE SET NULL',
+  // Срок гарантии конкретной записи (дней); NULL — по периодам из настроек (по дате записи).
+  'ALTER TABLE ledger ADD COLUMN warranty_days INTEGER',
 ]) {
   try {
     db.exec(stmt);
@@ -1001,7 +1003,8 @@ if (!getSetting('acc_auto_since')) setSetting('acc_auto_since', localDate());
 export function getAccountingSettings() {
   return {
     tax_rate: Number(getSetting('acc_tax_rate') || 4),
-    warranty_days: Number(getSetting('acc_warranty_days') || 92),
+    warranty_periods: warrantyPeriods(),
+    warranty_days: warrantyDaysOn(localDate()), // срок для продаж, сделанных сегодня
     auto_since: getSetting('acc_auto_since'),
     bank_name: getSetting('acc_bank_name') || 'Банк',
     bank_balance: getSetting('acc_bank_balance') === '' ? null : Number(getSetting('acc_bank_balance')),
@@ -1020,10 +1023,17 @@ export function setAccountingSettings(data) {
     if (!(rate >= 0 && rate <= 100)) throw httpError(400, 'Ставка налога — от 0 до 100 %');
     setSetting('acc_tax_rate', String(rate));
   }
-  if (data.warranty_days != null) {
-    const days = Math.round(Number(data.warranty_days));
-    if (!(days >= 0 && days <= 3650)) throw httpError(400, 'Срок гарантии — от 0 до 3650 дней');
-    setSetting('acc_warranty_days', String(days));
+  if (data.warranty_periods != null) {
+    const list = (Array.isArray(data.warranty_periods) ? data.warranty_periods : []).map((p, i) => {
+      const days = Math.round(Number(p?.days));
+      if (!(days >= 0 && days <= 3650)) throw httpError(400, 'Срок гарантии — от 0 до 3650 дней');
+      const from = i === 0 ? '' : String(p?.from || '');
+      if (i > 0 && !/^\d{4}-\d{2}-\d{2}$/.test(from)) throw httpError(400, 'Укажите, с какой даты действует срок гарантии');
+      return { from, days };
+    });
+    if (!list.length) throw httpError(400, 'Нужен хотя бы один срок гарантии');
+    list.sort((a, b) => a.from.localeCompare(b.from));
+    setSetting('acc_warranty_periods', JSON.stringify(list));
   }
   if (data.auto_since != null) {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(data.auto_since)) throw httpError(400, 'Неверная дата начала автозаполнения');
@@ -1042,6 +1052,20 @@ export function setAccountingSettings(data) {
     setSetting('acc_fixed_costs', JSON.stringify(list));
   }
   return getAccountingSettings();
+}
+
+// Срок гарантии менялся: продажи до даты — со старым сроком, после — с новым.
+// [{ from: '', days: 92 }, { from: '2026-09-20', days: 30 }] — первая строка действует «с начала».
+function warrantyPeriods() {
+  const list = readJsonSetting('acc_warranty_periods', null);
+  if (Array.isArray(list) && list.length) return list;
+  return [{ from: '', days: Number(getSetting('acc_warranty_days') || 92) }];
+}
+
+function warrantyDaysOn(date, periods = warrantyPeriods()) {
+  let days = periods[0].days;
+  for (const p of periods) if (!p.from || p.from <= date) days = p.days;
+  return days;
 }
 
 // Заказы, запись о продаже которых удалили вручную, — синхронизация их больше не создаёт.
@@ -1133,12 +1157,15 @@ export function syncAllOrdersLedger() {
   return ids.length;
 }
 
-function ledgerRow(row, { warrantyDays, today }) {
+function ledgerRow(row, { periods, today }) {
   const net = roundMoney(row.income - row.expense);
-  const warrantyUntil = row.warranty ? addDays(row.date, warrantyDays) : null;
+  const days = row.warranty_days ?? warrantyDaysOn(row.date, periods);
+  const warrantyUntil = row.warranty ? addDays(row.date, days) : null;
   return {
     ...row,
     warranty: !!row.warranty,
+    warranty_days_custom: row.warranty_days ?? null,
+    warranty_days: row.warranty ? days : null,
     taxable: !!row.taxable,
     delivery_account: !!row.delivery_account,
     locked: !!row.locked,
@@ -1169,7 +1196,7 @@ function ledgerRows({ from, to } = {}) {
        ORDER BY ledger.date DESC, ledger.id DESC`
     )
     .all(...params);
-  const opts = { warrantyDays: getAccountingSettings().warranty_days, today: localDate() };
+  const opts = { periods: warrantyPeriods(), today: localDate() };
   return rows.map((r) => ledgerRow(r, opts));
 }
 
@@ -1209,7 +1236,16 @@ function cleanLedgerInput(data, existing = {}) {
     taxable: pick('taxable') ? 1 : 0,
     delivery_account: pick('delivery_account') ? 1 : 0,
     linked_order_id: data.order !== undefined ? resolveOrderRef(data.order) : existing.linked_order_id ?? null,
+    warranty_days: cleanWarrantyDays(data.warranty_days !== undefined ? data.warranty_days : existing.warranty_days),
   };
+}
+
+// Свой срок гарантии записи; пусто — по периодам из настроек.
+function cleanWarrantyDays(value) {
+  if (value === null || value === undefined || value === '') return null;
+  const days = Math.round(Number(value));
+  if (!(days >= 0 && days <= 3650)) throw httpError(400, 'Срок гарантии — от 0 до 3650 дней');
+  return days;
 }
 
 // «#12», «12» или номер заказа → id заказа (как «#…» в интерфейсе). Пусто — без привязки.
@@ -1229,10 +1265,10 @@ export function createLedgerEntry(data) {
   const info = db
     .prepare(
       `INSERT INTO ledger (date, income, expense, description, category, warranty, taxable, delivery_account,
-         linked_order_id, locked, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)`
+         linked_order_id, warranty_days, locked, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)`
     )
     .run(e.date, e.income, e.expense, e.description, e.category, e.warranty, e.taxable, e.delivery_account,
-      e.linked_order_id, now, now);
+      e.linked_order_id, e.warranty_days, now, now);
   return getLedgerEntry(info.lastInsertRowid);
 }
 
@@ -1250,9 +1286,9 @@ export function updateLedgerEntry(id, data) {
   const e = cleanLedgerInput(data, existing);
   db.prepare(
     `UPDATE ledger SET date = ?, income = ?, expense = ?, description = ?, category = ?, warranty = ?, taxable = ?,
-       delivery_account = ?, linked_order_id = ?, locked = ?, updated_at = ? WHERE id = ?`
+       delivery_account = ?, linked_order_id = ?, warranty_days = ?, locked = ?, updated_at = ? WHERE id = ?`
   ).run(e.date, e.income, e.expense, e.description, e.category, e.warranty, e.taxable, e.delivery_account,
-    existing.order_id != null ? null : e.linked_order_id, existing.order_id != null ? 1 : 0, new Date().toISOString(), id);
+    existing.order_id != null ? null : e.linked_order_id, e.warranty_days, existing.order_id != null ? 1 : 0, new Date().toISOString(), id);
   return getLedgerEntry(id);
 }
 

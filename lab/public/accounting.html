@@ -279,7 +279,7 @@ function renderJournal() {
     if (r.locked && r.auto) chips.push('<span class="chip" title="Исправлено вручную — изменения заказа сюда больше не попадают">✎ вручную</span>');
     if (r.warranty) {
       chips.push(r.frozen
-        ? `<span class="chip acc-chip-frozen" title="Деньги считаются «чистыми» после окончания гарантии">🛡 до ${ruDate(r.warranty_until)}</span>`
+        ? `<span class="chip acc-chip-frozen" title="Гарантия ${r.warranty_days} дн. — деньги станут «чистыми» после её окончания">🛡 до ${ruDate(r.warranty_until)}</span>`
         : '<span class="chip" title="Гарантия закончилась">🛡 гарантия прошла</span>');
     }
     if (r.delivery_account) chips.push('<span class="chip" title="Списание — доставка со счёта ТК">🚚 доставка</span>');
@@ -325,6 +325,14 @@ async function loadOrderList() {
   }
 }
 
+// Срок гарантии на дату (как на сервере: последний период, начавшийся не позже даты).
+function warrantyDaysOn(date) {
+  const periods = settings.warranty_periods || [{ from: '', days: settings.warranty_days }];
+  let days = periods[0].days;
+  for (const p of periods) if (!p.from || p.from <= date) days = p.days;
+  return days;
+}
+
 // ---- Модальные окна ----
 function modal(html) {
   const overlay = el(`<div class="modal-overlay"><div class="modal-box acc-modal">${html}</div></div>`);
@@ -366,7 +374,11 @@ function openEntry(entry, kind) {
         <div class="field"><label>Поступление, ₽</label><input type="number" name="income" min="0" step="0.01" value="${e.income || ''}" placeholder="0"></div>
         <div class="field"><label>Списание, ₽</label><input type="number" name="expense" min="0" step="0.01" value="${e.expense || ''}" placeholder="0"></div>
       </div>
-      <label class="acc-check"><input type="checkbox" name="warranty" ${e.warranty ? 'checked' : ''}> На гарантии — деньги станут «чистыми» через ${settings.warranty_days} дн.</label>
+      <div class="acc-warranty">
+        <label class="acc-check"><input type="checkbox" name="warranty" ${e.warranty ? 'checked' : ''}> На гарантии — деньги станут «чистыми» через</label>
+        <input type="number" name="warranty_days" min="0" max="3650" step="1" value="${e.warranty_days_custom ?? ''}" title="Пусто — срок по дате записи из настроек (⚙)">
+        <span class="muted" id="warranty-hint"></span>
+      </div>
       <label class="acc-check"><input type="checkbox" name="taxable" ${e.taxable ? 'checked' : ''}> Облагается налогом (${String(settings.tax_rate).replace('.', ',')}% с поступления)</label>
       <label class="acc-check"><input type="checkbox" name="delivery_account" ${e.delivery_account ? 'checked' : ''}> Списание — доставка со счёта ТК (Ozon/СДЭК)</label>
       <div class="modal-actions acc-modal-actions">
@@ -380,6 +392,17 @@ function openEntry(entry, kind) {
   `);
   const form = overlay.querySelector('#entry-form');
   if (form.order) loadOrderList();
+  // Срок по умолчанию зависит от даты записи (срок гарантии менялся) — подсказка в пустом поле.
+  const syncWarrantyHint = () => {
+    const days = warrantyDaysOn(form.date.value || today());
+    form.warranty_days.placeholder = String(days);
+    overlay.querySelector('#warranty-hint').textContent = form.warranty_days.value === '' ? 'дн. (по настройкам)' : 'дн. (свой срок)';
+    form.warranty_days.disabled = !form.warranty.checked;
+  };
+  form.date.addEventListener('change', syncWarrantyHint);
+  form.warranty.addEventListener('change', syncWarrantyHint);
+  form.warranty_days.addEventListener('input', syncWarrantyHint);
+  syncWarrantyHint();
   (kind === 'expense' ? form.expense : kind === 'income' ? form.income : form.description).focus();
 
   form.addEventListener('submit', async (ev) => {
@@ -391,6 +414,7 @@ function openEntry(entry, kind) {
       income: Number(form.income.value) || 0,
       expense: Number(form.expense.value) || 0,
       warranty: form.warranty.checked,
+      warranty_days: form.warranty_days.value === '' ? null : Number(form.warranty_days.value),
       taxable: form.taxable.checked,
       delivery_account: form.delivery_account.checked,
     };
@@ -495,9 +519,12 @@ function openSettings() {
   const { overlay, close } = modal(`
     <h3>Настройки бухгалтерии</h3>
     <form id="acc-settings-form">
-      <div class="grid-2">
-        <div class="field"><label>Ставка налога, %</label><input type="number" name="tax_rate" min="0" max="100" step="0.01" value="${settings.tax_rate}"></div>
-        <div class="field"><label>Гарантия, дней</label><input type="number" name="warranty_days" min="0" max="3650" step="1" value="${settings.warranty_days}"></div>
+      <div class="field" style="max-width:220px"><label>Ставка налога, %</label><input type="number" name="tax_rate" min="0" max="100" step="0.01" value="${settings.tax_rate}"></div>
+      <div class="field">
+        <label>Срок гарантии</label>
+        <div id="warranty-periods"></div>
+        <button type="button" class="secondary small" id="add-period">＋ Срок изменился с даты…</button>
+        <div class="muted acc-hint">Продажа получает срок, действовавший на её дату: старые продажи — старый срок, новые — новый. У отдельной записи срок можно задать вручную.</div>
       </div>
       <div class="field">
         <label>Продажи из заказов — начиная с даты</label>
@@ -523,6 +550,21 @@ function openSettings() {
       </div>
     </form>
   `);
+  const periodsBox = overlay.querySelector('#warranty-periods');
+  const addPeriod = (p, first) => {
+    const row = el(`
+      <div class="acc-period-row">
+        ${first ? '<span class="muted acc-period-from">с начала</span>' : `<input type="date" name="wp-from" value="${p?.from || today()}">`}
+        <input type="number" name="wp-days" min="0" max="3650" step="1" value="${p?.days ?? 30}">
+        <span class="muted">дн.</span>
+        ${first ? '' : '<button type="button" class="secondary small" title="Убрать">✕</button>'}
+      </div>`);
+    row.querySelector('button')?.addEventListener('click', () => row.remove());
+    periodsBox.appendChild(row);
+  };
+  settings.warranty_periods.forEach((p, i) => addPeriod(p, i === 0));
+  overlay.querySelector('#add-period').addEventListener('click', () => addPeriod(null, false));
+
   const list = overlay.querySelector('#fixed-costs');
   const addRow = (c) => {
     const row = fixedCostRow(c);
@@ -559,7 +601,10 @@ function openSettings() {
         method: 'POST',
         body: JSON.stringify({
           tax_rate: form.tax_rate.value,
-          warranty_days: form.warranty_days.value,
+          warranty_periods: [...periodsBox.querySelectorAll('.acc-period-row')].map((r) => ({
+            from: r.querySelector('[name="wp-from"]')?.value || '',
+            days: Number(r.querySelector('[name="wp-days"]').value),
+          })),
           auto_since: form.auto_since.value,
           fixed_costs,
         }),
