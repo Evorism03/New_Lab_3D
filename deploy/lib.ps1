@@ -148,6 +148,25 @@ $importLine
 "@
 }
 
+# Bambuddy's site block for sites.d (see deploy/setup.ps1). reverse_proxy passes its
+# WebSocket through as is; the body limit is raised for large 3MF/G-code uploads.
+function New-BambuddyCaddySiteText([string]$Domain, [string]$Ip, [int]$Port) {
+    return @"
+$Domain {
+	bind $Ip
+	request_body {
+		max_size 1GB
+	}
+	reverse_proxy 127.0.0.1:$Port
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options nosniff
+		-Server
+	}
+}
+"@
+}
+
 # ---------------------------------------------------------------------------
 # Background server state: start.ps1 (the supervisor) records what it runs here,
 # so any terminal - even one opened much later - can find, inspect and stop it.

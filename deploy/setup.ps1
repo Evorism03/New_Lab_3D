@@ -17,6 +17,7 @@ param(
     [string]$AdminEmail = "admin",
     [string]$AdminPassword = "",
     [int]$AppPort = 3000,
+    [int]$BambuddyPort = 8000,
     [switch]$SkipFirewall,
     [switch]$SkipBuild
 )
@@ -85,6 +86,8 @@ $settings["APP_PORT"] = "$AppPort"
 $settings["DEPLOY_NODE"] = $node
 $caddy = Find-Caddy
 if ($caddy) { $settings["DEPLOY_CADDY"] = $caddy }
+if (-not $settings["BAMBUDDY_URL"]) { $settings["BAMBUDDY_URL"] = "http://127.0.0.1:$BambuddyPort" }
+if (-not $settings.Contains("BAMBUDDY_API_KEY")) { $settings["BAMBUDDY_API_KEY"] = "" }
 Write-EnvFile $script:EnvFile $settings
 Import-EnvFile $script:EnvFile | Out-Null
 Write-Ok $script:EnvFile
@@ -124,6 +127,26 @@ else {
 Write-Step "Caddy (HTTPS-прокси)"
 if ($caddy) { Write-Ok $caddy }
 else { Write-Warn "Caddy не установлен: winget install CaddyServer.Caddy  (потом повторите установку)" }
+
+# Bambuddy ставится своим установщиком как служба Windows; здесь только публикуем его
+# на поддомене bambu.<домен> через общий Caddy (подхватится при следующем запуске сервера).
+Write-Step "Bambuddy (принтеры)"
+$bambuddySite = Join-Path $script:ExtraSitesDir "bambuddy.caddy"
+if (-not (Get-PortOwner $BambuddyPort)) {
+    Write-Warn "Bambuddy не отвечает на порту $BambuddyPort - страница «Принтеры» в админке работать не будет."
+}
+elseif (-not $Domain) {
+    Write-Warn "Без домена поддомен для Bambuddy не создаётся - он доступен по http://${Ip}:$BambuddyPort"
+}
+else {
+    $bambuddyDomain = "bambu." + ($Domain -replace '^www\.', '')
+    New-Item -ItemType Directory -Force -Path $script:ExtraSitesDir | Out-Null
+    [IO.File]::WriteAllText($bambuddySite, (New-BambuddyCaddySiteText $bambuddyDomain $Ip $BambuddyPort), (New-Object Text.UTF8Encoding($false)))
+    Write-Ok "https://$bambuddyDomain -> 127.0.0.1:$BambuddyPort (DNS-запись A: $bambuddyDomain -> $(if ($publicIp) { $publicIp } else { $Ip }))"
+}
+if (-not $settings["BAMBUDDY_API_KEY"]) {
+    Write-Warn "BAMBUDDY_API_KEY пуст: создайте ключ в Bambuddy (Settings -> API Keys, права printers:read и printers:control) и впишите в $($script:EnvFile)"
+}
 
 Write-Host ""
 Write-Host "  Установка завершена." -ForegroundColor Green
