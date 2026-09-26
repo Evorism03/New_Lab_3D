@@ -1035,3 +1035,46 @@ table.serial-table tr.from-registry .sn-num { color: var(--muted); }
   table.serial-table tbody td:nth-child(8) { grid-column: 1 / -1; font-size: 13px; }
   table.serial-table tbody td:nth-child(7):empty { display: none; }
 }
+
+/* ---- Заказ: режим просмотра ---- */
+.ov { display: flex; flex-direction: column; gap: 14px; }
+.ov .card h3 { margin: 0 0 10px; font-size: 13px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; font-weight: 600; }
+.ov-head { display: flex; justify-content: space-between; align-items: center; gap: 16px; flex-wrap: wrap; }
+.ov-title { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.ov-number { font-size: 26px; font-weight: 800; }
+.ov-sub { font-size: 13px; margin-top: 6px; }
+.ov-head-side { display: flex; align-items: center; gap: 16px; }
+.ov-total { font-size: 26px; font-weight: 800; color: var(--accent-2); white-space: nowrap; }
+.ov-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 14px; }
+.ov-block { display: flex; flex-direction: column; gap: 6px; }
+.ov-name { font-size: 18px; font-weight: 700; }
+.ov-phone { font-size: 16px; font-variant-numeric: tabular-nums; }
+.ov-notes { margin-top: 6px; padding: 10px 12px; background: var(--panel-2); border-radius: 8px; font-size: 14px; white-space: pre-wrap; }
+.ov-carrier { font-size: 16px; display: flex; align-items: center; }
+.ov-address { font-size: 14px; line-height: 1.45; margin-bottom: 4px; }
+.ov-kv { display: flex; justify-content: space-between; align-items: center; gap: 10px; font-size: 14px; padding: 3px 0; flex-wrap: wrap; }
+.ov-kv > span:first-child { color: var(--muted); }
+.ov-items { display: flex; flex-direction: column; }
+.ov-item { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 12px; padding: 12px 0; border-bottom: 1px solid var(--border); }
+.ov-item:first-child { padding-top: 2px; }
+.ov-item-main { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.ov-item-title { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-weight: 700; font-size: 15px; }
+.ov-item-title .chip { font-weight: 500; }
+.ov-item-line { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 13px; }
+a.ov-serial { color: var(--text); font-size: 13px; }
+a.ov-serial:hover { border-color: var(--accent); color: var(--accent); text-decoration: none; }
+.ov-item-side { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; text-align: right; }
+.ov-item-sum { font-weight: 700; font-size: 15px; white-space: nowrap; }
+.ov-item-qty { font-size: 12px; white-space: nowrap; }
+.ov-totals { margin-left: auto; width: 100%; max-width: 320px; padding-top: 10px; }
+.ov-grand { border-top: 1px dashed var(--border); margin-top: 4px; padding-top: 8px; font-size: 17px; font-weight: 800; }
+.ov-grand > span:last-child { color: var(--accent-2); }
+.ov-receipts { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 4px; }
+.ov-receipt { width: 96px; height: 96px; border-radius: 10px; border: 1px solid var(--border); overflow: hidden; display: flex; align-items: center; justify-content: center; background: var(--panel-2); }
+.ov-receipt img { width: 100%; height: 100%; object-fit: cover; }
+.ov-receipt-file { flex-direction: column; gap: 4px; font-size: 28px; color: var(--text); padding: 6px; }
+.ov-receipt-file span { font-size: 10px; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+@media (max-width: 720px) {
+  .ov-number, .ov-total { font-size: 22px; }
+  .ov-head-side { width: 100%; justify-content: space-between; }
+}
