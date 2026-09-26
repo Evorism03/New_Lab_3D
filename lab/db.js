@@ -95,6 +95,22 @@ db.exec(`
   );
   CREATE INDEX IF NOT EXISTS idx_ledger_date ON ledger(date);
 
+  -- Реестр серийных номеров, выданных вне заказов CRM (перенесены из листа «Продажи» таблицы).
+  -- Номер отсюда считается занятым так же, как серийник в заказе.
+  CREATE TABLE IF NOT EXISTS serial_registry (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    model_id TEXT NOT NULL,
+    number INTEGER NOT NULL,
+    serial TEXT NOT NULL,
+    revision INTEGER,
+    color TEXT NOT NULL DEFAULT '',
+    connector TEXT NOT NULL DEFAULT '',
+    assembled_at TEXT NOT NULL DEFAULT '',
+    note TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL,
+    UNIQUE (model_id, number)
+  );
+
   -- Пополнения счёта доставки (Ozon/СДЭК списывают доставку с предоплаченного счёта).
   CREATE TABLE IF NOT EXISTS delivery_topups (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -231,28 +247,42 @@ function modelPrefix(model) {
   return `${model.code}R${String(model.revision).padStart(2, '0')}`;
 }
 
-// Из "AL1R03TT0043" достаёт номер 43, если серийник от этой модели и правильного формата.
-function parseSerialNumber(model, serial) {
-  const prefix = modelPrefix(model);
-  if (!serial || !serial.startsWith(prefix)) return null;
-  const rest = serial.slice(prefix.length);
-  if (!/^[A-Z][A-Z]\d{4}$/.test(rest)) return null;
-  return Number(rest.slice(2));
+// Разбор серийника любой ревизии: "AL1R03TT0043" → { model, revision: 3, color: 'T', connector: 'T', number: 43 }.
+export function parseSerial(serial) {
+  const m = String(serial || '').trim().toUpperCase().match(/^([A-Z0-9]+?)R(\d{2})([A-Z])([A-Z])(\d{4})$/);
+  if (!m) return null;
+  const model = MODELS.find((x) => x.code === m[1]);
+  if (!model) return null;
+  return { model, revision: Number(m[2]), color: m[3], connector: m[4], number: Number(m[5]) };
 }
 
-// Номер занят, если он уже сохранён в каком-то заказе — с любыми буквами цвета/разъёма.
+function parseSerialNumber(model, serial) {
+  const parsed = parseSerial(serial);
+  return parsed && parsed.model.id === model.id ? parsed.number : null;
+}
+
+// Номер занят, если он уже есть в каком-то заказе (с любой ревизией и буквами цвета/разъёма)
+// или в реестре номеров, перенесённых из таблицы. Счётчик общий на модель.
 function isNumberOccupied(model, number) {
-  const pattern = `${modelPrefix(model)}__${String(number).padStart(4, '0')}`;
-  return !!db.prepare('SELECT 1 FROM items WHERE model_id = ? AND serial_number LIKE ? LIMIT 1').get(model.id, pattern);
+  if (number <= reservedUpTo(model)) return true;
+  const pattern = `${model.code}R____${String(number).padStart(4, '0')}`;
+  if (db.prepare('SELECT 1 FROM items WHERE serial_number LIKE ? LIMIT 1').get(pattern)) return true;
+  return !!db.prepare('SELECT 1 FROM serial_registry WHERE model_id = ? AND number = ? LIMIT 1').get(model.id, number);
 }
 
 // Наименьший ещё не занятый номер для модели. Никакого отдельного счётчика нет
 // специально: если заказ с номером 0001 удалили, этот номер снова свободен и
 // его же выдаст следующая генерация — не будет вечно пропущен.
+// Всё до последнего номера из реестра (перенесённого из таблицы) считается выданным —
+// в таблице есть не все старые номера (1–15 выдавались до неё), их генератор не трогает.
 function firstFreeNumber(model) {
-  let n = 1;
+  let n = reservedUpTo(model) + 1;
   while (isNumberOccupied(model, n)) n++;
   return n;
+}
+
+function reservedUpTo(model) {
+  return db.prepare('SELECT COALESCE(MAX(number), 0) AS n FROM serial_registry WHERE model_id = ?').get(model.id).n;
 }
 
 // Если currentSerial ещё не занят ни одним сохранённым товаром, номер остаётся тем же
@@ -689,6 +719,141 @@ export function listSerials() {
     )
     .all();
   return rows;
+}
+
+function cityOf(address) {
+  try {
+    const { parseAddress, cityNames } = globalThis.LabAddress;
+    return cityNames(parseAddress(address || ''))[0] || '';
+  } catch {
+    return '';
+  }
+}
+
+// Книга серийных номеров — как лист «Продажи»: #, С/Н, ревизия, цвет, разъём, дата сборки, примечание.
+// Серийники из заказов + номера из реестра (перенесённые из таблицы). Если номер есть и там и там,
+// строка одна: данные заказа, примечание из реестра.
+export function listSerialBook() {
+  const byKey = new Map();
+  for (const r of db.prepare('SELECT * FROM serial_registry').all()) {
+    byKey.set(r.serial.toUpperCase(), {
+      source: 'registry',
+      registry_id: r.id,
+      model_id: r.model_id,
+      number: r.number,
+      serial: r.serial,
+      revision: r.revision,
+      color: r.color,
+      connector: r.connector,
+      assembled_at: r.assembled_at,
+      note: r.note,
+      order_id: null,
+      order_number: null,
+      status: null,
+      full_name: '',
+    });
+  }
+  for (const it of listSerials()) {
+    const serial = String(it.serial_number || '').trim();
+    if (!serial) continue;
+    const parsed = parseSerial(serial);
+    const key = serial.toUpperCase();
+    const prev = byKey.get(key);
+    byKey.set(key, {
+      source: 'order',
+      registry_id: prev?.registry_id ?? null,
+      item_id: it.item_id,
+      model_id: it.model_id || parsed?.model.id || '',
+      number: parsed?.number ?? null,
+      serial,
+      revision: parsed?.revision ?? null,
+      color: it.color || parsed?.color || '',
+      connector: it.connector || parsed?.connector || '',
+      assembled_at: it.assembled_at || prev?.assembled_at || '',
+      note: prev?.note || cityOf(it.pvz_address),
+      order_id: it.order_id,
+      order_number: it.order_number,
+      status: it.status,
+      full_name: it.full_name || '',
+      product_name: it.product_name,
+    });
+  }
+  return [...byKey.values()].sort(
+    (a, b) => (a.number ?? Infinity) - (b.number ?? Infinity) || a.serial.localeCompare(b.serial)
+  );
+}
+
+function cleanRegistryInput(data) {
+  const parsed = parseSerial(data.serial);
+  if (!parsed) throw httpError(400, `Серийный номер «${data.serial || ''}» не в формате AL1R03TT0043`);
+  if (!COLORS.some((c) => c.letter === parsed.color)) throw httpError(400, `Неизвестный цвет «${parsed.color}» в ${data.serial}`);
+  if (!CONNECTORS.some((c) => c.letter === parsed.connector)) throw httpError(400, `Неизвестный разъём «${parsed.connector}» в ${data.serial}`);
+  const assembled = String(data.assembled_at || '').trim();
+  if (assembled && !/^\d{4}-\d{2}-\d{2}$/.test(assembled)) throw httpError(400, 'Неверная дата сборки');
+  return {
+    model_id: parsed.model.id,
+    number: parsed.number,
+    serial: String(data.serial).trim().toUpperCase(),
+    revision: parsed.revision,
+    color: parsed.color,
+    connector: parsed.connector,
+    assembled_at: assembled,
+    note: String(data.note || '').trim().slice(0, 200),
+  };
+}
+
+export function findRegistrySerial(serial) {
+  const parsed = parseSerial(serial);
+  if (!parsed) return null;
+  return db.prepare('SELECT * FROM serial_registry WHERE model_id = ? AND number = ?').get(parsed.model.id, parsed.number) || null;
+}
+
+export function createRegistrySerial(data) {
+  const e = cleanRegistryInput(data);
+  if (findRegistrySerial(e.serial)) throw httpError(409, `Номер ${e.number} уже есть в реестре`);
+  const owner = findSerialOwner(e.serial);
+  if (owner) throw httpError(409, `Серийный номер ${e.serial} уже есть в заказе #${owner.order_number}`);
+  const info = db
+    .prepare(
+      `INSERT INTO serial_registry (model_id, number, serial, revision, color, connector, assembled_at, note, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    )
+    .run(e.model_id, e.number, e.serial, e.revision, e.color, e.connector, e.assembled_at, e.note, new Date().toISOString());
+  return db.prepare('SELECT * FROM serial_registry WHERE id = ?').get(info.lastInsertRowid);
+}
+
+// Правка строки реестра: дата сборки и примечание (сам номер не меняется).
+export function updateRegistrySerial(id, data) {
+  const existing = db.prepare('SELECT * FROM serial_registry WHERE id = ?').get(id);
+  if (!existing) return null;
+  const assembled = data.assembled_at !== undefined ? String(data.assembled_at || '').trim() : existing.assembled_at;
+  if (assembled && !/^\d{4}-\d{2}-\d{2}$/.test(assembled)) throw httpError(400, 'Неверная дата сборки');
+  const note = data.note !== undefined ? String(data.note || '').trim().slice(0, 200) : existing.note;
+  db.prepare('UPDATE serial_registry SET assembled_at = ?, note = ? WHERE id = ?').run(assembled, note, id);
+  return db.prepare('SELECT * FROM serial_registry WHERE id = ?').get(id);
+}
+
+export function deleteRegistrySerial(id) {
+  return db.prepare('DELETE FROM serial_registry WHERE id = ?').run(id).changes > 0;
+}
+
+// Импорт уже разобранных строк (см. lib/serials-import.js). Номера, которые уже есть в реестре
+// или в заказах, пропускаются — повторная вставка того же листа ничего не задвоит.
+export function importRegistrySerials(rows) {
+  let imported = 0;
+  db.exec('BEGIN');
+  try {
+    for (const r of rows) {
+      if (r.duplicate) continue;
+      createRegistrySerial(r);
+      imported++;
+    }
+    db.exec('COMMIT');
+  } catch (err) {
+    db.exec('ROLLBACK');
+    throw err;
+  }
+  return imported;
 }
 
 // --- Пользователи и сессии --------------------------------------------------

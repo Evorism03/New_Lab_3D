@@ -13,7 +13,7 @@ const HEADER_RULES = [
   [/категор/i, 'category'],
 ];
 
-function splitLine(line, delimiter) {
+export function splitLine(line, delimiter) {
   if (delimiter === '\t') return line.split('\t');
   // CSV: поля в кавычках могут содержать разделитель.
   const out = [];
