@@ -186,7 +186,11 @@ async function initSidebarUser() {
       <div class="username">${me.username}</div>
       <span class="role">${me.role === 'admin' ? 'Администратор' : 'Сотрудник'}</span>
     </div>
-    <button type="button" class="secondary small" id="logout-btn" title="Выйти">⏻</button>
+    <button type="button" class="secondary small logout-btn" id="logout-btn" title="Выйти" aria-label="Выйти">
+      <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="M16 17l5-5-5-5"/><path d="M21 12H9"/>
+      </svg>
+    </button>
   `;
   // Разделы только для администратора (Бухгалтерия) — в меню показываем лишь ему.
   if (me.role === 'admin') document.querySelectorAll('[data-admin-only]').forEach((a) => { a.hidden = false; });

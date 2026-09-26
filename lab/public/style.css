@@ -1126,3 +1126,7 @@ a.ov-serial:hover { border-color: var(--accent); color: var(--accent); text-deco
 .npd-image-actions { display: flex; flex-direction: column; gap: 8px; align-items: flex-start; }
 /* display:flex у .ov перебивает атрибут hidden — без этого просмотр (с кнопкой «Редактировать») оставался виден в режиме правки. */
 .ov[hidden] { display: none; }
+
+/* Иконка «Выйти» — SVG, а не символ ⏻: его нет во многих шрифтах (Windows), кнопка выглядела пустой. */
+.logout-btn { display: inline-flex; align-items: center; justify-content: center; padding: 6px 8px; flex-shrink: 0; }
+.logout-btn svg { display: block; }
