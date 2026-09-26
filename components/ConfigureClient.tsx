@@ -5,7 +5,7 @@ import { useEffect, useMemo, useState } from "react";
 
 import { MaterialThumb } from "@/components/MaterialThumb";
 import { ModelViewer } from "@/components/ModelViewer";
-import { formatDays, formatTemplate, type Dictionary } from "@/lib/i18n/translations";
+import { formatDays, formatPrintTime, formatTemplate, type Dictionary } from "@/lib/i18n/translations";
 import { formatAmount, formatCents } from "@/lib/money";
 import type { FileDTO, MaterialDTO, QuoteDTO } from "@/lib/types";
 
@@ -138,8 +138,7 @@ export function ConfigureClient({
                       {m.name}
                     </div>
                     <div className="mt-0.5 text-xs text-muted">
-                      {dict.home.materialsPricePrefix} {formatAmount(m.pricePerCm3, dict.locale)}{" "}
-                      {dict.home.materialsPriceSuffix}
+                      {formatAmount(m.hourlyRateCents / 100, dict.locale)} {t.perHour}
                     </div>
                   </div>
                 </button>
@@ -211,10 +210,16 @@ export function ConfigureClient({
                 </span>
               </div>
               {quote && (
-                <p className="mt-1 text-xs text-muted">
-                  {formatCents(quote.unitPriceCents, dict.locale)} / {t.perUnit} ·{" "}
-                  {formatTemplate(t.shipsIn, formatDays(quote.leadTimeDays, dict.locale))}
-                </p>
+                <>
+                  <p className="mt-1 text-xs text-muted">
+                    {formatCents(quote.unitPriceCents, dict.locale)} / {t.perUnit} ·{" "}
+                    {formatTemplate(t.shipsIn, formatDays(quote.leadTimeDays, dict.locale))}
+                  </p>
+                  <p className="mt-1 text-xs text-muted">
+                    {t.estPrintTime} {formatPrintTime(quote.printHoursTotal, dict.units)} · {t.estPlastic}{" "}
+                    {Math.max(1, Math.round(quote.plasticGramsTotal))} {dict.units.g}
+                  </p>
+                </>
               )}
             </>
           )}

@@ -5,7 +5,7 @@ export const DEFAULT_LOCALE: Locale = "en";
 const dictionaries = {
   en: {
     locale: "en",
-    units: { cm3: "cm³", mm: "mm" },
+    units: { cm3: "cm³", mm: "mm", g: "g", h: "h", min: "min", d: "d" },
     meta: {
       titleSuffix: "Instant 3D Print Quotes",
       description:
@@ -51,7 +51,7 @@ const dictionaries = {
       materialsTag: "Materials",
       materialsTitle: "%d types of plastic for any task",
       materialsPricePrefix: "from",
-      materialsPriceSuffix: "/ cm³",
+      materialsPriceSuffix: "/ hour",
       materialsLeadTime: "~%d",
       materialsBestFor: "Best for:",
       materialsStrength: "Strength",
@@ -87,6 +87,9 @@ const dictionaries = {
       estimatedTotal: "Estimated total",
       perUnit: "unit",
       shipsIn: "ships in ~%d",
+      estPrintTime: "Est. print time",
+      estPlastic: "Est. plastic",
+      perHour: "/ hour",
       continueToCheckout: "Continue to checkout",
       noMaterials: "No materials available.",
       analyzing: "Still analyzing your file — refresh in a moment.",
@@ -130,6 +133,7 @@ const dictionaries = {
       uploadImage: "Upload image",
       replaceImage: "Replace image",
       removeImage: "Remove",
+      crmLink: "CRM ↗",
       colorsTitle: "Colors",
       colorNameLabel: "Color name (Russian)",
       colorEnPreview: "English name",
@@ -140,8 +144,14 @@ const dictionaries = {
       colorSaveError: "Could not save the color.",
       pricingTitle: "Pricing",
       pricingHint:
-        "Price = max(minimum price, volume × price per cm³ × finish multiplier) + setup fee. Prices are set in rubles; the English site shows them in dollars at the configured rate. Changes apply to new quotes immediately.",
-      pricePerCm3Label: "Price per cm³ (₽)",
+        "Price = max(minimum price, (print hours × hourly rate + plastic used × spool price ÷ spool weight) × finish multiplier) + setup fee. Print hours = model volume ÷ print speed; plastic used = volume × infill × density. Prices are set in rubles; the English site shows them in dollars at the configured rate. Changes apply to new quotes immediately.",
+      hourlyRateLabel: "Price per hour (₽)",
+      printSpeedLabel: "Print speed (cm³/h)",
+      spoolPriceLabel: "Spool price (₽)",
+      spoolWeightLabel: "Spool weight (g)",
+      densityLabel: "Density (g/cm³)",
+      infillLabel: "Infill (%)",
+      exampleLabel: "Example: a %d cm³ part",
       setupFeeLabel: "Setup fee (₽)",
       minPriceLabel: "Minimum price (₽)",
       leadTimeLabel: "Lead time (business days)",
@@ -154,7 +164,7 @@ const dictionaries = {
   },
   ru: {
     locale: "ru",
-    units: { cm3: "см³", mm: "мм" },
+    units: { cm3: "см³", mm: "мм", g: "г", h: "ч", min: "мин", d: "д" },
     meta: {
       titleSuffix: "Мгновенный расчёт 3D-печати",
       description:
@@ -200,7 +210,7 @@ const dictionaries = {
       materialsTag: "Материалы",
       materialsTitle: "%d видов пластика под любую задачу",
       materialsPricePrefix: "от",
-      materialsPriceSuffix: "/ см³",
+      materialsPriceSuffix: "/ час",
       materialsLeadTime: "~%d",
       materialsBestFor: "Подходит для:",
       materialsStrength: "Прочность",
@@ -236,6 +246,9 @@ const dictionaries = {
       estimatedTotal: "Итоговая цена",
       perUnit: "шт.",
       shipsIn: "отправка через ~%d",
+      estPrintTime: "Время печати ≈",
+      estPlastic: "Пластик ≈",
+      perHour: "/ час",
       continueToCheckout: "Перейти к оформлению",
       noMaterials: "Нет доступных материалов.",
       analyzing: "Файл ещё анализируется — обновите страницу через момент.",
@@ -279,6 +292,7 @@ const dictionaries = {
       uploadImage: "Загрузить картинку",
       replaceImage: "Заменить картинку",
       removeImage: "Убрать",
+      crmLink: "CRM ↗",
       colorsTitle: "Цвета",
       colorNameLabel: "Название цвета",
       colorEnPreview: "Английское название",
@@ -289,8 +303,14 @@ const dictionaries = {
       colorSaveError: "Не удалось сохранить цвет.",
       pricingTitle: "Цены",
       pricingHint:
-        "Цена = max(минимальная цена, объём × цена за см³ × коэффициент финиша) + стоимость запуска. Цены задаются в рублях; английская версия сайта показывает их в долларах по заданному курсу. Изменения сразу действуют на новые расчёты.",
-      pricePerCm3Label: "Цена за см³ (₽)",
+        "Цена = max(минимальная цена, (часы печати × цена за час + расход пластика × цена катушки ÷ вес катушки) × коэффициент финиша) + стоимость запуска. Часы печати = объём модели ÷ скорость печати; расход пластика = объём × заполнение × плотность. Цены задаются в рублях; английская версия сайта показывает их в долларах по заданному курсу. Изменения сразу действуют на новые расчёты.",
+      hourlyRateLabel: "Цена за час (₽)",
+      printSpeedLabel: "Скорость печати (см³/ч)",
+      spoolPriceLabel: "Цена катушки (₽)",
+      spoolWeightLabel: "Вес катушки (г)",
+      densityLabel: "Плотность (г/см³)",
+      infillLabel: "Заполнение (%)",
+      exampleLabel: "Пример: деталь %d см³",
       setupFeeLabel: "Запуск (₽)",
       minPriceLabel: "Минимальная цена (₽)",
       leadTimeLabel: "Срок (рабочих дней)",
@@ -322,6 +342,20 @@ export function daysWord(n: number, locale: Locale): string {
 
 export function formatDays(n: number, locale: Locale): string {
   return `${n} ${daysWord(n, locale)}`;
+}
+
+type Units = { h: string; min: string; d: string };
+
+/** "5 h 24 min", "1 d 4 h" — printers run around the clock, so long jobs are counted in days. */
+export function formatPrintTime(hours: number, units: Units): string {
+  const totalMin = Math.max(1, Math.round(hours * 60));
+  if (totalMin < 60) return `${totalMin} ${units.min}`;
+  const totalH = Math.floor(totalMin / 60);
+  const min = totalMin % 60;
+  if (totalH < 24) return min ? `${totalH} ${units.h} ${min} ${units.min}` : `${totalH} ${units.h}`;
+  const days = Math.floor(totalH / 24);
+  const h = totalH % 24;
+  return h ? `${days} ${units.d} ${h} ${units.h}` : `${days} ${units.d}`;
 }
 
 export function formatTemplate(template: string, value: number | string): string {

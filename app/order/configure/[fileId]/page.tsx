@@ -5,6 +5,7 @@ import { prisma } from "@/lib/db";
 import { localizeCatalogText } from "@/lib/i18n/catalog";
 import { getServerLocale } from "@/lib/i18n/locale";
 import { getDictionary } from "@/lib/i18n/translations";
+import { resolvePricing } from "@/lib/pricing/defaults";
 import { serializeFile } from "@/lib/serializers";
 import { materialImageUrl } from "@/lib/types";
 
@@ -52,7 +53,7 @@ export default async function ConfigurePage({
         id: m.id,
         name: m.name,
         description: localizeCatalogText(m.description, dict.locale),
-        pricePerCm3: Number(m.pricePerCm3),
+        hourlyRateCents: resolvePricing(m).hourlyRateCents,
         setupFeeCents: m.setupFeeCents,
         minPriceCents: m.minPriceCents,
         leadTimeDays: m.leadTimeDays,

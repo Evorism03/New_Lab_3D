@@ -2,11 +2,19 @@ export class PricingError extends Error {}
 
 export type PricingInput = {
   volumeCm3: number;
-  /** Material cost per cm³, in rubles (e.g. 9). The *Cents fields are kopecks. */
-  pricePerCm3: number;
+  /** Printer time, kopecks per hour. The other *Cents fields are kopecks too. */
+  hourlyRateCents: number;
+  /** Model volume the printer gets through per hour, cm³/h. */
+  printSpeedCm3PerHour: number;
+  spoolPriceCents: number;
+  spoolWeightG: number;
+  densityGcm3: number;
+  /** Share of the solid volume that is actually printed, 1-100. */
+  infillPercent: number;
+  /** Flat charge for starting a job. */
   setupFeeCents: number;
   minPriceCents: number;
-  /** Finish price multiplier, e.g. 1 for standard, 1.15 for polished. Defaults to 1. */
+  /** Finish price multiplier, e.g. 1 for standard, 1.15 for sanded. Defaults to 1. */
   finishMultiplier?: number;
   quantity: number;
 };
@@ -14,37 +22,72 @@ export type PricingInput = {
 export type PricingBreakdown = {
   unitPriceCents: number;
   totalPriceCents: number;
+  /** Time + plastic (after the finish multiplier), before the minimum-price floor and setup fee. */
   materialCostCents: number;
+  timeCostCents: number;
+  plasticCostCents: number;
   setupFeeCents: number;
   minPriceFloorApplied: boolean;
+  /** Estimated printing time of one piece / of the whole order, hours. */
+  printHoursPerUnit: number;
+  printHoursTotal: number;
+  /** Estimated plastic use for the whole order, grams. */
+  plasticGramsTotal: number;
 };
 
 /**
  * Pure pricing function shared by the live quote endpoint and order creation,
  * so a quoted price can never drift from the price actually charged.
  *
- * unitPrice = max(minPrice, volumeCm3 * pricePerCm3 * finishMultiplier) + setupFee
+ * hours    = volume / printSpeed
+ * grams    = volume * infill% * density
+ * subtotal = (hours * hourlyRate + grams * spoolPrice / spoolWeight) * finishMultiplier
+ * unitPrice = max(minPrice, subtotal) + setupFee
  */
 export function computePrice(input: PricingInput): PricingBreakdown {
-  const { volumeCm3, pricePerCm3, setupFeeCents, minPriceCents, quantity } = input;
+  const {
+    volumeCm3,
+    hourlyRateCents,
+    printSpeedCm3PerHour,
+    spoolPriceCents,
+    spoolWeightG,
+    densityGcm3,
+    infillPercent,
+    setupFeeCents,
+    minPriceCents,
+    quantity,
+  } = input;
   const finishMultiplier = input.finishMultiplier ?? 1;
 
   if (!(volumeCm3 > 0)) throw new PricingError("volumeCm3 must be positive");
-  if (!(pricePerCm3 >= 0)) throw new PricingError("pricePerCm3 must be non-negative");
+  if (!(hourlyRateCents >= 0)) throw new PricingError("hourlyRateCents must be non-negative");
+  if (!(printSpeedCm3PerHour > 0)) throw new PricingError("printSpeedCm3PerHour must be positive");
+  if (!(spoolWeightG > 0)) throw new PricingError("spoolWeightG must be positive");
   if (!Number.isInteger(quantity) || quantity < 1) {
     throw new PricingError("quantity must be a positive integer");
   }
 
-  const materialCostCents = Math.round(volumeCm3 * pricePerCm3 * finishMultiplier * 100);
+  const printHoursPerUnit = volumeCm3 / printSpeedCm3PerHour;
+  const plasticGramsPerUnit = ((volumeCm3 * infillPercent) / 100) * densityGcm3;
+
+  const timeCostCents = Math.round(printHoursPerUnit * hourlyRateCents * finishMultiplier);
+  const plasticCostCents = Math.round(
+    ((plasticGramsPerUnit * spoolPriceCents) / spoolWeightG) * finishMultiplier,
+  );
+  const materialCostCents = timeCostCents + plasticCostCents;
   const minPriceFloorApplied = materialCostCents < minPriceCents;
-  const baseCents = Math.max(minPriceCents, materialCostCents);
-  const unitPriceCents = baseCents + setupFeeCents;
+  const unitPriceCents = Math.max(minPriceCents, materialCostCents) + setupFeeCents;
 
   return {
     unitPriceCents,
     totalPriceCents: unitPriceCents * quantity,
     materialCostCents,
+    timeCostCents,
+    plasticCostCents,
     setupFeeCents,
     minPriceFloorApplied,
+    printHoursPerUnit,
+    printHoursTotal: printHoursPerUnit * quantity,
+    plasticGramsTotal: plasticGramsPerUnit * quantity,
   };
 }

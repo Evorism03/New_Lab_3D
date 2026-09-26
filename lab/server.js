@@ -602,6 +602,18 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, 200, { ok: true }, { 'Set-Cookie': clearSessionCookieHeader(req) });
     }
 
+    // Ссылка на админку сайта: SITE_URL из .env, иначе crm.example.com -> example.com, локально - :3000.
+    if (pathname === '/api/config' && req.method === 'GET') {
+      const host = String(req.headers.host || '');
+      const proto = req.headers['x-forwarded-proto'] === 'https' ? 'https' : 'http';
+      let siteUrl = process.env.SITE_URL || '';
+      if (!siteUrl) {
+        if (host.startsWith('crm.')) siteUrl = `${proto}://${host.slice(4)}`;
+        else if (/^(localhost|127\.0\.0\.1|\d+\.\d+\.\d+\.\d+)(:\d+)?$/.test(host)) siteUrl = `http://${host.split(':')[0]}:3000`;
+      }
+      return sendJson(res, 200, { site_admin_url: siteUrl ? `${siteUrl.replace(/\/$/, '')}/admin/showcase` : '' });
+    }
+
     if (pathname === '/api/auth/me' && req.method === 'GET') {
       return sendJson(res, 200, { id: user.id, username: user.username, role: user.role });
     }

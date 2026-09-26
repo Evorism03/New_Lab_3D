@@ -193,6 +193,19 @@ async function initSidebarUser() {
     window.location.href = '/login.html';
   });
 
+  // Админка основного сайта (лаборатория 3D) — из CRM переключаемся туда, из админки — обратно сюда.
+  if (me.role === 'admin') {
+    try {
+      const { site_admin_url: adminUrl } = await api('/api/config');
+      const nav = document.querySelector('.sidebar-nav');
+      if (adminUrl && nav && !nav.querySelector('a[data-site-admin]')) {
+        const link = el(`<a href="${adminUrl}" data-site-admin><span class="nav-icon">🛠</span><span class="label">Админка сайта</span></a>`);
+        nav.appendChild(link);
+      }
+    } catch {
+      // без ссылки на админку CRM работает как обычно
+    }
+  }
 }
 initSidebarUser();
 

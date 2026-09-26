@@ -3,11 +3,10 @@
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 
-import { type AdminColor, ColorSuggestions, MaterialColorsAdmin } from "@/components/MaterialColorsAdmin";
 import { MaterialThumb } from "@/components/MaterialThumb";
 import type { Dictionary } from "@/lib/i18n/translations";
 
-type MaterialImageItem = { id: string; name: string; imageUrl: string | null; colors: AdminColor[] };
+type MaterialImageItem = { id: string; name: string; imageUrl: string | null };
 
 export function MaterialImagesAdmin({
   materials,
@@ -46,9 +45,8 @@ export function MaterialImagesAdmin({
 
   return (
     <div>
-      <ColorSuggestions />
       {error && <p className="mb-4 text-sm text-danger">{error}</p>}
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
+      <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4">
         {materials.map((m) => (
           <div key={m.id} className="card overflow-hidden">
             <MaterialThumb imageUrl={m.imageUrl} alt={m.name} className="aspect-[4/3] w-full" />
@@ -82,7 +80,6 @@ export function MaterialImagesAdmin({
                 </button>
               )}
             </div>
-            <MaterialColorsAdmin materialId={m.id} colors={m.colors} dict={dict} />
           </div>
         ))}
       </div>

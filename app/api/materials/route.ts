@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { prisma } from "@/lib/db";
+import { resolvePricing } from "@/lib/pricing/defaults";
 import { materialImageUrl } from "@/lib/types";
 
 export async function GET() {
@@ -16,7 +17,7 @@ export async function GET() {
       slug: m.slug,
       name: m.name,
       description: m.description,
-      pricePerCm3: Number(m.pricePerCm3),
+      ...resolvePricing(m),
       setupFeeCents: m.setupFeeCents,
       minPriceCents: m.minPriceCents,
       leadTimeDays: m.leadTimeDays,

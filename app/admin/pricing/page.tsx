@@ -3,6 +3,7 @@ import { prisma } from "@/lib/db";
 import { localizeCatalogText } from "@/lib/i18n/catalog";
 import { getServerLocale } from "@/lib/i18n/locale";
 import { getDictionary } from "@/lib/i18n/translations";
+import { resolvePricing } from "@/lib/pricing/defaults";
 
 export default async function AdminPricingPage() {
   const dict = getDictionary(await getServerLocale());
@@ -10,7 +11,10 @@ export default async function AdminPricingPage() {
 
   const materials = await prisma.material.findMany({
     orderBy: { name: "asc" },
-    include: { finishes: { orderBy: { name: "asc" } } },
+    include: {
+      finishes: { orderBy: { name: "asc" } },
+      colors: { orderBy: { name: "asc" } },
+    },
   });
 
   return (
@@ -23,11 +27,12 @@ export default async function AdminPricingPage() {
           materials={materials.map((m) => ({
             id: m.id,
             name: m.name,
-            pricePerCm3: Number(m.pricePerCm3),
+            ...resolvePricing(m),
             setupFeeCents: m.setupFeeCents,
             minPriceCents: m.minPriceCents,
             leadTimeDays: m.leadTimeDays,
             active: m.active,
+            colors: m.colors.map((c) => ({ id: c.id, name: c.name, nameRu: c.nameRu, hex: c.hex })),
             finishes: m.finishes.map((f) => ({
               id: f.id,
               name: localizeCatalogText(f.name, dict.locale, f.nameRu),

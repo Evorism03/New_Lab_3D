@@ -389,6 +389,8 @@ function Invoke-Setup {
             if ($labConfig["PORT"]) {
                 $siteConfig = Read-EnvFile $script:EnvFile
                 $siteConfig["LAB_API_URL"] = "http://127.0.0.1:$($labConfig['PORT'])"
+                # Ссылка «CRM» в админке сайта.
+                if ($labConfig["DEPLOY_DOMAIN"]) { $siteConfig["CRM_URL"] = "https://" + $labConfig["DEPLOY_DOMAIN"] }
                 Write-EnvFile $script:EnvFile $siteConfig
                 Write-Ok "LAB_API_URL -> http://127.0.0.1:$($labConfig['PORT'])"
             }

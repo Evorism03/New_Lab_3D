@@ -3,27 +3,42 @@
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 
-import type { Dictionary } from "@/lib/i18n/translations";
+import { type AdminColor, ColorSuggestions, MaterialColorsAdmin } from "@/components/MaterialColorsAdmin";
+import { formatPrintTime, formatTemplate, type Dictionary } from "@/lib/i18n/translations";
+import { formatCents } from "@/lib/money";
+import { computePrice } from "@/lib/pricing/engine";
 
 export type PricingMaterial = {
   id: string;
   name: string;
-  pricePerCm3: number;
+  hourlyRateCents: number;
+  printSpeedCm3PerHour: number;
+  spoolPriceCents: number;
+  spoolWeightG: number;
+  densityGcm3: number;
+  infillPercent: number;
   setupFeeCents: number;
   minPriceCents: number;
   leadTimeDays: number;
   active: boolean;
   finishes: { id: string; name: string; multiplier: number }[];
+  colors: AdminColor[];
 };
 
-const dollars = (cents: number) => (cents / 100).toString();
+const rubles = (cents: number) => (cents / 100).toString();
+const EXAMPLE_VOLUME_CM3 = 50;
 
 function MaterialPricingCard({ material, dict }: { material: PricingMaterial; dict: Dictionary }) {
   const t = dict.admin;
   const router = useRouter();
-  const [pricePerCm3, setPricePerCm3] = useState(material.pricePerCm3.toString());
-  const [setupFee, setSetupFee] = useState(dollars(material.setupFeeCents));
-  const [minPrice, setMinPrice] = useState(dollars(material.minPriceCents));
+  const [hourlyRate, setHourlyRate] = useState(rubles(material.hourlyRateCents));
+  const [printSpeed, setPrintSpeed] = useState(material.printSpeedCm3PerHour.toString());
+  const [spoolPrice, setSpoolPrice] = useState(rubles(material.spoolPriceCents));
+  const [spoolWeight, setSpoolWeight] = useState(material.spoolWeightG.toString());
+  const [density, setDensity] = useState(material.densityGcm3.toString());
+  const [infill, setInfill] = useState(material.infillPercent.toString());
+  const [setupFee, setSetupFee] = useState(rubles(material.setupFeeCents));
+  const [minPrice, setMinPrice] = useState(rubles(material.minPriceCents));
   const [leadTime, setLeadTime] = useState(material.leadTimeDays.toString());
   const [active, setActive] = useState(material.active);
   const [multipliers, setMultipliers] = useState<Record<string, string>>(
@@ -37,23 +52,37 @@ function MaterialPricingCard({ material, dict }: { material: PricingMaterial; di
     setMessage(null);
   };
 
-  const save = async () => {
-    const values = {
-      pricePerCm3: Number(pricePerCm3),
-      setupFeeCents: Math.round(Number(setupFee) * 100),
-      minPriceCents: Math.round(Number(minPrice) * 100),
-      leadTimeDays: Number(leadTime),
-      active,
-      finishes: material.finishes.map((f) => ({ id: f.id, multiplier: Number(multipliers[f.id]) })),
-    };
+  const values = () => ({
+    hourlyRateCents: Math.round(Number(hourlyRate) * 100),
+    printSpeedCm3PerHour: Number(printSpeed),
+    spoolPriceCents: Math.round(Number(spoolPrice) * 100),
+    spoolWeightG: Math.round(Number(spoolWeight)),
+    densityGcm3: Number(density),
+    infillPercent: Math.round(Number(infill)),
+    setupFeeCents: Math.round(Number(setupFee) * 100),
+    minPriceCents: Math.round(Number(minPrice) * 100),
+    leadTimeDays: Number(leadTime),
+    active,
+    finishes: material.finishes.map((f) => ({ id: f.id, multiplier: Number(multipliers[f.id]) })),
+  });
+
+  const validate = (v: ReturnType<typeof values>) => {
     const numbers = [
-      values.pricePerCm3,
-      values.setupFeeCents,
-      values.minPriceCents,
-      values.leadTimeDays,
-      ...values.finishes.map((f) => f.multiplier),
+      v.hourlyRateCents,
+      v.spoolPriceCents,
+      v.setupFeeCents,
+      v.minPriceCents,
+      v.leadTimeDays,
+      ...v.finishes.map((f) => f.multiplier),
     ];
-    if (numbers.some((n) => !Number.isFinite(n) || n < 0)) {
+    if (numbers.some((n) => !Number.isFinite(n) || n < 0)) return false;
+    if (!(v.printSpeedCm3PerHour > 0) || !(v.spoolWeightG > 0) || !(v.densityGcm3 > 0)) return false;
+    return v.infillPercent >= 1 && v.infillPercent <= 100;
+  };
+
+  const save = async () => {
+    const v = values();
+    if (!validate(v)) {
       setStatus("error");
       setMessage(t.pricingInvalid);
       return;
@@ -64,7 +93,7 @@ function MaterialPricingCard({ material, dict }: { material: PricingMaterial; di
     const res = await fetch(`/api/materials/${material.id}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(values),
+      body: JSON.stringify(v),
     });
     if (!res.ok) {
       const data = await res.json().catch(() => ({}));
@@ -75,6 +104,23 @@ function MaterialPricingCard({ material, dict }: { material: PricingMaterial; di
     setStatus("saved");
     router.refresh();
   };
+
+  // Live example so the admin sees what the numbers mean for a typical part.
+  const v = values();
+  const example = validate(v)
+    ? computePrice({
+        volumeCm3: EXAMPLE_VOLUME_CM3,
+        hourlyRateCents: v.hourlyRateCents,
+        printSpeedCm3PerHour: v.printSpeedCm3PerHour,
+        spoolPriceCents: v.spoolPriceCents,
+        spoolWeightG: v.spoolWeightG,
+        densityGcm3: v.densityGcm3,
+        infillPercent: v.infillPercent,
+        setupFeeCents: v.setupFeeCents,
+        minPriceCents: v.minPriceCents,
+        quantity: 1,
+      })
+    : null;
 
   const field = (label: string, value: string, onChange: (v: string) => void, step: string) => (
     <label className="flex flex-col gap-1">
@@ -110,12 +156,27 @@ function MaterialPricingCard({ material, dict }: { material: PricingMaterial; di
         </label>
       </div>
 
-      <div className="mt-4 grid grid-cols-2 gap-3 md:grid-cols-4">
-        {field(t.pricePerCm3Label, pricePerCm3, setPricePerCm3, "0.01")}
-        {field(t.setupFeeLabel, setupFee, setSetupFee, "0.01")}
-        {field(t.minPriceLabel, minPrice, setMinPrice, "0.01")}
+      <div className="mt-4 grid grid-cols-2 gap-3 md:grid-cols-3">
+        {field(t.hourlyRateLabel, hourlyRate, setHourlyRate, "1")}
+        {field(t.printSpeedLabel, printSpeed, setPrintSpeed, "0.5")}
+        {field(t.infillLabel, infill, setInfill, "1")}
+        {field(t.spoolPriceLabel, spoolPrice, setSpoolPrice, "10")}
+        {field(t.spoolWeightLabel, spoolWeight, setSpoolWeight, "50")}
+        {field(t.densityLabel, density, setDensity, "0.01")}
+        {field(t.setupFeeLabel, setupFee, setSetupFee, "1")}
+        {field(t.minPriceLabel, minPrice, setMinPrice, "1")}
         {field(t.leadTimeLabel, leadTime, setLeadTime, "1")}
       </div>
+
+      {example && (
+        <p className="mt-3 text-xs text-muted">
+          {formatTemplate(t.exampleLabel, EXAMPLE_VOLUME_CM3)}:{" "}
+          <span className="text-text">
+            {formatPrintTime(example.printHoursTotal, dict.units)}, {Math.round(example.plasticGramsTotal)}{" "}
+            {dict.units.g} — {formatCents(example.unitPriceCents, dict.locale)}
+          </span>
+        </p>
+      )}
 
       {material.finishes.length > 0 && (
         <div className="mt-4">
@@ -153,6 +214,10 @@ function MaterialPricingCard({ material, dict }: { material: PricingMaterial; di
         {status === "saved" && <span className="text-sm text-accent">{t.pricingSaved}</span>}
         {status === "error" && message && <span className="text-sm text-danger">{message}</span>}
       </div>
+
+      <div className="-mx-5 -mb-5 mt-5 bg-white/[0.02]">
+        <MaterialColorsAdmin materialId={material.id} colors={material.colors} dict={dict} />
+      </div>
     </div>
   );
 }
@@ -166,6 +231,7 @@ export function PricingAdmin({
 }) {
   return (
     <div className="flex flex-col gap-5">
+      <ColorSuggestions />
       {materials.map((m) => (
         <MaterialPricingCard key={m.id} material={m} dict={dict} />
       ))}

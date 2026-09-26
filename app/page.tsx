@@ -11,6 +11,7 @@ import { localizeCatalogText } from "@/lib/i18n/catalog";
 import { getServerLocale } from "@/lib/i18n/locale";
 import { daysWord, formatDays, formatTemplate, getDictionary } from "@/lib/i18n/translations";
 import { formatAmount } from "@/lib/money";
+import { resolvePricing } from "@/lib/pricing/defaults";
 
 function StatBar({ label, value }: { label: string; value: number }) {
   return (
@@ -39,7 +40,6 @@ export default async function HomePage() {
       prisma.material.findMany({
         where: { active: true },
         include: { colors: true },
-        orderBy: { pricePerCm3: "asc" },
       }),
       prisma.showcaseItem.findMany({
         orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }],
@@ -47,6 +47,8 @@ export default async function HomePage() {
         select: { id: true, title: true },
       }),
     ]);
+  // Cheapest per hour first (rates may be unset in the DB, so sort on the resolved value).
+  materials.sort((a, b) => resolvePricing(a).hourlyRateCents - resolvePricing(b).hourlyRateCents);
   const showcaseSlots = [...showcaseItems, ...Array(Math.max(0, 3 - showcaseItems.length)).fill(null)];
 
   return (
@@ -232,7 +234,7 @@ export default async function HomePage() {
                       <span className="text-muted">
                         {home.materialsPricePrefix}{" "}
                         <span className="font-semibold text-text">
-                          {formatAmount(Number(m.pricePerCm3), dict.locale)}
+                          {formatAmount(resolvePricing(m).hourlyRateCents / 100, dict.locale)}
                         </span>{" "}
                         {home.materialsPriceSuffix}
                       </span>

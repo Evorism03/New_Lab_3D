@@ -43,6 +43,7 @@ Write-Ok "IP сервера: $ip"
 if (-not $NewLab3dRoot) { $NewLab3dRoot = $existing["NEW_LAB_3D_ROOT"] }
 if (-not $NewLab3dRoot) { $NewLab3dRoot = Split-Path -Parent $script:Root }
 $newLab3dEnv = Join-Path $NewLab3dRoot ".env.production"
+$newLab3dConfig = $null
 if (-not (Test-Path $newLab3dEnv)) {
     Write-Warn "Не нашёл установленный New_Lab_3d по пути '$NewLab3dRoot' ($newLab3dEnv отсутствует)."
     Write-Warn "Сайт всё равно поставится, но за общий HTTPS/домен отвечает Caddy у New_Lab_3d - настройте его отдельно, когда он появится."
@@ -69,6 +70,8 @@ $settings["DEPLOY_DOMAIN"] = $Domain
 $settings["DEPLOY_IP"] = $ip
 $settings["DEPLOY_NODE"] = $node
 $settings["NEW_LAB_3D_ROOT"] = $NewLab3dRoot
+# Ссылка «Админка сайта» в меню CRM: домен основного сайта из его установки.
+if ($newLab3dConfig -and $newLab3dConfig["DEPLOY_DOMAIN"]) { $settings["SITE_URL"] = "https://" + $newLab3dConfig["DEPLOY_DOMAIN"] }
 Write-EnvFile $script:EnvFile $settings
 Write-Ok $script:EnvFile
 

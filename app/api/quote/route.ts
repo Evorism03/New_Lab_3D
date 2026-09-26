@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
 import { prisma } from "@/lib/db";
-import { computePrice, PricingError } from "@/lib/pricing/engine";
+import { PricingError } from "@/lib/pricing/engine";
+import { computeMaterialPrice } from "@/lib/pricing/material";
 
 const QuoteSchema = z.object({
   fileId: z.string(),
@@ -41,11 +42,8 @@ export async function POST(request: NextRequest) {
   }
 
   try {
-    const breakdown = computePrice({
+    const breakdown = computeMaterialPrice(material, {
       volumeCm3: Number(file.volumeCm3),
-      pricePerCm3: Number(material.pricePerCm3),
-      setupFeeCents: material.setupFeeCents,
-      minPriceCents: material.minPriceCents,
       finishMultiplier: finish ? Number(finish.multiplier) : 1,
       quantity,
     });

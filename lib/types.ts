@@ -18,7 +18,8 @@ export type MaterialDTO = {
   id: string;
   name: string;
   description: string | null;
-  pricePerCm3: number;
+  /** Printer time, kopecks per hour. */
+  hourlyRateCents: number;
   setupFeeCents: number;
   minPriceCents: number;
   leadTimeDays: number;
@@ -37,6 +38,9 @@ export function materialImageUrl(id: string, imageKey: string | null): string | 
 }
 
 export type QuoteDTO = {
+  /** Estimated printing time of the whole order (hours) and plastic use (grams). */
+  printHoursTotal: number;
+  plasticGramsTotal: number;
   unitPriceCents: number;
   totalPriceCents: number;
   materialCostCents: number;

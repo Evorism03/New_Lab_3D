@@ -50,7 +50,16 @@ model Material {
   slug          String  @unique
   name          String
   description   String?
-  pricePerCm3   Decimal @db.Decimal(10, 4)
+  // Legacy (price per cm³) — no longer used for quotes; kept so `prisma db push` never drops data.
+  pricePerCm3   Decimal @default(0) @db.Decimal(10, 4)
+
+  // Time-based pricing. NULL = use the recommended value for this material (lib/pricing/defaults.ts).
+  hourlyRateCents      Int?     // printer time, kopecks per hour
+  printSpeedCm3PerHour Decimal? @db.Decimal(8, 2) // model volume printed per hour
+  spoolPriceCents      Int?     // price of one spool, kopecks
+  spoolWeightG         Int?     // grams of plastic on the spool
+  densityGcm3          Decimal? @db.Decimal(6, 3)
+  infillPercent        Int?     // share of the solid model volume actually printed
   setupFeeCents Int     @default(0)
   minPriceCents Int     @default(500)
   leadTimeDays  Int     @default(2)
