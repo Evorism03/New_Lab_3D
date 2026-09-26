@@ -67,6 +67,9 @@ import db, {
   updateRegistrySerial,
   deleteRegistrySerial,
   importRegistrySerials,
+  carrierAccounts,
+  recordCarrierBalance,
+  deleteCarrierBalance,
 } from './db.js';
 import { parseLedgerText } from './lib/ledger-import.js';
 import { parseSerialsText } from './lib/serials-import.js';
@@ -1586,6 +1589,19 @@ const server = http.createServer(async (req, res) => {
 
     if (pathname === '/api/accounting/sync' && req.method === 'POST') {
       return sendJson(res, 200, { orders: syncAllOrdersLedger() });
+    }
+
+    // Остатки на счетах Ozon/СДЭК: записанный из ЛК + расчёт после него.
+    if (pathname === '/api/accounting/carriers' && req.method === 'GET') {
+      return sendJson(res, 200, carrierAccounts());
+    }
+    if (pathname === '/api/accounting/carriers' && req.method === 'POST') {
+      return sendJson(res, 201, recordCarrierBalance(await readBody(req)));
+    }
+    const carrierBalanceMatch = pathname.match(/^\/api\/accounting\/carriers\/(\d+)$/);
+    if (carrierBalanceMatch && req.method === 'DELETE') {
+      if (!deleteCarrierBalance(Number(carrierBalanceMatch[1]))) return sendJson(res, 404, { error: 'Запись не найдена' });
+      return sendJson(res, 200, carrierAccounts());
     }
 
     if (pathname === '/api/accounting/topups' && req.method === 'GET') {

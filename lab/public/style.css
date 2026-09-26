@@ -1110,3 +1110,13 @@ a.ov-serial:hover { border-color: var(--accent); color: var(--accent); text-deco
 .acc-period-row input[type="number"] { width: 90px; }
 .acc-warranty .muted { font-size: 13px; white-space: nowrap; }
 .acc-period-from { font-size: 14px; }
+
+.acc-carriers { display: flex; flex-direction: column; gap: 10px; margin-bottom: 4px; }
+.acc-carrier { border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; background: var(--panel-2); }
+.acc-carrier.low { border-color: rgba(239, 90, 111, 0.6); }
+.acc-carrier-head { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; }
+.acc-carrier-sum { font-weight: 800; font-size: 18px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.acc-carrier-sum.muted { font-weight: 400; font-size: 13px; }
+.acc-carrier .acc-inline-form { margin: 8px 0 0; }
+.acc-carrier input { background: var(--panel); }
+.acc-topup { grid-template-columns: 90px auto auto 1fr auto; }
