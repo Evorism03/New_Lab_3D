@@ -6,13 +6,19 @@ type MaterialForPricing = MaterialPricingRow & {
   minPriceCents: number;
 };
 
-/** Quote for one material: its stored (or recommended) time/plastic settings + the shared formula. */
+/**
+ * Quote for one material: its stored (or recommended) time/plastic settings + the shared formula.
+ * A color with its own spool price (e.g. a composite like ABS-CF15) overrides the material's.
+ */
 export function computeMaterialPrice(
   material: MaterialForPricing,
   input: { volumeCm3: number; finishMultiplier?: number; quantity: number },
+  color?: { spoolPriceCents: number | null } | null,
 ): PricingBreakdown {
+  const pricing = resolvePricing(material);
   return computePrice({
-    ...resolvePricing(material),
+    ...pricing,
+    spoolPriceCents: color?.spoolPriceCents ?? pricing.spoolPriceCents,
     setupFeeCents: material.setupFeeCents,
     minPriceCents: material.minPriceCents,
     ...input,

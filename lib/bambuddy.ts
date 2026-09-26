@@ -1,6 +1,6 @@
 // Bambuddy (github.com/maziggy/bambuddy) runs on the same machine as a Windows service and
 // talks to the Bambu printers over LAN. We only call its REST API from the server, so the
-// API key (Bambuddy → Settings → API Keys, needs printers:read + printers:control) never
+// API key (Bambuddy → Settings → API Keys, needs printers:read + printers:control + inventory:read) never
 // reaches the browser.
 const BAMBUDDY_URL = (process.env.BAMBUDDY_URL || "http://127.0.0.1:8000").replace(/\/$/, "");
 const BAMBUDDY_API_KEY = process.env.BAMBUDDY_API_KEY;
@@ -101,6 +101,25 @@ export async function listPrinters(): Promise<PrinterSnapshot[]> {
       };
     }),
   );
+}
+
+export function isBambuddyConfigured(): boolean {
+  return Boolean(BAMBUDDY_API_KEY);
+}
+
+export type BambuddySpool = {
+  id: number;
+  material: string;
+  color_name: string | null;
+  /** RRGGBBAA */
+  rgba: string | null;
+  label_weight: number;
+  weight_used: number;
+};
+
+/** Active (not archived) spools of the Bambuddy inventory; the key needs inventory:read. */
+export async function listSpools(): Promise<BambuddySpool[]> {
+  return callBambuddy<BambuddySpool[]>("/inventory/spools");
 }
 
 const ACTION_PATHS: Record<PrinterAction, string> = {

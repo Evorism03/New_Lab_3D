@@ -1,5 +1,9 @@
+import { BambuddyColorsAdmin } from "@/components/BambuddyColorsAdmin";
 import { PricingAdmin } from "@/components/PricingAdmin";
+import { isBambuddyConfigured } from "@/lib/bambuddy";
+import { ensureColorsFresh, getColorAvailability, isColorAvailable } from "@/lib/colorSync";
 import { prisma } from "@/lib/db";
+import { getSettings } from "@/lib/settings";
 import { localizeCatalogText } from "@/lib/i18n/catalog";
 import { getServerLocale } from "@/lib/i18n/locale";
 import { getDictionary } from "@/lib/i18n/translations";
@@ -9,19 +13,34 @@ export default async function AdminPricingPage() {
   const dict = getDictionary(await getServerLocale());
   const t = dict.admin;
 
-  const materials = await prisma.material.findMany({
-    orderBy: { name: "asc" },
-    include: {
-      finishes: { orderBy: { name: "asc" } },
-      colors: { orderBy: { name: "asc" } },
-    },
-  });
+  // Also kicks off the periodic Bambuddy sync, so the stock numbers below are fresh.
+  await ensureColorsFresh();
+  const [materials, availability, settings] = await Promise.all([
+    prisma.material.findMany({
+      orderBy: { name: "asc" },
+      include: {
+        finishes: { orderBy: { name: "asc" } },
+        colors: { orderBy: [{ variant: "asc" }, { name: "asc" }] },
+      },
+    }),
+    getColorAvailability(),
+    getSettings(["bambuddy.lastSyncAt", "bambuddy.lastSyncError"]),
+  ]);
 
   return (
     <div>
       <h1 className="text-2xl font-bold text-text">{t.pricingTitle}</h1>
       <p className="mt-1 text-sm text-muted">{t.pricingHint}</p>
       <div className="mt-6">
+        <BambuddyColorsAdmin
+          dict={dict}
+          configured={isBambuddyConfigured()}
+          minStockGrams={availability.minStockGrams}
+          lastSyncAt={settings["bambuddy.lastSyncAt"]}
+          lastSyncError={settings["bambuddy.lastSyncError"]}
+        />
+      </div>
+      <div className="mt-5">
         <PricingAdmin
           dict={dict}
           materials={materials.map((m) => ({
@@ -32,7 +51,17 @@ export default async function AdminPricingPage() {
             minPriceCents: m.minPriceCents,
             leadTimeDays: m.leadTimeDays,
             active: m.active,
-            colors: m.colors.map((c) => ({ id: c.id, name: c.name, nameRu: c.nameRu, hex: c.hex })),
+            colors: m.colors.map((c) => ({
+              id: c.id,
+              name: c.name,
+              nameRu: c.nameRu,
+              hex: c.hex,
+              variant: c.variant,
+              source: c.source,
+              stockGrams: c.stockGrams,
+              spoolPriceCents: c.spoolPriceCents,
+              available: isColorAvailable(c, availability),
+            })),
             finishes: m.finishes.map((f) => ({
               id: f.id,
               name: localizeCatalogText(f.name, dict.locale, f.nameRu),

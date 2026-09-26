@@ -87,11 +87,31 @@ model Color {
   // Russian display name; the RU site falls back to a built-in translation of `name`, then `name` itself.
   nameRu     String?
   hex        String
+  // "" for the plain material; a composite from the Bambuddy spool inventory keeps its full
+  // name here (e.g. "ABS-CF15" under ABS) and is shown to customers as its own group.
+  variant    String  @default("")
+  // "manual" (added in the admin) or "bambuddy" (synced from the Bambuddy spool inventory).
+  source     String  @default("manual")
+  // Bambuddy's identity of the synced color ("<variant>|<name>") — survives admin renames.
+  externalKey String?
+  // Bambuddy: grams left on all matching spools at the last sync. Customers only see synced
+  // colors with at least the "min stock" setting (lib/settings.ts).
+  stockGrams Int?
+  // Price of one spool of this color, kopecks; NULL = the material's spool price.
+  spoolPriceCents Int?
 
   material   Material    @relation(fields: [materialId], references: [id], onDelete: Cascade)
   orderItems OrderItem[]
 
-  @@unique([materialId, name])
+  @@unique([materialId, variant, name])
+  @@unique([materialId, externalKey])
+}
+
+// Small key/value store for admin-editable site settings.
+model Setting {
+  key       String   @id
+  value     String
+  updatedAt DateTime @updatedAt
 }
 
 model Finish {

@@ -193,7 +193,7 @@ async function main() {
 
     for (const colorName of m.colors) {
       await prisma.color.upsert({
-        where: { materialId_name: { materialId: material.id, name: colorName } },
+        where: { materialId_variant_name: { materialId: material.id, variant: "", name: colorName } },
         update: {},
         create: { materialId: material.id, name: colorName, hex: COLOR_HEX[colorName] ?? "#888888" },
       });

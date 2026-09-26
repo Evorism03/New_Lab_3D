@@ -216,7 +216,12 @@ function MaterialPricingCard({ material, dict }: { material: PricingMaterial; di
       </div>
 
       <div className="-mx-5 -mb-5 mt-5 bg-white/[0.02]">
-        <MaterialColorsAdmin materialId={material.id} colors={material.colors} dict={dict} />
+        <MaterialColorsAdmin
+          materialId={material.id}
+          materialSpoolPriceCents={material.spoolPriceCents}
+          colors={material.colors}
+          dict={dict}
+        />
       </div>
     </div>
   );

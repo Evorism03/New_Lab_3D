@@ -6,12 +6,14 @@ import { ScrollParallax } from "@/components/ScrollParallax";
 import { StatCounter } from "@/components/StatCounter";
 import { TextMask } from "@/components/TextMask";
 import { TiltFrame } from "@/components/TiltFrame";
+import { availableColorsWhere } from "@/lib/colorSync";
 import { prisma } from "@/lib/db";
 import { localizeCatalogText } from "@/lib/i18n/catalog";
 import { getServerLocale } from "@/lib/i18n/locale";
 import { daysWord, formatDays, formatTemplate, getDictionary } from "@/lib/i18n/translations";
 import { formatAmount } from "@/lib/money";
 import { resolvePricing } from "@/lib/pricing/defaults";
+import { COLOR_ORDER } from "@/lib/types";
 
 function StatBar({ label, value }: { label: string; value: number }) {
   return (
@@ -39,7 +41,7 @@ export default async function HomePage() {
       }),
       prisma.material.findMany({
         where: { active: true },
-        include: { colors: true },
+        include: { colors: { where: await availableColorsWhere(), orderBy: COLOR_ORDER } },
       }),
       prisma.showcaseItem.findMany({
         orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }],
@@ -209,7 +211,9 @@ export default async function HomePage() {
                         {m.colors.map((c) => (
                           <span
                             key={c.id}
-                            title={localizeCatalogText(c.name, dict.locale, c.nameRu)}
+                            title={
+                              localizeCatalogText(c.name, dict.locale, c.nameRu) + (c.variant ? ` · ${c.variant}` : "")
+                            }
                             className="h-4 w-4 rounded-full border border-border"
                             style={{ background: c.hex }}
                           />

@@ -57,7 +57,9 @@ function toLabPayload(order: OrderDTO) {
     // Lab staff work in Russian, so color/finish go over in Russian.
     items: order.items.map((item) => {
       const finishName = item.finish ? localizeCatalogText(item.finish.name, "ru", item.finish.nameRu) : null;
-      const colorName = item.color ? localizeCatalogText(item.color.name, "ru", item.color.nameRu) : null;
+      const colorName = item.color
+        ? localizeCatalogText(item.color.name, "ru", item.color.nameRu) + (item.color.variant ? ` (${item.color.variant})` : "")
+        : null;
       return {
         item_kind: "print",
         product_name: item.material.name + (finishName ? ` — ${finishName}` : ""),

@@ -40,6 +40,15 @@ export function ConfigureClient({
   const [isQuoting, setIsQuoting] = useState(false);
 
   const colorId = resolveSelection(selectedColorId, material?.colors ?? []);
+  const colorGroups = useMemo(() => {
+    const groups: { variant: string; colors: MaterialDTO["colors"] }[] = [];
+    for (const c of material?.colors ?? []) {
+      const group = groups.find((g) => g.variant === c.variant);
+      if (group) group.colors.push(c);
+      else groups.push({ variant: c.variant, colors: [c] });
+    }
+    return groups;
+  }, [material]);
   const finishId = resolveSelection(selectedFinishId, material?.finishes ?? []);
 
   useEffect(() => {
@@ -153,18 +162,31 @@ export function ConfigureClient({
         {material.colors.length > 0 && (
           <div className="mt-4">
             <label className="block text-sm font-medium text-text">{t.color}</label>
-            <div className="mt-1 flex flex-wrap gap-2">
-              {material.colors.map((c) => (
-                <button
-                  key={c.id}
-                  type="button"
-                  onClick={() => setColorId(c.id)}
-                  className={`pill ${colorId === c.id ? "active" : ""}`}
-                >
-                  {c.name}
-                </button>
-              ))}
-            </div>
+            {colorGroups.map((group) => (
+              <div key={group.variant}>
+                {/* Composites (e.g. ABS-CF15) are listed under their base material as their own group. */}
+                {colorGroups.length > 1 && (
+                  <div className="mt-2 text-xs text-muted">{group.variant || material.name}</div>
+                )}
+                <div className="mt-1 flex flex-wrap gap-2">
+                  {group.colors.map((c) => (
+                    <button
+                      key={c.id}
+                      type="button"
+                      onClick={() => setColorId(c.id)}
+                      className={`pill inline-flex items-center gap-2 ${colorId === c.id ? "active" : ""}`}
+                    >
+                      <span
+                        aria-hidden
+                        className="h-3 w-3 shrink-0 rounded-full border border-border"
+                        style={{ background: c.hex }}
+                      />
+                      {c.name}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ))}
           </div>
         )}
 

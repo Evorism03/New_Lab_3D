@@ -8,6 +8,8 @@ import { colorNameEn } from "@/lib/i18n/colorNames";
 const PatchSchema = z.object({
   nameRu: z.string().trim().min(1).max(40).optional(),
   hex: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional(),
+  // Kopecks; null goes back to the material's spool price.
+  spoolPriceCents: z.number().int().min(0).max(100_000_000).nullable().optional(),
 });
 
 async function findOwnColor(materialId: string, colorId: string) {
@@ -34,12 +36,12 @@ export async function PATCH(
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
-  const { nameRu, hex } = parsed.data;
+  const { nameRu, hex, spoolPriceCents } = parsed.data;
   // Renaming re-derives the English name from the new Russian one.
   const name = nameRu !== undefined ? colorNameEn(nameRu) : undefined;
   if (name && name !== existing.name) {
     const duplicate = await prisma.color.findUnique({
-      where: { materialId_name: { materialId: id, name } },
+      where: { materialId_variant_name: { materialId: id, variant: existing.variant, name } },
       select: { id: true },
     });
     if (duplicate) {
@@ -52,6 +54,7 @@ export async function PATCH(
     data: {
       ...(name !== undefined ? { name, nameRu } : {}),
       ...(hex !== undefined ? { hex: hex.toLowerCase() } : {}),
+      ...(spoolPriceCents !== undefined ? { spoolPriceCents } : {}),
     },
   });
   return NextResponse.json({

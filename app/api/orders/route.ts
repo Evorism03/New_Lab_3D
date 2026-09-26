@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
 import { auth } from "@/auth";
+import { availableColorsWhere } from "@/lib/colorSync";
 import { prisma } from "@/lib/db";
 import { OrderStatus } from "@/lib/generated/prisma/client";
 import { pushOrderToLab } from "@/lib/labClient";
@@ -50,12 +51,13 @@ export async function POST(request: NextRequest) {
     totalPriceCents: number;
   }[] = [];
 
+  const available = await availableColorsWhere();
   for (const item of items) {
     const [file, material, finish, color] = await Promise.all([
       prisma.uploadedFile.findUnique({ where: { id: item.fileId } }),
       prisma.material.findUnique({ where: { id: item.materialId } }),
       item.finishId ? prisma.finish.findUnique({ where: { id: item.finishId } }) : null,
-      item.colorId ? prisma.color.findUnique({ where: { id: item.colorId } }) : null,
+      item.colorId ? prisma.color.findFirst({ where: { id: item.colorId, ...available } }) : null,
     ]);
 
     if (!file || file.status !== "READY" || file.volumeCm3 === null) {
@@ -64,13 +66,21 @@ export async function POST(request: NextRequest) {
     if (!material) {
       return NextResponse.json({ error: `Material ${item.materialId} not found` }, { status: 404 });
     }
+    // The color may have run out between the quote and the order.
+    if (item.colorId && (!color || color.materialId !== material.id)) {
+      return NextResponse.json({ error: "Color is not available for this material" }, { status: 400 });
+    }
 
     try {
-      const breakdown = computeMaterialPrice(material, {
-        volumeCm3: Number(file.volumeCm3),
-        finishMultiplier: finish ? Number(finish.multiplier) : 1,
-        quantity: item.quantity,
-      });
+      const breakdown = computeMaterialPrice(
+        material,
+        {
+          volumeCm3: Number(file.volumeCm3),
+          finishMultiplier: finish ? Number(finish.multiplier) : 1,
+          quantity: item.quantity,
+        },
+        color,
+      );
 
       resolvedItems.push({
         fileId: file.id,

@@ -11,7 +11,11 @@ export type FileDTO = {
   createdAt: string;
 };
 
-export type ColorDTO = { id: string; name: string; hex: string };
+/** `variant` is "" for the plain material, or a composite such as "ABS-CF15" shown as its own group. */
+export type ColorDTO = { id: string; name: string; hex: string; variant: string };
+
+/** Colors customers see: in-stock ones (lib/colorSync.ts), plain material first, then each variant. */
+export const COLOR_ORDER = [{ variant: "asc" as const }, { id: "asc" as const }];
 export type FinishDTO = { id: string; name: string; multiplier: number };
 
 export type MaterialDTO = {
@@ -57,7 +61,7 @@ export type OrderItemDTO = {
   totalPriceCents: number;
   file: { id: string; originalName: string; format: "STL" | "OBJ"; volumeCm3: number | null };
   material: { id: string; name: string };
-  color: { id: string; name: string; nameRu: string | null } | null;
+  color: { id: string; name: string; nameRu: string | null; variant: string } | null;
   finish: { id: string; name: string; nameRu: string | null } | null;
 };
 

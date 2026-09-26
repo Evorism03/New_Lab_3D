@@ -1,13 +1,14 @@
 import { NextResponse } from "next/server";
 
+import { availableColorsWhere } from "@/lib/colorSync";
 import { prisma } from "@/lib/db";
 import { resolvePricing } from "@/lib/pricing/defaults";
-import { materialImageUrl } from "@/lib/types";
+import { COLOR_ORDER, materialImageUrl } from "@/lib/types";
 
 export async function GET() {
   const materials = await prisma.material.findMany({
     where: { active: true },
-    include: { colors: true, finishes: true },
+    include: { colors: { where: await availableColorsWhere(), orderBy: COLOR_ORDER }, finishes: true },
     orderBy: { name: "asc" },
   });
 
@@ -26,7 +27,7 @@ export async function GET() {
       heatResistance: m.heatResistance,
       bestFor: m.bestFor,
       imageUrl: materialImageUrl(m.id, m.imageKey),
-      colors: m.colors.map((c) => ({ id: c.id, name: c.name, nameRu: c.nameRu, hex: c.hex })),
+      colors: m.colors.map((c) => ({ id: c.id, name: c.name, nameRu: c.nameRu, hex: c.hex, variant: c.variant })),
       finishes: m.finishes.map((f) => ({
         id: f.id,
         name: f.name,

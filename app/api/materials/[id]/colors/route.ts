@@ -34,7 +34,7 @@ export async function POST(
   const { nameRu, hex } = parsed.data;
   const name = colorNameEn(nameRu);
   const duplicate = await prisma.color.findUnique({
-    where: { materialId_name: { materialId: id, name } },
+    where: { materialId_variant_name: { materialId: id, variant: "", name } },
     select: { id: true },
   });
   if (duplicate) {
