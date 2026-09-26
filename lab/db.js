@@ -152,6 +152,8 @@ for (const stmt of [
   'ALTER TABLE items ADD COLUMN source_file TEXT',
   'ALTER TABLE items ADD COLUMN external_ref TEXT',
   'ALTER TABLE items ADD COLUMN source_file_url TEXT',
+  // Бухгалтерия: ручная привязка записи к заказу (возврат, доплата, старая продажа). Автозапись продажи — ledger.order_id.
+  'ALTER TABLE ledger ADD COLUMN linked_order_id INTEGER REFERENCES orders(id) ON DELETE SET NULL',
 ]) {
   try {
     db.exec(stmt);
@@ -1142,6 +1144,9 @@ function ledgerRow(row, { warrantyDays, today }) {
     locked: !!row.locked,
     auto: row.order_id != null,
     order_number: row.order_number ?? null,
+    // Заказ записи для ссылки: автозапись продажи или ручная привязка.
+    link_order_id: row.order_id ?? row.linked_order_id ?? null,
+    link_order_number: row.order_number ?? row.linked_order_number ?? null,
     net,
     warranty_until: warrantyUntil,
     // Как в таблице: гарантия «замораживает» только заработанное (net > 0), расходы считаются сразу.
@@ -1156,8 +1161,10 @@ function ledgerRows({ from, to } = {}) {
   if (to) { where.push('ledger.date <= ?'); params.push(to); }
   const rows = db
     .prepare(
-      `SELECT ledger.*, COALESCE(NULLIF(orders.number, ''), CAST(orders.id AS TEXT)) AS order_number
+      `SELECT ledger.*, COALESCE(NULLIF(orders.number, ''), CAST(orders.id AS TEXT)) AS order_number,
+              COALESCE(NULLIF(linked.number, ''), CAST(linked.id AS TEXT)) AS linked_order_number
        FROM ledger LEFT JOIN orders ON orders.id = ledger.order_id
+       LEFT JOIN orders AS linked ON linked.id = ledger.linked_order_id
        ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
        ORDER BY ledger.date DESC, ledger.id DESC`
     )
@@ -1166,12 +1173,13 @@ function ledgerRows({ from, to } = {}) {
   return rows.map((r) => ledgerRow(r, opts));
 }
 
-export function listLedger({ from, to, q } = {}) {
+export function listLedger({ from, to, q, orderId } = {}) {
   let rows = ledgerRows({ from, to });
+  if (orderId) rows = rows.filter((r) => r.link_order_id === Number(orderId));
   if (q) {
     const needle = q.toLowerCase();
     rows = rows.filter((r) =>
-      [r.description, r.category, r.order_number ? `#${r.order_number}` : '', r.income, r.expense].join(' ').toLowerCase().includes(needle)
+      [r.description, r.category, r.link_order_number ? `#${r.link_order_number}` : '', r.income, r.expense].join(' ').toLowerCase().includes(needle)
     );
   }
   return rows;
@@ -1200,7 +1208,19 @@ function cleanLedgerInput(data, existing = {}) {
     warranty: pick('warranty') ? 1 : 0,
     taxable: pick('taxable') ? 1 : 0,
     delivery_account: pick('delivery_account') ? 1 : 0,
+    linked_order_id: data.order !== undefined ? resolveOrderRef(data.order) : existing.linked_order_id ?? null,
   };
+}
+
+// «#12», «12» или номер заказа → id заказа (как «#…» в интерфейсе). Пусто — без привязки.
+function resolveOrderRef(ref) {
+  const value = String(ref ?? '').trim().replace(/^#/, '');
+  if (!value) return null;
+  const row = db
+    .prepare(`SELECT id FROM orders WHERE LOWER(COALESCE(NULLIF(number, ''), CAST(id AS TEXT))) = LOWER(?)`)
+    .get(value);
+  if (!row) throw httpError(400, `Заказ #${value} не найден`);
+  return row.id;
 }
 
 export function createLedgerEntry(data) {
@@ -1209,9 +1229,10 @@ export function createLedgerEntry(data) {
   const info = db
     .prepare(
       `INSERT INTO ledger (date, income, expense, description, category, warranty, taxable, delivery_account,
-         locked, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)`
+         linked_order_id, locked, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)`
     )
-    .run(e.date, e.income, e.expense, e.description, e.category, e.warranty, e.taxable, e.delivery_account, now, now);
+    .run(e.date, e.income, e.expense, e.description, e.category, e.warranty, e.taxable, e.delivery_account,
+      e.linked_order_id, now, now);
   return getLedgerEntry(info.lastInsertRowid);
 }
 
@@ -1229,9 +1250,9 @@ export function updateLedgerEntry(id, data) {
   const e = cleanLedgerInput(data, existing);
   db.prepare(
     `UPDATE ledger SET date = ?, income = ?, expense = ?, description = ?, category = ?, warranty = ?, taxable = ?,
-       delivery_account = ?, locked = ?, updated_at = ? WHERE id = ?`
+       delivery_account = ?, linked_order_id = ?, locked = ?, updated_at = ? WHERE id = ?`
   ).run(e.date, e.income, e.expense, e.description, e.category, e.warranty, e.taxable, e.delivery_account,
-    existing.order_id != null ? 1 : 0, new Date().toISOString(), id);
+    existing.order_id != null ? null : e.linked_order_id, existing.order_id != null ? 1 : 0, new Date().toISOString(), id);
   return getLedgerEntry(id);
 }
 

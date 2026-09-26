@@ -88,6 +88,7 @@
 </div>
 
 <datalist id="category-list"></datalist>
+<datalist id="order-list"></datalist>
 
 <script src="/app.js"></script>
 <script>
@@ -270,6 +271,8 @@ function renderJournal() {
     if (r.category) chips.push(`<span class="chip">${escapeHtml(r.category)}</span>`);
     if (r.auto) {
       chips.push(`<a class="chip acc-chip-order" href="/order.html?id=${r.order_id}" title="Заполнено из заказа автоматически">⚡ заказ #${escapeHtml(r.order_number)}</a>`);
+    } else if (r.link_order_id) {
+      chips.push(`<a class="chip acc-chip-order" href="/order.html?id=${r.link_order_id}" title="Открыть заказ">🔗 заказ #${escapeHtml(r.link_order_number)}</a>`);
     } else if (r.locked) {
       chips.push('<span class="chip" title="Заказ удалён">заказ удалён</span>');
     }
@@ -298,6 +301,27 @@ function renderJournal() {
     row.addEventListener('click', () => openEntry(r));
     row.addEventListener('keydown', (e) => { if (e.key === 'Enter') openEntry(r); });
     mount.appendChild(row);
+  }
+}
+
+// Открыли записи заказа (поиск «#12») — новая запись сразу привязывается к нему.
+function searchOrderRef() {
+  const q = document.getElementById('search').value.trim();
+  return /^#\S+$/.test(q) ? q : '';
+}
+
+// Подсказки для поля «Заказ»: номер, клиент, сумма. Загружаются один раз при первом открытии.
+let orderListLoaded = false;
+async function loadOrderList() {
+  if (orderListLoaded) return;
+  orderListLoaded = true;
+  try {
+    const orders = await api('/api/orders');
+    document.getElementById('order-list').innerHTML = orders
+      .map((o) => `<option value="#${escapeHtml(o.display_number)}">${escapeHtml(o.full_name || '')} · ${rub(o.grand_total)} · ${new Date(o.created_at).toLocaleDateString('ru-RU')}</option>`)
+      .join('');
+  } catch {
+    orderListLoaded = false;
   }
 }
 
@@ -333,6 +357,10 @@ function openEntry(entry, kind) {
         <div class="field"><label>Дата</label><input type="date" name="date" required value="${e.date}"></div>
         <div class="field"><label>Категория</label><input type="text" name="category" list="category-list" value="${escapeHtml(e.category)}" placeholder="Материалы, Логистика…"></div>
       </div>
+      ${entry?.auto ? '' : `
+      <div class="field"><label>Заказ <span class="muted" style="font-weight:normal">— необязательно, чтобы открыть его отсюда</span></label>
+        <input type="text" name="order" list="order-list" placeholder="#12" value="${entry ? (entry.link_order_number ? `#${escapeHtml(entry.link_order_number)}` : '') : escapeHtml(searchOrderRef())}">
+      </div>`}
       <div class="field"><label>Назначение</label><input type="text" name="description" required value="${escapeHtml(e.description)}" placeholder="Например: Пластик (4кг)"></div>
       <div class="grid-2">
         <div class="field"><label>Поступление, ₽</label><input type="number" name="income" min="0" step="0.01" value="${e.income || ''}" placeholder="0"></div>
@@ -351,6 +379,7 @@ function openEntry(entry, kind) {
     </form>
   `);
   const form = overlay.querySelector('#entry-form');
+  if (form.order) loadOrderList();
   (kind === 'expense' ? form.expense : kind === 'income' ? form.income : form.description).focus();
 
   form.addEventListener('submit', async (ev) => {
@@ -365,6 +394,7 @@ function openEntry(entry, kind) {
       taxable: form.taxable.checked,
       delivery_account: form.delivery_account.checked,
     };
+    if (form.order) body.order = form.order.value.trim();
     try {
       if (entry) await api(`/api/accounting/ledger/${entry.id}`, { method: 'PATCH', body: JSON.stringify(body) });
       else await api('/api/accounting/ledger', { method: 'POST', body: JSON.stringify(body) });
@@ -605,6 +635,12 @@ async function init() {
   document.getElementById('topup-form').date.value = today();
   document.getElementById('category-list').innerHTML = settings.categories.map((c) => `<option value="${escapeHtml(c)}">`).join('');
   buildPeriods();
+  // /accounting.html?q=%2312 — переход из заказа к его записям (за всё время).
+  const q = new URLSearchParams(window.location.search).get('q');
+  if (q) {
+    document.getElementById('search').value = q;
+    document.getElementById('period').value = 'all';
+  }
   load();
 }
 init();

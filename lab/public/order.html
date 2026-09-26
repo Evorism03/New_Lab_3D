@@ -1086,6 +1086,8 @@ function renderView(order) {
       </div>
     </div>
 
+    <div id="ov-ledger"></div>
+
     ${receipts || npdLine ? `
     <div class="card ov-block">
       <h3>🧾 Чеки</h3>
@@ -1094,6 +1096,33 @@ function renderView(order) {
     </div>` : ''}
   `;
   view.querySelector('#edit-btn').addEventListener('click', () => setMode('edit'));
+  renderViewLedger(order);
+}
+
+// Записи бухгалтерии по заказу (продажа, возвраты и т.п.) — только администратору.
+async function renderViewLedger(order) {
+  const mount = document.getElementById('ov-ledger');
+  let rows;
+  try {
+    rows = await api(`/api/accounting/ledger?order_id=${order.id}`);
+  } catch {
+    return; // не администратор — блока нет
+  }
+  const date = (iso) => iso.split('-').reverse().join('.');
+  const accLink = `/accounting.html?q=${encodeURIComponent(`#${order.display_number}`)}`;
+  mount.innerHTML = `
+    <div class="card ov-block">
+      <h3>💰 Бухгалтерия</h3>
+      ${rows.length
+        ? rows.map((r) => `
+          <a class="ov-ledger-row" href="${accLink}">
+            <span class="muted">${date(r.date)}</span>
+            <span class="ov-ledger-desc">${escapeHtml(r.description)}${r.frozen ? ` <span class="chip acc-chip-frozen">🛡 до ${date(r.warranty_until)}</span>` : ''}</span>
+            <span class="ov-ledger-sum">${r.income ? `<span class="pos">+${money(r.income)}</span>` : ''} ${r.expense ? `<span class="neg">−${money(r.expense)}</span>` : ''}</span>
+          </a>`).join('')
+        : `<div class="muted">Записей нет${order.status === 'cancelled' ? ' — заказ отменён' : ''}.</div>`}
+      <a class="ov-ledger-open" href="${accLink}">Открыть в бухгалтерии →</a>
+    </div>`;
 }
 
 // Режим хранится в адресе (?edit=1), чтобы обновление страницы его не сбрасывало.
