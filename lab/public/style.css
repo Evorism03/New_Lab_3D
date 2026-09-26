@@ -1120,3 +1120,7 @@ a.ov-serial:hover { border-color: var(--accent); color: var(--accent); text-deco
 .acc-carrier .acc-inline-form { margin: 8px 0 0; }
 .acc-carrier input { background: var(--panel); }
 .acc-topup { grid-template-columns: 90px auto auto 1fr auto; }
+
+.npd-image { display: flex; gap: 14px; align-items: flex-start; flex-wrap: wrap; margin-top: 12px; }
+.npd-image img { width: 160px; max-height: 260px; object-fit: contain; object-position: top; border-radius: 8px; border: 1px solid var(--border); background: #fff; display: block; }
+.npd-image-actions { display: flex; flex-direction: column; gap: 8px; align-items: flex-start; }
