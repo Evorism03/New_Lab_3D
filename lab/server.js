@@ -1296,7 +1296,7 @@ const server = http.createServer(async (req, res) => {
         connected: npd.isConnected(),
         inn: getSetting('npd_inn'),
         name: getSetting('npd_display_name'),
-        payment_type: getSetting('npd_payment_type') || 'ACCOUNT',
+        payment_type: getSetting('npd_payment_type') || 'CASH',
         include_delivery: getSetting('npd_include_delivery') !== '0',
         item_template: getSetting('npd_item_template') || NPD_DEFAULT_ITEM_TEMPLATE,
         delivery_template: getSetting('npd_delivery_template') || NPD_DEFAULT_DELIVERY_TEMPLATE,
@@ -1369,7 +1369,7 @@ const server = http.createServer(async (req, res) => {
         const receipt = await npd.createIncome({
           services,
           operationTime,
-          paymentType: getSetting('npd_payment_type') || 'ACCOUNT',
+          paymentType: getSetting('npd_payment_type') || 'CASH',
         });
         return sendJson(res, 200, setOrderNpdReceipt(orderId, {
           ...receipt,
