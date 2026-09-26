@@ -204,11 +204,12 @@
   </div>
 
   <div class="card" style="margin-top:16px">
-    <h2>Чеки</h2>
+    <h2>📎 Файлы</h2>
+    <p class="muted" style="margin:-6px 0 10px;font-size:13px">Любые файлы по заказу: скриншоты оплаты и переписки, чеки, фото, модели, документы — до 15 МБ каждый.</p>
     <div id="receipts-list"></div>
     <div id="receipt-dropzone" class="dropzone" style="margin-top:10px">
-      <div class="muted">Перетащите файл сюда или</div>
-      <input type="file" id="receipt-file" accept="image/*,.pdf" multiple>
+      <div class="muted">Перетащите файлы сюда или</div>
+      <input type="file" id="receipt-file" multiple>
     </div>
   </div>
   </div>
@@ -372,7 +373,7 @@ function renderReceipts(receipts) {
   const wrap = document.getElementById('receipts-list');
   wrap.innerHTML = '';
   if (!receipts.length) {
-    wrap.appendChild(el('<div class="muted" style="padding:6px 0">Чеков пока нет</div>'));
+    wrap.appendChild(el('<div class="muted" style="padding:6px 0">Файлов пока нет</div>'));
     return;
   }
   const grid = el('<div class="receipt-grid"></div>');
@@ -402,11 +403,11 @@ function renderReceipts(receipts) {
     `
     );
     card.querySelector('.delete-receipt').addEventListener('click', async () => {
-      if (!(await confirmDialog('Удалить чек?'))) return;
+      if (!(await confirmDialog(`Удалить файл «${escapeHtml(r.original_name)}»?`))) return;
       await api(`/api/receipts/${r.id}`, { method: 'DELETE' });
       card.remove();
       if (!grid.children.length) renderReceipts([]);
-      toast('Чек удалён', 'success');
+      toast('Файл удалён', 'success');
     });
     grid.appendChild(card);
   }
@@ -719,7 +720,7 @@ async function renderNpd(order) {
         }),
       });
       renderNpd(updated);
-      renderReceipts(updated.receipts || []); // картинка чека сохранена во вложения заказа
+      renderReceipts(updated.receipts || []); // картинка чека сохранена в файлы заказа
       toast('Чек сформирован', 'success');
     } catch (err) {
       toast(err.message, 'error');
@@ -1122,7 +1123,7 @@ function renderView(order) {
 
     ${receipts || npdLine ? `
     <div class="card ov-block">
-      <h3>🧾 Чеки</h3>
+      <h3>📎 Файлы</h3>
       ${npdLine}
       ${receipts ? `<div class="ov-receipts">${receipts}</div>` : ''}
     </div>` : ''}
@@ -1167,7 +1168,7 @@ async function setMode(mode) {
   document.getElementById('order-edit').hidden = !editing;
   document.getElementById('order-view').hidden = editing;
   if (!editing) {
-    // Действия в режиме правки (статус, Ozon, СДЭК, чеки) могли изменить заказ.
+    // Действия в режиме правки (статус, Ozon, СДЭК, файлы) могли изменить заказ.
     currentOrder = await api(`/api/orders/${id}`);
     renderView(currentOrder);
   }

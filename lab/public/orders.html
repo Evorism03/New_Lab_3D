@@ -75,7 +75,7 @@ function render(orders) {
             <span class="lc-id">#${escapeHtml(o.display_number)}</span>
             ${tagBadge(o)}
             <span class="lc-title">${escapeHtml(o.full_name || 'Без имени')}</span>
-            ${o.receipts_count ? `<span class="chip" title="${o.receipts_count} чек(ов) прикреплено">📎 ${o.receipts_count}</span>` : ''}
+            ${o.receipts_count ? `<span class="chip" title="Файлов прикреплено: ${o.receipts_count}">📎 ${o.receipts_count}</span>` : ''}
             ${statusPill(o.status, statuses)}
           </div>
           <div class="lc-sub">

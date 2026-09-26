@@ -219,7 +219,7 @@ function render(orders) {
       const itemsSummary = summarizeItems(o.items) || '—';
       const card = el(`
         <div class="order-card" draggable="${IS_TOUCH ? 'false' : 'true'}" data-id="${o.id}">
-          <div class="name">#${escapeHtml(o.display_number)} ${tagBadge(o)} ${o.full_name || 'Без имени'}${o.receipts_count ? ` <span title="${o.receipts_count} чек(ов)">📎${o.receipts_count}</span>` : ''}</div>
+          <div class="name">#${escapeHtml(o.display_number)} ${tagBadge(o)} ${o.full_name || 'Без имени'}${o.receipts_count ? ` <span title="Файлов прикреплено: ${o.receipts_count}">📎${o.receipts_count}</span>` : ''}</div>
           <div class="meta">${deliveryDot(o.delivery_service, catalog.delivery_services)}${o.delivery_service || ''} · ${o.pvz_address || ''}</div>
           <div class="meta">${itemsSummary}</div>
           ${filesLine(o)}
