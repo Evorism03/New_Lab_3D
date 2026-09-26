@@ -188,6 +188,8 @@ async function initSidebarUser() {
     </div>
     <button type="button" class="secondary small" id="logout-btn" title="Выйти">⏻</button>
   `;
+  // Разделы только для администратора (Бухгалтерия) — в меню показываем лишь ему.
+  if (me.role === 'admin') document.querySelectorAll('[data-admin-only]').forEach((a) => { a.hidden = false; });
   mount.querySelector('#logout-btn').addEventListener('click', async () => {
     await api('/api/auth/logout', { method: 'POST' });
     window.location.href = '/login.html';

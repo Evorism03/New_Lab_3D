@@ -3,7 +3,7 @@ import path from 'node:path';
 import fs from 'node:fs';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import {
+import db, {
   STATUSES,
   MODELS,
   COLORS,
@@ -46,7 +46,23 @@ import {
   createSession,
   getSessionUser,
   deleteSession,
+  LEDGER_CATEGORIES,
+  getAccountingSettings,
+  setAccountingSettings,
+  listLedger,
+  createLedgerEntry,
+  updateLedgerEntry,
+  deleteLedgerEntry,
+  restoreOrderLedger,
+  syncAllOrdersLedger,
+  ledgerSummary,
+  listDeliveryTopups,
+  createDeliveryTopup,
+  deleteDeliveryTopup,
+  importLedgerRows,
+  guessLedgerCategory,
 } from './db.js';
+import { parseLedgerText } from './lib/ledger-import.js';
 import { buildLabelPdf } from './lib/label.js';
 import * as ozon from './lib/ozon.js';
 import * as cdek from './lib/cdek.js';
@@ -199,6 +215,43 @@ function ordersToCsv(orders) {
     );
   }
   return '﻿' + lines.join('\r\n');
+}
+
+function ledgerToCsv(rows) {
+  const header = ['Дата', 'Поступление', 'Списание', 'Назначение', 'Категория', 'Гарантия', 'Гарантия до', 'Налог', 'Доставка со счёта ТК', 'Заказ'];
+  const lines = [header.map(csvEscape).join(';')];
+  for (const r of rows) {
+    lines.push(
+      [
+        r.date.split('-').reverse().join('.'),
+        r.income ? String(r.income).replace('.', ',') : '',
+        r.expense ? String(r.expense).replace('.', ',') : '',
+        r.description,
+        r.category,
+        r.warranty ? 'да' : '',
+        r.warranty_until ? r.warranty_until.split('-').reverse().join('.') : '',
+        r.taxable ? 'да' : '',
+        r.delivery_account ? 'да' : '',
+        r.order_number ? `#${r.order_number}` : '',
+      ]
+        .map(csvEscape)
+        .join(';')
+    );
+  }
+  return '\ufeff' + lines.join('\r\n');
+}
+
+// Период из ?from=YYYY-MM-DD&to=YYYY-MM-DD (любая из дат может отсутствовать).
+function periodParams(url) {
+  const valid = (v) => (/^\d{4}-\d{2}-\d{2}$/.test(v || '') ? v : undefined);
+  return { from: valid(url.searchParams.get('from')), to: valid(url.searchParams.get('to')) };
+}
+
+// Строка из импорта уже есть в журнале (повторная вставка того же куска таблицы).
+function isDuplicateLedgerRow(r) {
+  return !!db
+    .prepare('SELECT 1 FROM ledger WHERE date = ? AND income = ? AND expense = ? AND description = ? LIMIT 1')
+    .get(r.date, r.income, r.expense, r.description);
 }
 
 function serialsToCsv(rows) {
@@ -1289,6 +1342,93 @@ const server = http.createServer(async (req, res) => {
       } catch (err) {
         return sendJson(res, 502, { error: err.message });
       }
+    }
+
+    // ---- Бухгалтерия (только администратор) ----
+    if (pathname.startsWith('/api/accounting/') || pathname === '/api/export/ledger.csv') {
+      if (user.role !== 'admin') return sendJson(res, 403, { error: 'Бухгалтерия доступна только администратору' });
+    }
+
+    if (pathname === '/api/accounting/settings' && req.method === 'GET') {
+      return sendJson(res, 200, { ...getAccountingSettings(), categories: LEDGER_CATEGORIES });
+    }
+
+    if (pathname === '/api/accounting/settings' && req.method === 'POST') {
+      const data = await readBody(req);
+      const before = getAccountingSettings();
+      const saved = setAccountingSettings(data);
+      // Сменили дату начала автозаполнения — пересобрать продажи из заказов.
+      if (saved.auto_since !== before.auto_since) syncAllOrdersLedger();
+      return sendJson(res, 200, { ...saved, categories: LEDGER_CATEGORIES });
+    }
+
+    if (pathname === '/api/accounting/ledger' && req.method === 'GET') {
+      return sendJson(res, 200, listLedger({ ...periodParams(url), q: url.searchParams.get('q') || undefined }));
+    }
+
+    if (pathname === '/api/accounting/ledger' && req.method === 'POST') {
+      return sendJson(res, 201, createLedgerEntry(await readBody(req)));
+    }
+
+    const ledgerMatch = pathname.match(/^\/api\/accounting\/ledger\/(\d+)$/);
+    if (ledgerMatch && req.method === 'PATCH') {
+      const entry = updateLedgerEntry(Number(ledgerMatch[1]), await readBody(req));
+      if (!entry) return sendJson(res, 404, { error: 'Запись не найдена' });
+      return sendJson(res, 200, entry);
+    }
+    if (ledgerMatch && req.method === 'DELETE') {
+      if (!deleteLedgerEntry(Number(ledgerMatch[1]))) return sendJson(res, 404, { error: 'Запись не найдена' });
+      return sendJson(res, 200, { ok: true });
+    }
+
+    const ledgerRestoreMatch = pathname.match(/^\/api\/accounting\/orders\/(\d+)\/restore$/);
+    if (ledgerRestoreMatch && req.method === 'POST') {
+      restoreOrderLedger(Number(ledgerRestoreMatch[1]));
+      return sendJson(res, 200, { ok: true });
+    }
+
+    if (pathname === '/api/accounting/summary' && req.method === 'GET') {
+      return sendJson(res, 200, ledgerSummary(periodParams(url)));
+    }
+
+    if (pathname === '/api/accounting/sync' && req.method === 'POST') {
+      return sendJson(res, 200, { orders: syncAllOrdersLedger() });
+    }
+
+    if (pathname === '/api/accounting/topups' && req.method === 'GET') {
+      return sendJson(res, 200, listDeliveryTopups());
+    }
+    if (pathname === '/api/accounting/topups' && req.method === 'POST') {
+      return sendJson(res, 201, createDeliveryTopup(await readBody(req)));
+    }
+    const topupMatch = pathname.match(/^\/api\/accounting\/topups\/(\d+)$/);
+    if (topupMatch && req.method === 'DELETE') {
+      if (!deleteDeliveryTopup(Number(topupMatch[1]))) return sendJson(res, 404, { error: 'Запись не найдена' });
+      return sendJson(res, 200, { ok: true });
+    }
+
+    // Импорт из Google-таблицы: сначала предпросмотр (commit: false), потом запись.
+    if (pathname === '/api/accounting/import' && req.method === 'POST') {
+      const data = await readBody(req);
+      const { rows, errors } = parseLedgerText(data.text);
+      const prepared = rows.map((r) => ({
+        ...r,
+        category: r.category || guessLedgerCategory(r.description, r.income),
+        duplicate: isDuplicateLedgerRow(r),
+      }));
+      const fresh = prepared.filter((r) => !r.duplicate);
+      if (!data.commit) return sendJson(res, 200, { rows: prepared, errors, new_count: fresh.length });
+      const imported = importLedgerRows(fresh);
+      return sendJson(res, 200, { imported, skipped_duplicates: prepared.length - fresh.length, errors });
+    }
+
+    if (pathname === '/api/export/ledger.csv' && req.method === 'GET') {
+      const csv = ledgerToCsv(listLedger(periodParams(url)));
+      res.writeHead(200, {
+        'Content-Type': 'text/csv; charset=utf-8',
+        'Content-Disposition': 'attachment; filename="ledger.csv"',
+      });
+      return res.end(csv);
     }
 
     if (pathname === '/api/export/orders.csv' && req.method === 'GET') {
