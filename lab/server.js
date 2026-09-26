@@ -1335,13 +1335,26 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, 200, { ok: true });
     }
 
-    const npdMatch = pathname.match(/^\/api\/orders\/(\d+)\/npd\/(preview|receipt|cancel)$/);
+    const npdMatch = pathname.match(/^\/api\/orders\/(\d+)\/npd\/(preview|receipt|cancel|image)$/);
     if (npdMatch) {
       const orderId = Number(npdMatch[1]);
       const order = getOrder(orderId);
       if (!order) return sendJson(res, 404, { error: 'Заказ не найден' });
       const current = order.npd_receipt;
       const active = current?.uuid && !current.canceled_at;
+
+      // Картинка чека: ?download=1 — скачать файлом, иначе показать.
+      if (npdMatch[2] === 'image' && req.method === 'GET') {
+        if (!current?.uuid) return sendJson(res, 404, { error: 'Чека по заказу нет' });
+        const img = await npd.receiptImage(current.uuid);
+        const fileName = `chek-${order.display_number}.${img.ext}`;
+        res.writeHead(200, {
+          'Content-Type': img.mime,
+          'Content-Disposition': `${url.searchParams.get('download') ? 'attachment' : 'inline'}; filename="${encodeURIComponent(fileName)}"`,
+          'Cache-Control': 'private, max-age=3600',
+        });
+        return res.end(img.buffer);
+      }
 
       if (npdMatch[2] === 'preview' && req.method === 'GET') {
         const lines = npdLinesFor(order);
@@ -1371,11 +1384,21 @@ const server = http.createServer(async (req, res) => {
           operationTime,
           paymentType: getSetting('npd_payment_type') || 'CASH',
         });
-        return sendJson(res, 200, setOrderNpdReceipt(orderId, {
+        const saved = setOrderNpdReceipt(orderId, {
           ...receipt,
           operation_date: npd.localIso(operationTime).slice(0, 10),
           created_at: new Date().toISOString(),
-        }));
+        });
+        // Картинку чека сразу кладём в «Чеки» заказа — чтобы была под рукой. Не получилось — не страшно.
+        try {
+          const img = await npd.receiptImage(receipt.uuid);
+          const fileName = `${crypto.randomUUID()}.${img.ext}`;
+          fs.writeFileSync(path.join(uploadsDir, fileName), img.buffer);
+          addReceipt(orderId, { fileName, originalName: `Чек Мой налог #${order.display_number}.${img.ext}`, mimeType: img.mime });
+        } catch (err) {
+          console.error(`[npd] не удалось сохранить картинку чека: ${err.message}`);
+        }
+        return sendJson(res, 200, getOrder(orderId) || saved);
       }
 
       if (npdMatch[2] === 'cancel' && req.method === 'POST') {

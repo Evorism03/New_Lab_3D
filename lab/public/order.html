@@ -620,6 +620,16 @@ async function renderNpd(order) {
         <button type="button" class="secondary" id="npd-copy">📋 Скопировать ссылку</button>
         <a href="${escapeText(r.url)}" target="_blank"><button type="button" class="secondary">Открыть чек</button></a>
       </div>
+      <div class="npd-image">
+        <a href="/api/orders/${id}/npd/image" target="_blank" title="Открыть картинку чека">
+          <img id="npd-img" src="/api/orders/${id}/npd/image" alt="Чек" loading="lazy">
+        </a>
+        <div class="npd-image-actions">
+          <a href="/api/orders/${id}/npd/image?download=1"><button type="button" class="secondary">⬇ Скачать картинку</button></a>
+          <button type="button" class="secondary" id="npd-copy-img">🖼 Копировать картинку</button>
+          <span class="muted" style="font-size:12px">Картинку можно вставить в диалог ВК (Ctrl+V) или отправить файлом.</span>
+        </div>
+      </div>
       <div class="toolbar" style="margin:12px 0 0">
         <select id="npd-cancel-reason" style="max-width:260px">
           <option value="mistake">Чек сформирован ошибочно</option>
@@ -637,6 +647,27 @@ async function renderNpd(order) {
         document.execCommand('copy');
       }
       toast('Ссылка на чек скопирована — можно отправить покупателю в ВК', 'success');
+    });
+    const img = document.getElementById('npd-img');
+    img.addEventListener('error', () => {
+      img.closest('.npd-image').innerHTML = '<div class="muted" style="margin-top:10px">Картинка чека сейчас недоступна — отправьте покупателю ссылку.</div>';
+    });
+    document.getElementById('npd-copy-img').addEventListener('click', async () => {
+      try {
+        // В буфер обмена браузеры кладут только PNG — перерисовываем картинку через canvas.
+        if (!navigator.clipboard?.write || typeof ClipboardItem === 'undefined') throw new Error('unsupported');
+        const blob = await new Promise((resolve, reject) => {
+          const canvas = document.createElement('canvas');
+          canvas.width = img.naturalWidth;
+          canvas.height = img.naturalHeight;
+          canvas.getContext('2d').drawImage(img, 0, 0);
+          canvas.toBlob((b) => (b ? resolve(b) : reject(new Error('empty'))), 'image/png');
+        });
+        await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
+        toast('Картинка чека скопирована — вставьте её в диалог ВК (Ctrl+V)', 'success');
+      } catch {
+        toast('Браузер не дал скопировать картинку (нужен https или localhost) — нажмите «Скачать картинку»', 'error');
+      }
     });
     document.getElementById('npd-cancel').addEventListener('click', async () => {
       const reasonSel = document.getElementById('npd-cancel-reason');
@@ -688,6 +719,7 @@ async function renderNpd(order) {
         }),
       });
       renderNpd(updated);
+      renderReceipts(updated.receipts || []); // картинка чека сохранена во вложения заказа
       toast('Чек сформирован', 'success');
     } catch (err) {
       toast(err.message, 'error');

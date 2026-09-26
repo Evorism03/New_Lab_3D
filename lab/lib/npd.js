@@ -174,6 +174,23 @@ export function receiptUrl(uuid, inn = getSetting('npd_inn')) {
   return `${API}/v1/receipt/${inn}/${uuid}/print`;
 }
 
+// Картинка чека (то, что открывается по публичной ссылке) — чтобы отправить покупателю файлом.
+export async function receiptImage(uuid, inn = getSetting('npd_inn')) {
+  let res;
+  try {
+    res = await fetch(receiptUrl(uuid, inn), { headers: { 'User-Agent': USER_AGENT, Accept: 'image/*,*/*' } });
+  } catch (err) {
+    throw Object.assign(new Error(`Мой налог недоступен: ${err.cause?.code || err.message}`), { status: 502 });
+  }
+  const mime = (res.headers.get('content-type') || '').split(';')[0].trim().toLowerCase();
+  const buffer = Buffer.from(await res.arrayBuffer());
+  if (!res.ok || !mime.startsWith('image/')) {
+    console.error(`[npd] картинка чека ${uuid}: HTTP ${res.status}, ${mime || 'без типа'}`);
+    throw Object.assign(new Error('Мой налог не отдал картинку чека — отправьте покупателю ссылку'), { status: 502 });
+  }
+  return { buffer, mime, ext: mime === 'image/jpeg' ? 'jpg' : mime.split('/')[1].replace(/[^a-z0-9]/g, '') || 'png' };
+}
+
 export const CANCEL_REASONS = {
   mistake: 'Чек сформирован ошибочно',
   refund: 'Возврат средств',
