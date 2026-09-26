@@ -40,7 +40,13 @@ async function call(method, path, body, token) {
     data = { message: text.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 200) };
   }
   if (!res.ok) {
-    const err = new Error(`Мой налог: ${data.message || data.code || `HTTP ${res.status}`}`);
+    // Кроме message ЛК иногда кладёт подробности в additionalInfo / exceptionMessage — показываем их тоже.
+    const details = [data.exceptionMessage, data.additionalInfo && JSON.stringify(data.additionalInfo)]
+      .filter((d) => d && d !== '{}' && d !== data.message)
+      .join('; ');
+    const err = new Error(`Мой налог: ${data.message || data.code || `HTTP ${res.status}`}${details ? ` (${details.slice(0, 300)})` : ''}`);
+    console.error(`[npd] ${method} ${path} → HTTP ${res.status}: ${text.slice(0, 1000)}`);
+    if (body && path !== '/v1/auth/lkfl' && path !== '/v1/auth/token') console.error(`[npd] запрос: ${JSON.stringify(body).slice(0, 2000)}`);
     err.status = res.status === 401 || res.status === 400 || res.status === 422 ? 400 : 502;
     err.httpStatus = res.status;
     throw err;
@@ -119,25 +125,48 @@ export function localIso(date = new Date()) {
     + `${sign}${pad(offset / 60)}:${pad(offset % 60)}`;
 }
 
+// Название позиции: без переносов строк и управляющих символов, пробелы схлопнуты.
+function cleanName(name) {
+  return String(name || '').replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 256);
+}
+
 // services: [{ name, amount (цена за единицу), quantity }]; paymentType: 'CASH' | 'ACCOUNT'.
-export async function createIncome({ services, operationTime, paymentType = 'ACCOUNT' }) {
+export async function createIncome({ services, operationTime, paymentType = 'CASH' }) {
   const lines = services
-    .filter((s) => s.name && Number(s.amount) > 0 && Number(s.quantity) > 0)
-    .map((s) => ({ name: String(s.name).slice(0, 256), amount: Math.round(Number(s.amount) * 100) / 100, quantity: Number(s.quantity) }));
+    .map((s) => ({ name: cleanName(s.name), amount: Math.round(Number(s.amount) * 100) / 100, quantity: Math.max(1, Math.round(Number(s.quantity) || 1)) }))
+    .filter((s) => s.name && s.amount > 0);
   if (!lines.length) throw Object.assign(new Error('В чеке нет позиций с суммой больше нуля'), { status: 400 });
-  const total = lines.reduce((sum, s) => sum + s.amount * s.quantity, 0);
-  const data = await call('POST', '/v1/income', {
-    operationTime: localIso(operationTime || new Date()),
-    requestTime: localIso(new Date()),
-    services: lines,
-    totalAmount: total.toFixed(2),
-    client: { contactPhone: null, displayName: null, inn: null, incomeType: 'FROM_INDIVIDUAL' },
-    paymentType,
-    ignoreMaxTotalIncomeRestriction: false,
-  }, await token());
+  const totalCents = lines.reduce((sum, s) => sum + Math.round(s.amount * 100) * s.quantity, 0);
+  const total = totalCents / 100;
+  const send = async (type) => {
+    const auth = await token();
+    // requestTime — момент отправки (после обновления токена), operationTime не позже него.
+    const now = new Date();
+    const op = operationTime && operationTime < now ? operationTime : now;
+    return call('POST', '/v1/income', {
+      operationTime: localIso(op),
+      requestTime: localIso(now),
+      services: lines,
+      totalAmount: total.toFixed(2),
+      client: { contactPhone: null, displayName: null, incomeType: 'FROM_INDIVIDUAL', inn: null },
+      paymentType: type,
+      ignoreMaxTotalIncomeRestriction: false,
+    }, auth);
+  };
+  let usedType = paymentType === 'ACCOUNT' ? 'ACCOUNT' : 'CASH';
+  let data;
+  try {
+    data = await send(usedType);
+  } catch (err) {
+    // Чек физлицу с безналом ЛК может отклонить как «Неверный формат запроса» — все известные рабочие
+    // клиенты шлют CASH. Ошибка 400 значит, что чек не создан, поэтому безопасно повторить с CASH.
+    if (usedType !== 'ACCOUNT' || err.httpStatus !== 400) throw err;
+    usedType = 'CASH';
+    data = await send(usedType);
+  }
   const uuid = data.approvedReceiptUuid;
   if (!uuid) throw new Error('Мой налог не вернул номер чека');
-  return { uuid, total: Math.round(total * 100) / 100, url: receiptUrl(uuid), lines };
+  return { uuid, total, url: receiptUrl(uuid), lines, payment_type: usedType };
 }
 
 // Ссылка на чек — публичная, её можно отправить покупателю.

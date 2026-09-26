@@ -233,8 +233,8 @@
         <div class="field">
           <label>Способ оплаты в чеке</label>
           <select id="npd-payment-type">
-            <option value="ACCOUNT">Безналичный (перевод на карту/счёт)</option>
-            <option value="CASH">Наличные</option>
+            <option value="CASH">Наличные / перевод физлица (рекомендуется)</option>
+            <option value="ACCOUNT">Безналичный на счёт (если ЛК отклонит — чек уйдёт как «Наличные»)</option>
           </select>
         </div>
         <div class="field" style="align-self:end">
@@ -622,7 +622,7 @@ function renderNpd() {
     : 'Не подключено.';
   document.getElementById('npd-login').hidden = c.connected;
   document.getElementById('npd-logout').hidden = !c.connected;
-  document.getElementById('npd-payment-type').value = c.payment_type || 'ACCOUNT';
+  document.getElementById('npd-payment-type').value = c.payment_type || 'CASH';
   document.getElementById('npd-include-delivery').checked = c.include_delivery !== false;
   document.getElementById('npd-item-template').value = c.item_template || '';
   document.getElementById('npd-delivery-template').value = c.delivery_template || '';
