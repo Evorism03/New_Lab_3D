@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import bcrypt from 'bcryptjs';
+import './public/address.js'; // globalThis.LabAddress — город из адреса ПВЗ для описания продажи в бухгалтерии
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const dataDir = path.join(__dirname, 'data');
@@ -73,6 +74,34 @@ db.exec(`
     user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     created_at TEXT NOT NULL,
     expires_at TEXT NOT NULL
+  );
+
+  -- Бухгалтерия: журнал операций (как лист «Бухгалтерия» в таблице). Одна строка может
+  -- содержать и поступление, и списание: продажа = оплата покупателя + расход на доставку.
+  CREATE TABLE IF NOT EXISTS ledger (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    date TEXT NOT NULL,
+    income REAL NOT NULL DEFAULT 0,
+    expense REAL NOT NULL DEFAULT 0,
+    description TEXT NOT NULL DEFAULT '',
+    category TEXT NOT NULL DEFAULT '',
+    warranty INTEGER NOT NULL DEFAULT 0,
+    taxable INTEGER NOT NULL DEFAULT 0,
+    delivery_account INTEGER NOT NULL DEFAULT 0,
+    order_id INTEGER UNIQUE REFERENCES orders(id) ON DELETE SET NULL,
+    locked INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_ledger_date ON ledger(date);
+
+  -- Пополнения счёта доставки (Ozon/СДЭК списывают доставку с предоплаченного счёта).
+  CREATE TABLE IF NOT EXISTS delivery_topups (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    date TEXT NOT NULL,
+    amount REAL NOT NULL DEFAULT 0,
+    note TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL
   );
 `);
 
@@ -382,6 +411,7 @@ export function createOrder(data) {
   const orderId = info.lastInsertRowid;
   if (number) db.prepare('UPDATE orders SET number = ? WHERE id = ?').run(number, orderId);
   insertItems(orderId, data.items || []);
+  syncOrderLedger(orderId);
   return getOrder(orderId);
 }
 
@@ -456,6 +486,7 @@ export function updateOrder(id, data) {
     db.prepare('DELETE FROM items WHERE order_id = ?').run(id);
     insertItems(id, data.items);
   }
+  syncOrderLedger(id);
   return getOrder(id);
 }
 
@@ -476,9 +507,13 @@ export function reorderBoardColumn(status, ids) {
     db.exec('ROLLBACK');
     throw err;
   }
+  // Отмена заказа убирает его продажу из бухгалтерии (и возвращает при переносе обратно).
+  ids.forEach((id) => syncOrderLedger(id));
 }
 
 export function deleteOrder(id) {
+  // Автозапись продажи удаляется вместе с заказом; исправленная вручную — остаётся (order_id станет NULL).
+  db.prepare('DELETE FROM ledger WHERE order_id = ? AND locked = 0').run(id);
   db.prepare('DELETE FROM orders WHERE id = ?').run(id);
 }
 
@@ -512,6 +547,7 @@ export function createOrUpdateExternalOrder(data) {
     db.prepare('DELETE FROM items WHERE order_id = ?').run(existing.id);
     insertItems(existing.id, data.items);
   }
+  syncOrderLedger(existing.id);
   return getOrder(existing.id);
 }
 
@@ -520,6 +556,7 @@ export function markExternalOrderPaid(externalOrderId) {
   if (!existing) return null;
   const now = new Date().toISOString();
   db.prepare("UPDATE orders SET payment_status = 'paid', updated_at = ? WHERE id = ?").run(now, existing.id);
+  syncOrderLedger(existing.id);
   return getOrder(existing.id);
 }
 
@@ -735,6 +772,459 @@ export function getSessionUser(token) {
 
 export function deleteSession(token) {
   db.prepare('DELETE FROM sessions WHERE token = ?').run(token);
+}
+
+// --- Бухгалтерия ------------------------------------------------------------
+// Журнал поступлений/списаний вместо листа «Бухгалтерия» в Google-таблице. Продажи из заказов
+// попадают сюда сами (syncOrderLedger), остальное — расходы на материалы, логистику ремонта
+// и т.п. — вносится вручную на странице /accounting.html.
+
+// Подсказки для поля «Категория» (можно вписать и свою).
+export const LEDGER_CATEGORIES = [
+  'Продажа',
+  '3D-печать',
+  'Материалы',
+  'Комплектующие',
+  'Расходники',
+  'Оборудование',
+  'Логистика',
+  'Возврат',
+  'Реклама',
+  'Питание',
+  'Налоги',
+  'Комиссии',
+  'Офис',
+  'Прочее',
+];
+
+const SALE_CATEGORY = 'Продажа';
+
+function pad2(n) {
+  return String(n).padStart(2, '0');
+}
+
+// Дата в часовом поясе сервера (заказы хранят created_at в UTC).
+export function localDate(value = new Date()) {
+  const d = value instanceof Date ? value : new Date(value);
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+}
+
+function addDays(isoDate, days) {
+  const [y, m, d] = isoDate.split('-').map(Number);
+  return localDate(new Date(y, m - 1, d + days));
+}
+
+function roundMoney(n) {
+  return Math.round((Number(n) || 0) * 100) / 100;
+}
+
+function readJsonSetting(key, fallback) {
+  try {
+    const value = JSON.parse(getSetting(key) || 'null');
+    return value ?? fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+// Автозаполнение берёт заказы начиная с этой даты: всё, что раньше, уже внесено в таблицу руками
+// (и переносится импортом), иначе продажи задвоятся. При первом запуске — сегодняшний день.
+if (!getSetting('acc_auto_since')) setSetting('acc_auto_since', localDate());
+
+export function getAccountingSettings() {
+  return {
+    tax_rate: Number(getSetting('acc_tax_rate') || 4),
+    warranty_days: Number(getSetting('acc_warranty_days') || 92),
+    auto_since: getSetting('acc_auto_since'),
+    bank_name: getSetting('acc_bank_name') || 'Банк',
+    bank_balance: getSetting('acc_bank_balance') === '' ? null : Number(getSetting('acc_bank_balance')),
+    bank_date: getSetting('acc_bank_date'),
+    fixed_costs: readJsonSetting('acc_fixed_costs', []),
+    // Заказы, продажу которых удалили из журнала вручную (можно вернуть на странице бухгалтерии).
+    excluded_orders: [...excludedOrders()]
+      .map((id) => db.prepare(`SELECT id, COALESCE(NULLIF(number, ''), CAST(id AS TEXT)) AS number FROM orders WHERE id = ?`).get(id))
+      .filter(Boolean),
+  };
+}
+
+export function setAccountingSettings(data) {
+  if (data.tax_rate != null) {
+    const rate = Number(String(data.tax_rate).replace(',', '.'));
+    if (!(rate >= 0 && rate <= 100)) throw httpError(400, 'Ставка налога — от 0 до 100 %');
+    setSetting('acc_tax_rate', String(rate));
+  }
+  if (data.warranty_days != null) {
+    const days = Math.round(Number(data.warranty_days));
+    if (!(days >= 0 && days <= 3650)) throw httpError(400, 'Срок гарантии — от 0 до 3650 дней');
+    setSetting('acc_warranty_days', String(days));
+  }
+  if (data.auto_since != null) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(data.auto_since)) throw httpError(400, 'Неверная дата начала автозаполнения');
+    setSetting('acc_auto_since', data.auto_since);
+  }
+  if (data.bank_name != null) setSetting('acc_bank_name', String(data.bank_name).trim().slice(0, 60));
+  if (data.bank_balance !== undefined) {
+    const empty = data.bank_balance === null || data.bank_balance === '';
+    setSetting('acc_bank_balance', empty ? '' : String(roundMoney(data.bank_balance)));
+    setSetting('acc_bank_date', empty ? '' : localDate());
+  }
+  if (data.fixed_costs != null) {
+    const list = (Array.isArray(data.fixed_costs) ? data.fixed_costs : [])
+      .map((c) => ({ name: String(c?.name || '').trim().slice(0, 80), amount: roundMoney(c?.amount) }))
+      .filter((c) => c.name);
+    setSetting('acc_fixed_costs', JSON.stringify(list));
+  }
+  return getAccountingSettings();
+}
+
+// Заказы, запись о продаже которых удалили вручную, — синхронизация их больше не создаёт.
+function excludedOrders() {
+  const list = readJsonSetting('acc_excluded_orders', []);
+  return new Set(Array.isArray(list) ? list.map(Number) : []);
+}
+
+function setOrderExcluded(orderId, excluded) {
+  const set = excludedOrders();
+  if (excluded) set.add(Number(orderId));
+  else set.delete(Number(orderId));
+  setSetting('acc_excluded_orders', JSON.stringify([...set]));
+}
+
+// «Продажа AL-1 ×2 · СДЭК · Москва» — как строки продаж в таблице.
+function saleDescription(order) {
+  const totals = new Map();
+  for (const it of order.items) {
+    const name = modelLabel(it.model_id) || it.product_name || 'Товар';
+    totals.set(name, (totals.get(name) || 0) + (Number(it.quantity) || 0));
+  }
+  const goods = [...totals.entries()].map(([name, qty]) => (qty > 1 ? `${name} ×${qty}` : name)).join(', ');
+  let city = '';
+  try {
+    const { parseAddress, cityNames } = globalThis.LabAddress;
+    city = cityNames(parseAddress(order.pvz_address || order.shipping_address || ''))[0] || '';
+  } catch {
+    // адрес не разобрался — без города
+  }
+  return [`Продажа ${goods || 'товаров'}`, order.delivery_service, city].filter(Boolean).join(' · ');
+}
+
+// Что должно лежать в журнале по заказу (или null — ничего). Заказы из CRM заводятся уже после
+// оплаты; заказы с сайта — только когда оплата подтверждена.
+function orderSaleEntry(order) {
+  if (!order || order.status === 'cancelled') return null;
+  if (order.source === SITE_SOURCE && order.payment_status !== 'paid') return null;
+  if (!(order.grand_total > 0)) return null;
+  const date = localDate(order.created_at);
+  if (date < getSetting('acc_auto_since')) return null;
+  if (excludedOrders().has(order.id)) return null;
+  // Гарантия — на изделия из каталога моделей (AL-1 и т.п.); печать на заказ — без гарантии.
+  const warranty = order.items.some((it) => MODELS.some((m) => m.id === it.model_id)) ? 1 : 0;
+  const printOnly = order.items.length > 0 && order.items.every((it) => it.item_kind === 'print');
+  const expense = roundMoney(order.delivery_price);
+  return {
+    date,
+    income: roundMoney(order.grand_total),
+    expense,
+    description: saleDescription(order),
+    category: printOnly ? '3D-печать' : SALE_CATEGORY,
+    warranty,
+    taxable: 1,
+    delivery_account: expense > 0 ? 1 : 0,
+  };
+}
+
+export function syncOrderLedger(orderId) {
+  const row = db.prepare('SELECT * FROM orders WHERE id = ?').get(orderId);
+  const existing = db.prepare('SELECT * FROM ledger WHERE order_id = ?').get(orderId);
+  if (existing?.locked) return; // исправлено вручную — не трогаем
+  const entry = row ? orderSaleEntry(withTotals(row)) : null;
+  if (!entry) {
+    if (existing) db.prepare('DELETE FROM ledger WHERE id = ?').run(existing.id);
+    return;
+  }
+  const now = new Date().toISOString();
+  if (existing) {
+    db.prepare(
+      `UPDATE ledger SET date = ?, income = ?, expense = ?, description = ?, category = ?, warranty = ?, taxable = ?,
+         delivery_account = ?, updated_at = ? WHERE id = ?`
+    ).run(entry.date, entry.income, entry.expense, entry.description, entry.category, entry.warranty, entry.taxable,
+      entry.delivery_account, now, existing.id);
+  } else {
+    db.prepare(
+      `INSERT INTO ledger (date, income, expense, description, category, warranty, taxable, delivery_account, order_id,
+         locked, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)`
+    ).run(entry.date, entry.income, entry.expense, entry.description, entry.category, entry.warranty, entry.taxable,
+      entry.delivery_account, orderId, now, now);
+  }
+}
+
+export function syncAllOrdersLedger() {
+  const ids = db.prepare('SELECT id FROM orders').all().map((r) => r.id);
+  for (const id of ids) syncOrderLedger(id);
+  // Записи с датой раньше начала автозаполнения, если их не правили руками, убираются.
+  db.prepare('DELETE FROM ledger WHERE order_id IS NOT NULL AND locked = 0 AND date < ?').run(getSetting('acc_auto_since'));
+  return ids.length;
+}
+
+function ledgerRow(row, { warrantyDays, today }) {
+  const net = roundMoney(row.income - row.expense);
+  const warrantyUntil = row.warranty ? addDays(row.date, warrantyDays) : null;
+  return {
+    ...row,
+    warranty: !!row.warranty,
+    taxable: !!row.taxable,
+    delivery_account: !!row.delivery_account,
+    locked: !!row.locked,
+    auto: row.order_id != null,
+    order_number: row.order_number ?? null,
+    net,
+    warranty_until: warrantyUntil,
+    // Как в таблице: гарантия «замораживает» только заработанное (net > 0), расходы считаются сразу.
+    frozen: !!warrantyUntil && net > 0 && warrantyUntil > today,
+  };
+}
+
+function ledgerRows({ from, to } = {}) {
+  const where = [];
+  const params = [];
+  if (from) { where.push('ledger.date >= ?'); params.push(from); }
+  if (to) { where.push('ledger.date <= ?'); params.push(to); }
+  const rows = db
+    .prepare(
+      `SELECT ledger.*, COALESCE(NULLIF(orders.number, ''), CAST(orders.id AS TEXT)) AS order_number
+       FROM ledger LEFT JOIN orders ON orders.id = ledger.order_id
+       ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
+       ORDER BY ledger.date DESC, ledger.id DESC`
+    )
+    .all(...params);
+  const opts = { warrantyDays: getAccountingSettings().warranty_days, today: localDate() };
+  return rows.map((r) => ledgerRow(r, opts));
+}
+
+export function listLedger({ from, to, q } = {}) {
+  let rows = ledgerRows({ from, to });
+  if (q) {
+    const needle = q.toLowerCase();
+    rows = rows.filter((r) =>
+      [r.description, r.category, r.order_number ? `#${r.order_number}` : '', r.income, r.expense].join(' ').toLowerCase().includes(needle)
+    );
+  }
+  return rows;
+}
+
+function getLedgerEntry(id) {
+  return ledgerRows().find((r) => r.id === Number(id)) || null;
+}
+
+function cleanLedgerInput(data, existing = {}) {
+  const pick = (key) => (data[key] !== undefined ? data[key] : existing[key]);
+  const date = String(pick('date') || '');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw httpError(400, 'Укажите дату');
+  const income = roundMoney(pick('income'));
+  const expense = roundMoney(pick('expense'));
+  if (income < 0 || expense < 0) throw httpError(400, 'Суммы не могут быть отрицательными');
+  if (!income && !expense) throw httpError(400, 'Укажите сумму поступления или списания');
+  const description = String(pick('description') || '').trim().slice(0, 300);
+  if (!description) throw httpError(400, 'Укажите назначение');
+  return {
+    date,
+    income,
+    expense,
+    description,
+    category: String(pick('category') || '').trim().slice(0, 60),
+    warranty: pick('warranty') ? 1 : 0,
+    taxable: pick('taxable') ? 1 : 0,
+    delivery_account: pick('delivery_account') ? 1 : 0,
+  };
+}
+
+export function createLedgerEntry(data) {
+  const e = cleanLedgerInput(data);
+  const now = new Date().toISOString();
+  const info = db
+    .prepare(
+      `INSERT INTO ledger (date, income, expense, description, category, warranty, taxable, delivery_account,
+         locked, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)`
+    )
+    .run(e.date, e.income, e.expense, e.description, e.category, e.warranty, e.taxable, e.delivery_account, now, now);
+  return getLedgerEntry(info.lastInsertRowid);
+}
+
+// Правка автозаписи «замораживает» её (locked): синхронизация с заказом её больше не трогает.
+// data.unlock = true — вернуть автозаполнение (запись пересчитается из заказа).
+export function updateLedgerEntry(id, data) {
+  const existing = db.prepare('SELECT * FROM ledger WHERE id = ?').get(id);
+  if (!existing) return null;
+  if (data.unlock && existing.order_id != null) {
+    db.prepare('UPDATE ledger SET locked = 0 WHERE id = ?').run(id);
+    const orderId = existing.order_id;
+    syncOrderLedger(orderId);
+    return db.prepare('SELECT id FROM ledger WHERE order_id = ?').get(orderId) ? getLedgerEntry(id) : { removed: true };
+  }
+  const e = cleanLedgerInput(data, existing);
+  db.prepare(
+    `UPDATE ledger SET date = ?, income = ?, expense = ?, description = ?, category = ?, warranty = ?, taxable = ?,
+       delivery_account = ?, locked = ?, updated_at = ? WHERE id = ?`
+  ).run(e.date, e.income, e.expense, e.description, e.category, e.warranty, e.taxable, e.delivery_account,
+    existing.order_id != null ? 1 : 0, new Date().toISOString(), id);
+  return getLedgerEntry(id);
+}
+
+export function deleteLedgerEntry(id) {
+  const existing = db.prepare('SELECT * FROM ledger WHERE id = ?').get(id);
+  if (!existing) return false;
+  // Удалили продажу заказа — не создавать её заново при следующем изменении заказа.
+  if (existing.order_id != null) setOrderExcluded(existing.order_id, true);
+  db.prepare('DELETE FROM ledger WHERE id = ?').run(id);
+  return true;
+}
+
+// Вернуть в журнал продажу заказа, запись о которой удалили.
+export function restoreOrderLedger(orderId) {
+  setOrderExcluded(orderId, false);
+  syncOrderLedger(orderId);
+}
+
+export function listDeliveryTopups() {
+  return db.prepare('SELECT * FROM delivery_topups ORDER BY date DESC, id DESC').all();
+}
+
+export function createDeliveryTopup(data) {
+  const date = String(data.date || '');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw httpError(400, 'Укажите дату');
+  const amount = roundMoney(data.amount);
+  if (!(amount > 0)) throw httpError(400, 'Укажите сумму пополнения');
+  const info = db
+    .prepare('INSERT INTO delivery_topups (date, amount, note, created_at) VALUES (?, ?, ?, ?)')
+    .run(date, amount, String(data.note || '').trim().slice(0, 120), new Date().toISOString());
+  return db.prepare('SELECT * FROM delivery_topups WHERE id = ?').get(info.lastInsertRowid);
+}
+
+export function deleteDeliveryTopup(id) {
+  return db.prepare('DELETE FROM delivery_topups WHERE id = ?').run(id).changes > 0;
+}
+
+// Итоги — те же формулы, что в таблице:
+//  «Грязные» = поступления − списания;
+//  «Чистые» = то же без денег за изделия, у которых ещё не кончилась гарантия;
+//  налог = ставка × облагаемые поступления;
+//  долг перед доставкой = доставка, списанная со счёта ТК − пополнения этого счёта;
+//  разница с банком = фактический остаток − (грязные за всё время + долг перед доставкой).
+export function ledgerSummary({ from, to } = {}) {
+  const settings = getAccountingSettings();
+  const rows = ledgerRows({ from, to });
+  const sum = (list, fn) => roundMoney(list.reduce((acc, r) => acc + fn(r), 0));
+  const income = sum(rows, (r) => r.income);
+  const expense = sum(rows, (r) => r.expense);
+  const frozenRows = rows.filter((r) => r.frozen);
+  const frozen = sum(frozenRows, (r) => r.net);
+  const taxBase = sum(rows.filter((r) => r.taxable), (r) => r.income);
+
+  // Ближайшее освобождение гарантийных денег.
+  const unlocks = new Map();
+  for (const r of frozenRows) unlocks.set(r.warranty_until, (unlocks.get(r.warranty_until) || 0) + r.net);
+  const nextUnlockDate = [...unlocks.keys()].sort()[0] || null;
+
+  const categories = new Map();
+  for (const r of rows) {
+    const key = r.category || 'Без категории';
+    const c = categories.get(key) || { category: key, income: 0, expense: 0, count: 0 };
+    c.income += r.income;
+    c.expense += r.expense;
+    c.count += 1;
+    categories.set(key, c);
+  }
+
+  // Долг перед доставкой и сверка с банком — всегда за всё время.
+  const all = from || to ? ledgerRows() : rows;
+  const deliverySpent = sum(all.filter((r) => r.delivery_account), (r) => r.expense);
+  const topups = roundMoney(db.prepare('SELECT COALESCE(SUM(amount), 0) AS s FROM delivery_topups').get().s);
+  const deliveryDebt = roundMoney(deliverySpent - topups);
+  const dirtyAll = sum(all, (r) => r.net);
+  const fixedCosts = sum(settings.fixed_costs, (c) => c.amount);
+
+  return {
+    period: { from: from || null, to: to || null },
+    count: rows.length,
+    income,
+    expense,
+    dirty: roundMoney(income - expense),
+    clean: roundMoney(income - expense - frozen),
+    frozen,
+    next_unlock: nextUnlockDate ? { date: nextUnlockDate, amount: roundMoney(unlocks.get(nextUnlockDate)) } : null,
+    tax_rate: settings.tax_rate,
+    tax_base: taxBase,
+    tax: roundMoney((taxBase * settings.tax_rate) / 100),
+    categories: [...categories.values()]
+      .map((c) => ({ ...c, income: roundMoney(c.income), expense: roundMoney(c.expense) }))
+      .sort((a, b) => b.income + b.expense - (a.income + a.expense)),
+    delivery: { spent: deliverySpent, topups, debt: deliveryDebt },
+    fixed_costs: fixedCosts,
+    bank: settings.bank_balance == null
+      ? null
+      : {
+          name: settings.bank_name,
+          balance: settings.bank_balance,
+          date: settings.bank_date,
+          expected: roundMoney(dirtyAll + deliveryDebt),
+          diff: roundMoney(settings.bank_balance - (dirtyAll + deliveryDebt)),
+        },
+  };
+}
+
+// Категория для строки из старой таблицы — по ключевым словам назначения.
+const CATEGORY_RULES = [
+  [/возврат/i, 'Возврат'],
+  [/продаж/i, SALE_CATEGORY],
+  [/печат/i, '3D-печать'],
+  [/налог/i, 'Налоги'],
+  [/комисси/i, 'Комиссии'],
+  [/логистик|доставк|отправк/i, 'Логистика'],
+  [/реклам|пост\b/i, 'Реклама'],
+  [/питани/i, 'Питание'],
+  [/пластик|смол[аы]|филамент/i, 'Материалы'],
+  [/принтер|хотен[дт]|стеллаж|гравер|sd карт|флешк|гастро/i, 'Оборудование'],
+  [/упаковк|скотч|расходник|спирт|перчатк/i, 'Расходники'],
+  [/мотор|кнопк|разъ[её]м|провод|винт|втулк|коннектор|конектор|пружин|микрос|ардуино|датчик|реле|метиз|механ|труб/i, 'Комплектующие'],
+];
+
+export function guessLedgerCategory(description, income) {
+  for (const [re, category] of CATEGORY_RULES) {
+    if (re.test(description)) {
+      if ((category === SALE_CATEGORY || category === '3D-печать') && !(income > 0)) continue;
+      return category;
+    }
+  }
+  return 'Прочее';
+}
+
+// Импорт строк старой таблицы. rows — уже разобранные { date, income, expense, description, warranty }.
+// Как в формулах таблицы: доставка со счёта ТК и налог — у продаж с гарантией.
+export function importLedgerRows(rows) {
+  const now = new Date().toISOString();
+  const stmt = db.prepare(
+    `INSERT INTO ledger (date, income, expense, description, category, warranty, taxable, delivery_account,
+       locked, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)`
+  );
+  let count = 0;
+  db.exec('BEGIN');
+  try {
+    for (const r of rows) {
+      const e = cleanLedgerInput({
+        ...r,
+        category: r.category || guessLedgerCategory(r.description, r.income),
+        taxable: r.taxable ?? (r.warranty && r.income > 0),
+        delivery_account: r.delivery_account ?? (r.warranty && r.income > 0 && r.expense > 0),
+      });
+      stmt.run(e.date, e.income, e.expense, e.description, e.category, e.warranty, e.taxable, e.delivery_account, now, now);
+      count++;
+    }
+    db.exec('COMMIT');
+  } catch (err) {
+    db.exec('ROLLBACK');
+    throw err;
+  }
+  return count;
 }
 
 export default db;
