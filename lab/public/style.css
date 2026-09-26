@@ -10,6 +10,10 @@
   --danger: #ef5a6f;
   --warn: #f0a840;
   --radius: 10px;
+  /* Поля ввода: темнее карточек и с заметной рамкой — чтобы не сливались с фоном. */
+  --field-bg: #0b0f18;
+  --field-border: #3b4762;
+  --field-border-hover: #54627f;
 }
 
 * { box-sizing: border-box; }
@@ -185,16 +189,30 @@ label {
 
 input, select, textarea {
   width: 100%;
-  background: var(--panel-2);
-  border: 1px solid var(--border);
+  background: var(--field-bg);
+  border: 1px solid var(--field-border);
   border-radius: 8px;
   color: var(--text);
   padding: 8px 10px;
   font-size: 14px;
+  transition: border-color 0.12s ease, box-shadow 0.12s ease;
+}
+
+input::placeholder, textarea::placeholder { color: #6b7690; }
+input:hover:not(:disabled):not([readonly]), select:hover:not(:disabled), textarea:hover:not(:disabled) {
+  border-color: var(--field-border-hover);
 }
 
 input:focus, select:focus, textarea:focus {
-  outline: 1px solid var(--accent);
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(91, 140, 255, 0.22);
+}
+
+input:disabled, select:disabled, textarea:disabled, input[readonly] {
+  background: var(--panel-2);
+  border-color: var(--border);
+  color: var(--muted);
 }
 
 .field { margin-bottom: 12px; }
@@ -737,8 +755,8 @@ table.orders-table td.nowrap, table.orders-table th.nowrap, table.orders-table t
 /* Поля внутри карточек товара — темнее карточки, с заметной рамкой, чтобы не сливались. */
 .items-table tbody td select,
 .items-table tbody td input:not([type="hidden"]):not([type="checkbox"]) {
-  background: var(--bg);
-  border: 1px solid #34405a;
+  background: var(--field-bg);
+  border: 1px solid var(--field-border);
 }
 .items-table tbody td select:focus,
 .items-table tbody td input:focus { border-color: var(--accent); }
@@ -756,7 +774,7 @@ input.invalid, input.invalid:focus { border-color: var(--danger) !important; box
 .npd-lines { background: var(--panel-2); border: 1px solid var(--border); border-radius: 10px; padding: 10px 14px; max-width: 680px; }
 .npd-line { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 4px 0; font-size: 14px; }
 .npd-num { flex-shrink: 0; width: 24px; height: 24px; border-radius: 50%; background: var(--bg); display: inline-flex; align-items: center; justify-content: center; font-size: 12px; color: var(--muted); }
-.npd-name { flex: 1; min-width: 0; background: var(--bg); border: 1px solid #34405a; }
+.npd-name { flex: 1; min-width: 0; }
 .npd-sum { white-space: nowrap; font-weight: 600; }
 .npd-total { border-top: 1px dashed var(--border); margin-top: 6px; padding-top: 8px; font-weight: 700; }
 
@@ -1092,7 +1110,7 @@ a.ov-serial:hover { border-color: var(--accent); color: var(--accent); text-deco
 .dq { margin-top: 14px; padding: 14px 16px; border: 1px solid var(--border); border-radius: 12px; background: var(--panel-2); display: flex; flex-direction: column; gap: 10px; }
 .dq-row { display: flex; align-items: flex-end; gap: 14px; flex-wrap: wrap; }
 .dq-box { margin: 0; min-width: 240px; flex: 0 1 360px; }
-.dq-box select { background: var(--panel); }
+
 .dq-parcel { font-size: 13px; padding-bottom: 8px; line-height: 1.5; }
 .dq-point { font-size: 14px; }
 .dq-candidates { display: flex; flex-direction: column; gap: 6px; align-items: flex-start; }
@@ -1118,7 +1136,7 @@ a.ov-serial:hover { border-color: var(--accent); color: var(--accent); text-deco
 .acc-carrier-sum { font-weight: 800; font-size: 18px; white-space: nowrap; font-variant-numeric: tabular-nums; }
 .acc-carrier-sum.muted { font-weight: 400; font-size: 13px; }
 .acc-carrier .acc-inline-form { margin: 8px 0 0; }
-.acc-carrier input { background: var(--panel); }
+
 .acc-topup { grid-template-columns: 90px auto auto 1fr auto; }
 
 .npd-image { display: flex; gap: 14px; align-items: flex-start; flex-wrap: wrap; margin-top: 12px; }
