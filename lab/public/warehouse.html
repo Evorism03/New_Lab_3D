@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Склад — Order Automation</title>
+<link rel="stylesheet" href="/style.css">
+<link rel="manifest" href="/manifest.webmanifest">
+<meta name="theme-color" content="#171d2b">
+</head>
+<body>
+<div class="layout">
+<aside class="sidebar" id="sidebar">
+  <div class="sidebar-top">
+    <span class="brand">📦 Заказы</span>
+    <button type="button" class="sidebar-toggle" id="sidebar-toggle" title="Свернуть/развернуть меню">☰</button>
+  </div>
+  <a href="/" class="new-order-btn"><span class="nav-icon">➕</span><span class="label">Новый заказ</span></a>
+  <nav class="sidebar-nav">
+    <a href="/board.html"><span class="nav-icon">🗂</span><span class="label">Доска</span></a>
+    <a href="/assembly.html"><span class="nav-icon">🔧</span><span class="label">Сборка</span></a>
+    <a href="/orders.html"><span class="nav-icon">📋</span><span class="label">Все заказы</span></a>
+    <a href="/serials.html"><span class="nav-icon">#️⃣</span><span class="label">Серийные номера</span></a>
+    <a href="/warehouse.html" class="active"><span class="nav-icon">🏬</span><span class="label">Склад</span></a>
+    <a href="/stats.html"><span class="nav-icon">📊</span><span class="label">Статистика</span></a>
+    <a href="/accounting.html" data-admin-only hidden><span class="nav-icon">💰</span><span class="label">Бухгалтерия</span></a>
+    <a href="/settings.html"><span class="nav-icon">⚙️</span><span class="label">Настройки</span></a>
+  </nav>
+  <div class="sidebar-bottom" id="sidebar-user"></div>
+</aside>
+<main>
+  <div class="toolbar">
+    <input type="search" id="search" placeholder="Поиск компонента...">
+    <label class="muted" style="display:flex;align-items:center;gap:6px;white-space:nowrap">
+      <input type="checkbox" id="low-only"> только заканчивается
+    </label>
+    <div class="spacer"></div>
+    <button type="button" id="add-component">＋ Компонент</button>
+  </div>
+
+  <div class="card">
+    <h2>Компоненты</h2>
+    <p class="muted acc-hint">
+      Остаток списывается сам, когда заказ становится «Собран» — по составу товаров из Настроек → Каталог.
+      Вернули заказ назад, отменили или удалили — списанное возвращается. «Нужно» — сколько уйдёт на заказы,
+      которые ещё не собраны («Новый заказ», «Печать», «Собрать»).
+    </p>
+    <table class="wh-table">
+      <thead>
+        <tr>
+          <th>Компонент</th>
+          <th class="num">В наличии</th>
+          <th class="num">Нужно</th>
+          <th class="num">Свободно</th>
+          <th class="num">Мин.</th>
+          <th>В товарах</th>
+          <th style="width:190px"></th>
+        </tr>
+      </thead>
+      <tbody id="tbody"></tbody>
+    </table>
+    <div id="empty" class="empty-state" style="display:none">Компонентов пока нет — добавьте первый кнопкой «＋ Компонент».</div>
+  </div>
+
+  <div class="card" style="margin-top:16px" id="buildable-card" hidden>
+    <h2>Хватит на</h2>
+    <p class="muted acc-hint">Сколько штук товара можно собрать из текущих остатков (строки состава, привязанные к цвету или разъёму, не учитываются).</p>
+    <div id="buildable"></div>
+  </div>
+
+  <div class="card" style="margin-top:16px">
+    <h2>Движения</h2>
+    <p class="muted acc-hint">Последние 100 изменений остатков.</p>
+    <table class="wh-table">
+      <thead><tr><th>Когда</th><th>Компонент</th><th class="num">Изменение</th><th>Что</th></tr></thead>
+      <tbody id="moves"></tbody>
+    </table>
+  </div>
+</main>
+</div>
+<script src="/app.js"></script>
+<script>
+let components = [];
+
+const fmtQty = (n) => Number(n || 0).toLocaleString('ru-RU', { maximumFractionDigits: 3 });
+
+function modal(html) {
+  const overlay = el(`<div class="modal-overlay"><div class="modal-box acc-modal">${html}</div></div>`);
+  document.body.appendChild(overlay);
+  const close = () => overlay.remove();
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+  overlay.querySelectorAll('[data-close]').forEach((b) => b.addEventListener('click', close));
+  return { overlay, close };
+}
+
+async function load() {
+  const [{ components: list, products }, moves] = await Promise.all([
+    api('/api/stock/components'),
+    api('/api/stock/moves?limit=100'),
+  ]);
+  components = list;
+  render();
+  renderBuildable(products);
+  renderMoves(moves);
+}
+
+function render() {
+  const q = document.getElementById('search').value.trim().toLowerCase();
+  const lowOnly = document.getElementById('low-only').checked;
+  const rows = components.filter((c) =>
+    (!q || `${c.name} ${c.notes} ${c.products.join(' ')}`.toLowerCase().includes(q)) && (!lowOnly || c.low));
+  const tbody = document.getElementById('tbody');
+  tbody.innerHTML = '';
+  document.getElementById('empty').style.display = components.length ? 'none' : '';
+  for (const c of rows) {
+    const row = el(`
+      <tr class="${c.low ? 'wh-low' : ''}">
+        <td>
+          <b>${escapeHtml(c.name)}</b>
+          ${c.notes ? `<div class="muted" style="font-size:12px">${escapeHtml(c.notes)}</div>` : ''}
+        </td>
+        <td class="num" data-label="В наличии"><b class="${c.qty < 0 ? 'neg' : ''}">${fmtQty(c.qty)}</b> <span class="muted">${escapeHtml(c.unit)}</span></td>
+        <td class="num" data-label="Нужно">${c.needed ? fmtQty(c.needed) : '<span class="muted">—</span>'}</td>
+        <td data-label="Свободно" class="num ${c.free < 0 ? 'neg' : ''}">${fmtQty(c.free)}</td>
+        <td class="num muted" data-label="Мин.">${c.min_qty ? fmtQty(c.min_qty) : '—'}</td>
+        <td class="muted" style="font-size:12px">${c.products.length ? c.products.map(escapeHtml).join(', ') : '—'}</td>
+        <td style="white-space:nowrap;text-align:right">
+          <button type="button" class="secondary small" data-act="in" title="Приход">＋</button>
+          <button type="button" class="secondary small" data-act="out" title="Расход">−</button>
+          <button type="button" class="secondary small" data-act="count" title="Инвентаризация: выставить фактический остаток">＝</button>
+          <button type="button" class="secondary small" data-act="edit" title="Изменить">✎</button>
+        </td>
+      </tr>`);
+    row.querySelectorAll('[data-act]').forEach((b) => b.addEventListener('click', () => {
+      if (b.dataset.act === 'edit') openComponent(c);
+      else openMove(c, b.dataset.act);
+    }));
+    tbody.appendChild(row);
+  }
+}
+
+function renderBuildable(products) {
+  const card = document.getElementById('buildable-card');
+  card.hidden = !products.length;
+  document.getElementById('buildable').innerHTML = products.map((p) => `
+    <div class="wh-build-row">
+      <span>${escapeHtml(p.name)}</span>
+      <b class="${p.buildable === 0 ? 'neg' : ''}">${p.buildable == null ? '<span class="muted">—</span>' : `${p.buildable} шт`}</b>
+    </div>`).join('');
+}
+
+function renderMoves(moves) {
+  const kinds = { in: 'Приход', out: 'Расход', count: 'Инвентаризация', order: 'Заказ' };
+  document.getElementById('moves').innerHTML = moves.length
+    ? moves.map((m) => `
+      <tr>
+        <td class="muted" style="white-space:nowrap">${escapeHtml(new Date(m.at).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }))}</td>
+        <td>${escapeHtml(m.component_name)}</td>
+        <td class="num ${m.delta > 0 ? 'pos' : 'neg'}">${m.delta > 0 ? '+' : '−'}${fmtQty(Math.abs(m.delta))} ${escapeHtml(m.unit)}</td>
+        <td>${m.order_id ? `<a href="/order.html?id=${m.order_id}">${escapeHtml(m.note)}</a>` : escapeHtml(m.note || kinds[m.kind] || '')}</td>
+      </tr>`).join('')
+    : '<tr><td colspan="4" class="muted">Движений пока не было.</td></tr>';
+}
+
+function openComponent(c) {
+  const { overlay, close } = modal(`
+    <h3>${c ? escapeHtml(c.name) : 'Новый компонент'}</h3>
+    <form id="comp-form">
+      <div class="field"><label>Название</label><input name="cname" required placeholder="Мотор, разъём USB-C, пластик PETG…" value="${escapeHtml(c?.name || '')}"></div>
+      <div class="grid-2">
+        <div class="field"><label>Единица</label>
+          <input name="unit" list="units" value="${escapeHtml(c?.unit || 'шт')}">
+          <datalist id="units"><option value="шт"><option value="г"><option value="кг"><option value="м"><option value="мл"></datalist>
+        </div>
+        <div class="field"><label>Мин. остаток (подсветка)</label><input name="min_qty" type="number" min="0" step="any" value="${c?.min_qty ?? ''}"></div>
+      </div>
+      ${c ? '' : '<div class="field"><label>Сейчас в наличии</label><input name="qty" type="number" min="0" step="any" placeholder="0"></div>'}
+      <div class="field"><label>Заметка</label><input name="notes" placeholder="Где купить, артикул…" value="${escapeHtml(c?.notes || '')}"></div>
+      <div class="modal-actions acc-modal-actions">
+        ${c ? '<button type="button" class="danger" id="comp-delete">Удалить</button>' : ''}
+        <div class="spacer"></div>
+        <button type="button" class="secondary" data-close>Отмена</button>
+        <button type="submit">Сохранить</button>
+      </div>
+    </form>`);
+  const form = overlay.querySelector('#comp-form');
+  form.cname.focus();
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const body = { name: form.cname.value, unit: form.unit.value, min_qty: form.min_qty.value || 0, notes: form.notes.value };
+    try {
+      if (c) await api(`/api/stock/components/${c.id}`, { method: 'PATCH', body: JSON.stringify(body) });
+      else await api('/api/stock/components', { method: 'POST', body: JSON.stringify({ ...body, qty: form.qty.value || 0 }) });
+      close();
+      toast('Сохранено', 'success');
+      load();
+    } catch (err) {
+      toast(err.message, 'error');
+    }
+  });
+  overlay.querySelector('#comp-delete')?.addEventListener('click', async () => {
+    const used = c.products.length ? ` Он уберётся из состава: ${c.products.join(', ')}.` : '';
+    if (!(await confirmDialog(`Удалить «${escapeHtml(c.name)}» вместе с историей движений?${escapeHtml(used)}`, { okLabel: 'Удалить' }))) return;
+    try {
+      await api(`/api/stock/components/${c.id}`, { method: 'DELETE' });
+      close();
+      load();
+    } catch (err) {
+      toast(err.message, 'error');
+    }
+  });
+}
+
+function openMove(c, act) {
+  const titles = { in: 'Приход', out: 'Расход', count: 'Инвентаризация' };
+  const { overlay, close } = modal(`
+    <h3>${titles[act]}: ${escapeHtml(c.name)}</h3>
+    <p class="muted acc-hint">Сейчас в наличии: <b>${fmtQty(c.qty)} ${escapeHtml(c.unit)}</b>.
+      ${act === 'count' ? 'Впишите, сколько есть на самом деле — разница запишется в движения.' : ''}</p>
+    <form id="move-form">
+      <div class="grid-2">
+        <div class="field"><label>${act === 'count' ? 'Фактический остаток' : 'Количество'}, ${escapeHtml(c.unit)}</label>
+          <input name="qty" type="number" min="0" step="any" required></div>
+        <div class="field"><label>Комментарий</label>
+          <input name="note" placeholder="${act === 'in' ? 'Поставщик, закупка…' : act === 'out' ? 'Брак, ремонт, тест…' : ''}"></div>
+      </div>
+      <div class="modal-actions acc-modal-actions">
+        <div class="spacer"></div>
+        <button type="button" class="secondary" data-close>Отмена</button>
+        <button type="submit">Записать</button>
+      </div>
+    </form>`);
+  const form = overlay.querySelector('#move-form');
+  form.qty.focus();
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const qty = Number(form.qty.value);
+    const body = act === 'count' ? { set: qty } : { delta: act === 'out' ? -qty : qty };
+    try {
+      await api(`/api/stock/components/${c.id}/move`, { method: 'POST', body: JSON.stringify({ ...body, note: form.note.value }) });
+      close();
+      toast('Записано', 'success');
+      load();
+    } catch (err) {
+      toast(err.message, 'error');
+    }
+  });
+}
+
+document.getElementById('search').addEventListener('input', render);
+document.getElementById('low-only').addEventListener('change', render);
+document.getElementById('add-component').addEventListener('click', () => openComponent(null));
+load().catch((err) => toast(err.message, 'error'));
+</script>
+</body>
+</html>

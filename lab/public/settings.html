@@ -21,6 +21,7 @@
     <a href="/assembly.html"><span class="nav-icon">🔧</span><span class="label">Сборка</span></a>
     <a href="/orders.html"><span class="nav-icon">📋</span><span class="label">Все заказы</span></a>
     <a href="/serials.html"><span class="nav-icon">#️⃣</span><span class="label">Серийные номера</span></a>
+    <a href="/warehouse.html"><span class="nav-icon">🏬</span><span class="label">Склад</span></a>
     <a href="/stats.html"><span class="nav-icon">📊</span><span class="label">Статистика</span></a>
     <a href="/accounting.html" data-admin-only hidden><span class="nav-icon">💰</span><span class="label">Бухгалтерия</span></a>
     <a href="/settings.html" class="active"><span class="nav-icon">⚙️</span><span class="label">Настройки</span></a>
@@ -40,7 +41,8 @@
   <section data-panel="catalog">
   <div class="card">
     <h2>Товары</h2>
-    <p class="muted">Для быстрого заполнения заказа: в форме заказа товар добавляется одной кнопкой — с моделью и ценой. Вес одной штуки нужен для расчёта веса посылки.</p>
+    <p class="muted">Для быстрого заполнения заказа: в форме заказа товар добавляется одной кнопкой — с моделью и ценой. Вес одной штуки нужен для расчёта веса посылки.
+      «Состав» — из каких компонентов склада собирается 1 шт: по нему остатки списываются, когда заказ становится «Собран».</p>
     <table class="items-table" id="product-table">
       <thead>
         <tr>
@@ -48,6 +50,7 @@
           <th>Модель</th>
           <th>Цена, ₽</th>
           <th>Вес 1 шт, г</th>
+          <th>Состав</th>
           <th style="width:50px"></th>
         </tr>
       </thead>
@@ -522,6 +525,63 @@ loadBoxes().catch((err) => toast(err.message, 'error'));
 // ---- Каталог товаров ----
 const productBody = document.getElementById('product-body');
 let catalogModels = [];
+let catalogColors = [];
+let catalogConnectors = [];
+let stockComponents = [];
+
+function compositionLabel(list) {
+  return list.length ? `🧩 ${list.length} поз.` : '🧩 Задать';
+}
+
+// Состав товара: компонент склада × количество на 1 шт; цвет/разъём — если строка только для такого варианта.
+function openComposition(row) {
+  const name = row.querySelector('[data-k="name"]').value.trim() || 'товар';
+  const overlay = el(`<div class="modal-overlay"><div class="modal-box acc-modal" style="max-width:760px">
+    <h3>Состав: ${escapeText(name)}</h3>
+    <p class="muted acc-hint">Сколько каждого компонента уходит на 1 шт. Если компонент нужен только для определённого
+      цвета или разъёма (например, пластик нужного цвета) — выберите его, иначе оставьте «любой».</p>
+    <div id="comp-lines"></div>
+    ${stockComponents.length
+      ? '<button type="button" class="secondary small" id="comp-add">+ Компонент</button>'
+      : '<p class="muted">На складе ещё нет компонентов — добавьте их на странице <a href="/warehouse.html">Склад</a>.</p>'}
+    <div class="modal-actions acc-modal-actions">
+      <div class="spacer"></div>
+      <button type="button" class="secondary" data-close>Отмена</button>
+      <button type="button" id="comp-ok">Готово</button>
+    </div>
+  </div></div>`);
+  document.body.appendChild(overlay);
+  const close = () => overlay.remove();
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+  overlay.querySelector('[data-close]').addEventListener('click', close);
+  const linesEl = overlay.querySelector('#comp-lines');
+  const opts = (list, value, key, label, any) => [`<option value="">${any}</option>`, ...list.map((x) =>
+    `<option value="${escapeText(x[key])}" ${String(x[key]) === String(value) ? 'selected' : ''}>${escapeText(x[label])}</option>`)].join('');
+  const addLine = (c = {}) => {
+    const line = el(`<div class="wh-comp-row">
+      <select data-c="component_id">${opts(stockComponents, c.component_id, 'id', 'name', '— компонент —')}</select>
+      <input data-c="qty" type="number" min="0" step="any" placeholder="кол-во" value="${c.qty ?? 1}">
+      <select data-c="color" style="flex:0 1 140px">${opts(catalogColors, c.color, 'letter', 'shortLabel', 'цвет: любой')}</select>
+      <select data-c="connector" style="flex:0 1 140px">${opts(catalogConnectors, c.connector, 'letter', 'label', 'разъём: любой')}</select>
+      <button type="button" class="secondary small" title="Убрать">✕</button>
+    </div>`);
+    line.querySelector('button').addEventListener('click', () => line.remove());
+    linesEl.appendChild(line);
+  };
+  (row._components || []).forEach(addLine);
+  overlay.querySelector('#comp-add')?.addEventListener('click', () => addLine({}));
+  if (!(row._components || []).length && stockComponents.length) addLine({});
+  overlay.querySelector('#comp-ok').addEventListener('click', () => {
+    row._components = [...linesEl.querySelectorAll('.wh-comp-row')].map((line) => {
+      const c = {};
+      for (const input of line.querySelectorAll('[data-c]')) c[input.dataset.c] = input.value;
+      return { component_id: Number(c.component_id), qty: Number(String(c.qty).replace(',', '.')), color: c.color, connector: c.connector };
+    }).filter((c) => c.component_id && c.qty > 0);
+    row.querySelector('.comp-btn').textContent = compositionLabel(row._components);
+    close();
+    toast('Состав изменён — не забудьте «Сохранить товары»', 'info');
+  });
+}
 
 function addProductRow(t = {}) {
   const modelOptions = ['<option value="">—</option>', ...catalogModels.map((m) => `<option value="${m.id}">${escapeText(m.label)}</option>`)].join('');
@@ -531,17 +591,25 @@ function addProductRow(t = {}) {
       <td><select data-k="model_id">${modelOptions}</select></td>
       <td><input data-k="price" type="number" min="0" step="0.01"></td>
       <td><input data-k="weight_g" type="number" min="0" step="1"></td>
+      <td><button type="button" class="secondary small comp-btn" style="white-space:nowrap"></button></td>
       <td><button type="button" class="secondary small remove-item" title="Удалить">✕</button></td>
     </tr>
   `);
   for (const input of row.querySelectorAll('[data-k]')) input.value = t[input.dataset.k] ?? '';
+  row._components = Array.isArray(t.components) ? t.components : [];
+  const compBtn = row.querySelector('.comp-btn');
+  compBtn.textContent = compositionLabel(row._components);
+  compBtn.addEventListener('click', () => openComposition(row));
   row.querySelector('.remove-item').addEventListener('click', () => row.remove());
   productBody.appendChild(row);
 }
 
 async function loadProducts() {
-  const [{ templates }, cat] = await Promise.all([api('/api/catalog/products'), api('/api/catalog')]);
+  const [{ templates, components }, cat] = await Promise.all([api('/api/catalog/products'), api('/api/catalog')]);
   catalogModels = cat.models || [];
+  catalogColors = cat.colors || [];
+  catalogConnectors = cat.connectors || [];
+  stockComponents = components || [];
   productBody.innerHTML = '';
   templates.forEach(addProductRow);
   if (!templates.length) addProductRow();
@@ -553,6 +621,7 @@ document.getElementById('product-save').addEventListener('click', async () => {
   const templates = [...productBody.querySelectorAll('tr')].map((row) => {
     const t = {};
     for (const input of row.querySelectorAll('[data-k]')) t[input.dataset.k] = input.value.trim();
+    t.components = row._components || [];
     return t;
   }).filter((t) => t.name);
   try {

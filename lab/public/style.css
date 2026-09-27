@@ -795,7 +795,7 @@ input.invalid, input.invalid:focus { border-color: var(--danger) !important; box
 .chip.quick-chip:hover { border-color: var(--accent); color: var(--accent); }
 
 /* Каталог товаров в Настройках */
-#product-table tbody tr { grid-template-columns: 2fr repeat(3, minmax(0, 1fr)); }
+#product-table tbody tr { grid-template-columns: 2fr repeat(3, minmax(0, 1fr)) auto; }
 #product-table tbody td { order: 0; grid-column: auto; }
 
 /* ---- Пошаговая форма нового заказа ---- */
@@ -1158,3 +1158,22 @@ a.ov-serial:hover { border-color: var(--accent); color: var(--accent); text-deco
 /* Иконка «Выйти» — SVG, а не символ ⏻: его нет во многих шрифтах (Windows), кнопка выглядела пустой. */
 .logout-btn { display: inline-flex; align-items: center; justify-content: center; padding: 6px 8px; flex-shrink: 0; }
 .logout-btn svg { display: block; }
+
+/* ---- Склад ---- */
+.wh-table { width: 100%; border-collapse: collapse; }
+.wh-table th, .wh-table td { padding: 8px 6px; border-bottom: 1px solid var(--border); font-size: 13px; text-align: left; vertical-align: middle; }
+.wh-table th { color: var(--muted); font-weight: 600; font-size: 12px; }
+.wh-table .num { text-align: right; white-space: nowrap; }
+.wh-table tr.wh-low td:first-child { box-shadow: inset 3px 0 0 var(--danger); }
+.wh-build-row { display: flex; justify-content: space-between; gap: 12px; padding: 7px 0; border-top: 1px solid var(--border); }
+.wh-comp-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 6px; }
+.wh-comp-row select { flex: 1 1 180px; min-width: 0; }
+.wh-comp-row input { width: 90px; }
+@media (max-width: 720px) {
+  .wh-table thead { display: none; }
+  .wh-table tr { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 4px 10px; padding: 8px 0; border-bottom: 1px solid var(--border); }
+  .wh-table td { border: 0; padding: 2px 0; }
+  .wh-table td:first-child, .wh-table td:nth-child(6), .wh-table td:last-child { grid-column: 1 / -1; text-align: left; }
+  .wh-table .num { text-align: left; }
+  .wh-table td[data-label]::before { content: attr(data-label); display: block; font-size: 11px; color: var(--muted); }
+}

@@ -72,6 +72,13 @@ import db, {
   carrierAccounts,
   recordCarrierBalance,
   deleteCarrierBalance,
+  listComponents,
+  productsBuildable,
+  createComponent,
+  updateComponent,
+  deleteComponent,
+  moveComponent,
+  listStockMoves,
 } from './db.js';
 import { parseLedgerText } from './lib/ledger-import.js';
 import { parseSerialsText } from './lib/serials-import.js';
@@ -355,6 +362,15 @@ function cleanProductTemplates(list) {
       model_id: MODELS.some((m) => m.id === t?.model_id) ? t.model_id : '',
       price: Math.max(0, Math.round((Number(t?.price) || 0) * 100) / 100),
       weight_g: Math.max(0, Math.round(Number(t?.weight_g) || 0)),
+      // Состав для учёта на складе: компонент × количество на 1 шт; цвет/разъём — строка только для такого варианта.
+      components: (Array.isArray(t?.components) ? t.components : [])
+        .map((c) => ({
+          component_id: Number(c?.component_id) || 0,
+          qty: Math.round((Number(String(c?.qty ?? '').replace(',', '.')) || 0) * 1000) / 1000,
+          color: COLORS.some((x) => x.letter === c?.color) ? c.color : '',
+          connector: CONNECTORS.some((x) => x.letter === c?.connector) ? c.connector : '',
+        }))
+        .filter((c) => c.component_id && c.qty > 0),
     }))
     .filter((t) => t.name);
 }
@@ -1190,7 +1206,36 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (pathname === '/api/catalog/products' && req.method === 'GET') {
-      return sendJson(res, 200, { templates: readProductTemplates() });
+      return sendJson(res, 200, { templates: readProductTemplates(), components: listComponents() });
+    }
+
+    // ---- Склад ----
+    if (pathname === '/api/stock/components' && req.method === 'GET') {
+      return sendJson(res, 200, { components: listComponents(), products: productsBuildable() });
+    }
+    if (pathname === '/api/stock/components' && req.method === 'POST') {
+      return sendJson(res, 201, createComponent(await readBody(req)));
+    }
+    const componentMatch = pathname.match(/^\/api\/stock\/components\/(\d+)(\/move)?$/);
+    if (componentMatch && componentMatch[2] && req.method === 'POST') {
+      const c = moveComponent(Number(componentMatch[1]), await readBody(req));
+      if (!c) return sendJson(res, 404, { error: 'Компонент не найден' });
+      return sendJson(res, 200, c);
+    }
+    if (componentMatch && !componentMatch[2] && req.method === 'PATCH') {
+      const c = updateComponent(Number(componentMatch[1]), await readBody(req));
+      if (!c) return sendJson(res, 404, { error: 'Компонент не найден' });
+      return sendJson(res, 200, c);
+    }
+    if (componentMatch && !componentMatch[2] && req.method === 'DELETE') {
+      if (!deleteComponent(Number(componentMatch[1]))) return sendJson(res, 404, { error: 'Компонент не найден' });
+      return sendJson(res, 200, { ok: true });
+    }
+    if (pathname === '/api/stock/moves' && req.method === 'GET') {
+      return sendJson(res, 200, listStockMoves({
+        componentId: Number(url.searchParams.get('component_id')) || null,
+        limit: Math.min(500, Number(url.searchParams.get('limit')) || 100),
+      }));
     }
 
     if (pathname === '/api/catalog/products' && req.method === 'PUT') {

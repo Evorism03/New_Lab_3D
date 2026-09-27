@@ -556,6 +556,7 @@ export function createOrder(data) {
   if (number) db.prepare('UPDATE orders SET number = ? WHERE id = ?').run(number, orderId);
   insertItems(orderId, data.items || []);
   syncOrderLedger(orderId);
+  syncOrderStock(orderId);
   return getOrder(orderId);
 }
 
@@ -633,6 +634,7 @@ export function updateOrder(id, data) {
     insertItems(id, data.items);
   }
   syncOrderLedger(id);
+  syncOrderStock(id);
   return getOrder(id);
 }
 
@@ -657,13 +659,17 @@ export function reorderBoardColumn(status, ids) {
     throw err;
   }
   // Отмена заказа убирает его продажу из бухгалтерии (и возвращает при переносе обратно).
-  ids.forEach((id) => syncOrderLedger(id));
+  ids.forEach((id) => {
+    syncOrderLedger(id);
+    syncOrderStock(id);
+  });
 }
 
 export function deleteOrder(id) {
   // Автозапись продажи удаляется вместе с заказом; исправленная вручную — остаётся (order_id станет NULL).
   db.prepare('DELETE FROM ledger WHERE order_id = ? AND locked = 0').run(id);
   db.prepare('DELETE FROM orders WHERE id = ?').run(id);
+  syncOrderStock(id); // списанные по заказу компоненты возвращаются на склад
 }
 
 export function findOrderByExternalId(externalOrderId) {
@@ -1653,6 +1659,223 @@ export function importLedgerRows(rows) {
     throw err;
   }
   return count;
+}
+
+// --- Склад ------------------------------------------------------------------
+// Компоненты (моторы, разъёмы, пластик, коробки…) с остатком. Состав товара задаётся в Настройках → Каталог
+// (templates[].components: [{ component_id, qty, color, connector }] — цвет/разъём пусто = для любого).
+// Когда заказ становится «Собран» (или сразу дальше), компоненты его товаров списываются; вернули заказ
+// назад, отменили или удалили — списанное возвращается. Все изменения остатка пишутся в stock_moves.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS components (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    unit TEXT NOT NULL DEFAULT 'шт',
+    qty REAL NOT NULL DEFAULT 0,
+    min_qty REAL NOT NULL DEFAULT 0,
+    notes TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  );
+  CREATE TABLE IF NOT EXISTS stock_moves (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    component_id INTEGER NOT NULL REFERENCES components(id) ON DELETE CASCADE,
+    delta REAL NOT NULL,
+    kind TEXT NOT NULL,
+    note TEXT NOT NULL DEFAULT '',
+    order_id INTEGER,
+    at TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_stock_moves_component ON stock_moves(component_id, at);
+  CREATE INDEX IF NOT EXISTS idx_stock_moves_order ON stock_moves(order_id);
+`);
+
+// Статусы, в которых товар уже собран — его компоненты считаются израсходованными.
+const STOCK_CONSUMED_STATUSES = ['collected', 'shipped', 'delivered'];
+// Заказы, под которые компоненты понадобятся (ещё не собраны): «нужно под заказы» на странице склада.
+const STOCK_PENDING_STATUSES = ['new', 'printing', 'to_collect'];
+
+// Склад включён с этого момента: заказы, собранные раньше, задним числом не списываются.
+if (!getSetting('stock_since')) setSetting('stock_since', new Date().toISOString());
+
+function collectedSinceStock(orderId) {
+  const since = getSetting('stock_since');
+  return !!db
+    .prepare(`SELECT 1 FROM order_status_log WHERE order_id = ? AND at >= ? AND status IN (${STOCK_CONSUMED_STATUSES.map(() => '?').join(',')}) LIMIT 1`)
+    .get(orderId, since, ...STOCK_CONSUMED_STATUSES);
+}
+
+const roundQty = (n) => Math.round((Number(n) || 0) * 1000) / 1000;
+
+function productTemplates() {
+  try {
+    const list = JSON.parse(getSetting('product_templates') || '[]');
+    return Array.isArray(list) ? list : [];
+  } catch {
+    return [];
+  }
+}
+
+// Сколько каждого компонента уходит на товары заказа: Map(component_id → количество).
+function orderComponentNeeds(items, templates = productTemplates()) {
+  const byName = new Map(templates.map((t) => [String(t.name || '').trim().toLowerCase(), t]));
+  const needs = new Map();
+  for (const it of items) {
+    if (it.item_kind === 'print') continue;
+    const t = byName.get(String(it.product_name || '').trim().toLowerCase());
+    if (!t || !Array.isArray(t.components)) continue;
+    const qty = Number(it.quantity) || 0;
+    for (const c of t.components) {
+      if (c.color && c.color !== it.color) continue;
+      if (c.connector && c.connector !== it.connector) continue;
+      const id = Number(c.component_id);
+      needs.set(id, roundQty((needs.get(id) || 0) + (Number(c.qty) || 0) * qty));
+    }
+  }
+  return needs;
+}
+
+function addStockMove(componentId, delta, kind, note, orderId, now) {
+  if (!delta) return;
+  const res = db.prepare('UPDATE components SET qty = ROUND(qty + ?, 3), updated_at = ? WHERE id = ?').run(delta, now, componentId);
+  if (!res.changes) return; // компонент удалили — двигать нечего
+  db.prepare('INSERT INTO stock_moves (component_id, delta, kind, note, order_id, at) VALUES (?, ?, ?, ?, ?, ?)')
+    .run(componentId, roundQty(delta), kind, note, orderId ?? null, now);
+}
+
+// Что сейчас списано по заказу (с учётом возвратов): Map(component_id → количество).
+function orderWrittenOff(orderId) {
+  const rows = db
+    .prepare("SELECT component_id, -SUM(delta) AS qty FROM stock_moves WHERE order_id = ? AND kind = 'order' GROUP BY component_id")
+    .all(orderId);
+  return new Map(rows.filter((r) => roundQty(r.qty) !== 0).map((r) => [r.component_id, roundQty(r.qty)]));
+}
+
+// Привести списание по заказу в соответствие со статусом. Уже списанное не пересчитывается, если потом
+// поменяли состав товара или позиции собранного заказа — меняется только при переходе собран/не собран.
+export function syncOrderStock(orderId) {
+  const order = db.prepare('SELECT id, number, status FROM orders WHERE id = ?').get(orderId);
+  const written = orderWrittenOff(orderId);
+  const consumed = order && STOCK_CONSUMED_STATUSES.includes(order.status);
+  const label = order ? `заказ #${order.number || order.id}` : `заказ #${orderId}`;
+  const now = new Date().toISOString();
+  if (consumed && !written.size && collectedSinceStock(orderId)) {
+    const needs = orderComponentNeeds(itemsForOrder(orderId));
+    for (const [id, qty] of needs) addStockMove(id, -qty, 'order', `Списание: ${label} собран`, orderId, now);
+  } else if (!consumed && written.size) {
+    const why = !order ? 'удалён' : order.status === 'cancelled' ? 'отменён' : 'возвращён в работу';
+    for (const [id, qty] of written) addStockMove(id, qty, 'order', `Возврат: ${label} ${why}`, orderId, now);
+  }
+}
+
+function cleanComponentInput(data, existing = {}) {
+  const pick = (k) => (data[k] !== undefined ? data[k] : existing[k]);
+  const name = String(pick('name') || '').trim().slice(0, 120);
+  if (!name) throw httpError(400, 'Укажите название компонента');
+  const minQty = roundQty(String(pick('min_qty') ?? 0).replace(',', '.'));
+  if (minQty < 0) throw httpError(400, 'Минимальный остаток не может быть отрицательным');
+  return {
+    name,
+    unit: String(pick('unit') || 'шт').trim().slice(0, 12) || 'шт',
+    min_qty: minQty,
+    notes: String(pick('notes') || '').trim().slice(0, 300),
+  };
+}
+
+// Список компонентов с остатком, потребностью под несобранные заказы и тем, в каких товарах они участвуют.
+export function listComponents() {
+  const templates = productTemplates();
+  const pendingOrders = db
+    .prepare(`SELECT id FROM orders WHERE status IN (${STOCK_PENDING_STATUSES.map(() => '?').join(',')})`)
+    .all(...STOCK_PENDING_STATUSES);
+  const needed = new Map();
+  for (const o of pendingOrders) {
+    for (const [id, qty] of orderComponentNeeds(itemsForOrder(o.id), templates)) needed.set(id, (needed.get(id) || 0) + qty);
+  }
+  return db.prepare('SELECT * FROM components ORDER BY name COLLATE NOCASE').all().map((c) => {
+    const need = roundQty(needed.get(c.id) || 0);
+    return {
+      ...c,
+      needed: need,
+      free: roundQty(c.qty - need),
+      low: c.qty <= c.min_qty || c.qty - need < 0,
+      products: templates
+        .filter((t) => (t.components || []).some((x) => Number(x.component_id) === c.id))
+        .map((t) => t.name),
+    };
+  });
+}
+
+// Сколько штук каждого товара можно собрать из текущих остатков (по строкам состава без условий цвета/разъёма).
+export function productsBuildable() {
+  const stock = new Map(db.prepare('SELECT id, qty FROM components').all().map((c) => [c.id, c.qty]));
+  return productTemplates()
+    .filter((t) => Array.isArray(t.components) && t.components.length)
+    .map((t) => {
+      const lines = t.components.filter((c) => !c.color && !c.connector && Number(c.qty) > 0);
+      const counts = lines.map((c) => Math.floor(Math.max(0, stock.get(Number(c.component_id)) ?? 0) / Number(c.qty)));
+      return { name: t.name, buildable: counts.length ? Math.min(...counts) : null, lines: t.components.length };
+    });
+}
+
+export function createComponent(data) {
+  const c = cleanComponentInput(data);
+  const now = new Date().toISOString();
+  const info = db
+    .prepare('INSERT INTO components (name, unit, qty, min_qty, notes, created_at, updated_at) VALUES (?, ?, 0, ?, ?, ?, ?)')
+    .run(c.name, c.unit, c.min_qty, c.notes, now, now);
+  const qty = roundQty(String(data.qty ?? 0).replace(',', '.'));
+  if (qty) addStockMove(info.lastInsertRowid, qty, 'in', 'Начальный остаток', null, now);
+  return db.prepare('SELECT * FROM components WHERE id = ?').get(info.lastInsertRowid);
+}
+
+export function updateComponent(id, data) {
+  const existing = db.prepare('SELECT * FROM components WHERE id = ?').get(id);
+  if (!existing) return null;
+  const c = cleanComponentInput(data, existing);
+  db.prepare('UPDATE components SET name = ?, unit = ?, min_qty = ?, notes = ?, updated_at = ? WHERE id = ?')
+    .run(c.name, c.unit, c.min_qty, c.notes, new Date().toISOString(), id);
+  return db.prepare('SELECT * FROM components WHERE id = ?').get(id);
+}
+
+// Удаляется вместе с историей; из состава товаров убирается.
+export function deleteComponent(id) {
+  const res = db.prepare('DELETE FROM components WHERE id = ?').run(id);
+  if (!res.changes) return false;
+  const templates = productTemplates().map((t) => ({
+    ...t,
+    components: (t.components || []).filter((c) => Number(c.component_id) !== Number(id)),
+  }));
+  setSetting('product_templates', JSON.stringify(templates));
+  return true;
+}
+
+// Приход (+), расход (−) или инвентаризация (set — выставить фактический остаток).
+export function moveComponent(id, { delta, set, note } = {}) {
+  const existing = db.prepare('SELECT * FROM components WHERE id = ?').get(id);
+  if (!existing) return null;
+  const now = new Date().toISOString();
+  const text = String(note || '').trim().slice(0, 200);
+  if (set !== undefined && set !== null && set !== '') {
+    const target = roundQty(String(set).replace(',', '.'));
+    if (!(target >= 0)) throw httpError(400, 'Остаток — число от 0');
+    addStockMove(id, roundQty(target - existing.qty), 'count', text || 'Инвентаризация', null, now);
+  } else {
+    const d = roundQty(String(delta ?? '').replace(',', '.'));
+    if (!d) throw httpError(400, 'Укажите количество');
+    addStockMove(id, d, d > 0 ? 'in' : 'out', text || (d > 0 ? 'Приход' : 'Расход'), null, now);
+  }
+  return db.prepare('SELECT * FROM components WHERE id = ?').get(id);
+}
+
+export function listStockMoves({ componentId, limit = 100 } = {}) {
+  return db
+    .prepare(
+      `SELECT m.*, c.name AS component_name, c.unit, COALESCE(NULLIF(o.number, ''), CAST(o.id AS TEXT)) AS order_number
+       FROM stock_moves m JOIN components c ON c.id = m.component_id LEFT JOIN orders o ON o.id = m.order_id
+       ${componentId ? 'WHERE m.component_id = ?' : ''} ORDER BY m.at DESC, m.id DESC LIMIT ?`
+    )
+    .all(...(componentId ? [componentId, limit] : [limit]));
 }
 
 export default db;
