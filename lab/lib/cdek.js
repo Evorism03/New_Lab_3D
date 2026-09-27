@@ -2,7 +2,7 @@
 // Авторизация — OAuth client_credentials: «Account» и «Secure password» из личного кабинета СДЭК
 // (Интеграция → API). Тестовый контур — api.edu.cdek.ru, боевой — api.cdek.ru.
 // Единицы: вес в граммах, габариты в сантиметрах, суммы в рублях.
-import { getSetting } from '../db.js';
+import { getSetting, setSetting } from '../db.js';
 import { addressQuery, addressWords, rankByAddress } from './address-match.js';
 
 const PROD_BASE = 'https://api.cdek.ru/v2';
@@ -91,16 +91,51 @@ async function authorizedFetch(url, init = {}) {
   return res;
 }
 
+// Журнал запросов по заказам и этикеткам (не справочники ПВЗ/городов): последние 30 — в Настройках → СДЭК,
+// чтобы видеть точный ответ СДЭК, а не только то, как его поняла CRM. Ключи/токен сюда не попадают.
+const LOG_KEY = 'cdek_request_log';
+const LOG_SIZE = 30;
+const cut = (value, max) => {
+  const text = typeof value === 'string' ? value : JSON.stringify(value);
+  return text && text.length > max ? `${text.slice(0, max)}…` : text || '';
+};
+
+function logRequest(entry) {
+  if (!/^\/(orders|print)/.test(entry.path)) return;
+  try {
+    const log = JSON.parse(getSetting(LOG_KEY) || '[]');
+    log.unshift({ at: new Date().toISOString(), test: getSetting('cdek_test_mode') === '1', ...entry });
+    setSetting(LOG_KEY, JSON.stringify(log.slice(0, LOG_SIZE)));
+  } catch {
+    // журнал — вспомогательный, его сбой не должен ломать запрос
+  }
+}
+
+export function requestLog() {
+  try {
+    return JSON.parse(getSetting(LOG_KEY) || '[]');
+  } catch {
+    return [];
+  }
+}
+
 export async function cdekRequest(method, pathname, { query, body } = {}) {
   const { base } = config();
   const url = new URL(`${base}${pathname}`);
   for (const [k, v] of Object.entries(query || {})) if (v != null && v !== '') url.searchParams.set(k, v);
-  const res = await authorizedFetch(url, {
-    method,
-    headers: body ? { 'Content-Type': 'application/json' } : {},
-    body: body ? JSON.stringify(body) : undefined,
-  });
+  let res;
+  try {
+    res = await authorizedFetch(url, {
+      method,
+      headers: body ? { 'Content-Type': 'application/json' } : {},
+      body: body ? JSON.stringify(body) : undefined,
+    });
+  } catch (err) {
+    logRequest({ method, path: pathname, status: 0, request: cut(body, 4000), response: `Нет ответа: ${err.message}` });
+    throw err;
+  }
   const text = await res.text();
+  logRequest({ method, path: pathname, status: res.status, request: cut(body, 4000), response: cut(text, 4000) });
   let data = {};
   try {
     data = text ? JSON.parse(text) : {};

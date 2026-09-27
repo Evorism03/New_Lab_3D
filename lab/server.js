@@ -1473,6 +1473,10 @@ const server = http.createServer(async (req, res) => {
     }
 
     // ---- СДЭК ----
+    if (pathname === '/api/cdek/log' && req.method === 'GET') {
+      return sendJson(res, 200, { entries: cdek.requestLog() });
+    }
+
     if (pathname === '/api/cdek/settings' && req.method === 'GET') {
       let shipmentPoint = null;
       try {
