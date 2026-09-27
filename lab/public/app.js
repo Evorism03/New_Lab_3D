@@ -151,6 +151,72 @@ function tagBadge(order) {
   return `<span class="tag tag-${order.source_tag || 'crm'}" title="Откуда заказ">${escapeHtml(order.source_label || 'CRM')}</span>`;
 }
 
+// ---- Дата создания и дедлайн отправки ----
+// Сервер отдаёт у заказа created_at, shipped_at (когда ушёл в «Отправлен»), ship_deadline_at и ship_warn_at
+// (срок и момент «пора поторопиться», настраиваются в Настройки → Дедлайн). Плашка пересчитывается раз в минуту.
+
+function ruDateTimeShort(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  return `${d.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit' })} ${d.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}`;
+}
+
+// 90061000 мс → «1д 1ч», 3900000 → «1ч 5мин», 300000 → «5мин».
+function formatDuration(ms) {
+  const minutes = Math.max(0, Math.floor(ms / 60000));
+  const d = Math.floor(minutes / 1440);
+  const h = Math.floor((minutes % 1440) / 60);
+  const m = minutes % 60;
+  if (d) return h ? `${d}д ${h}ч` : `${d}д`;
+  if (h) return m ? `${h}ч ${m}мин` : `${h}ч`;
+  return `${m}мин`;
+}
+
+function deadlineInfo(o, now = Date.now()) {
+  if (!o.created_at || o.status === 'cancelled') return null;
+  const created = new Date(o.created_at).getTime();
+  const deadline = o.ship_deadline_at ? new Date(o.ship_deadline_at).getTime() : null;
+  const warn = o.ship_warn_at ? new Date(o.ship_warn_at).getTime() : null;
+  if (o.shipped_at) {
+    const shipped = new Date(o.shipped_at).getTime();
+    const late = deadline != null && shipped > deadline;
+    return {
+      state: late ? 'late' : 'done',
+      text: `✈ отправлен за ${formatDuration(shipped - created)}${late ? ` (+${formatDuration(shipped - deadline)})` : ''}`,
+      title: `Создан ${ruDateTimeShort(o.created_at)}, отправлен ${ruDateTimeShort(o.shipped_at)}${deadline != null ? `, срок был ${ruDateTimeShort(o.ship_deadline_at)}` : ''}`,
+    };
+  }
+  const age = formatDuration(now - created);
+  const base = `Создан ${ruDateTimeShort(o.created_at)}, висит ${age}`;
+  if (deadline == null) return { state: 'none', text: `⏱ ${age}`, title: base };
+  const title = `${base}. Отправить до ${ruDateTimeShort(o.ship_deadline_at)}`;
+  if (now > deadline) return { state: 'overdue', text: `🔥 ${age} · просрочен на ${formatDuration(now - deadline)}`, title };
+  const state = warn != null && now >= warn ? 'warn' : 'ok';
+  return { state, text: `${state === 'warn' ? '⏳' : '⏱'} ${age} · осталось ${formatDuration(deadline - now)}`, title };
+}
+
+const DEADLINE_FIELDS = ['created_at', 'shipped_at', 'ship_deadline_at', 'ship_warn_at', 'status'];
+
+function deadlineChip(o) {
+  const info = deadlineInfo(o);
+  if (!info) return '';
+  const data = DEADLINE_FIELDS.map((k) => (o[k] ? ` data-${k.replace(/_/g, '-')}="${escapeHtml(o[k])}"` : '')).join('');
+  return `<span class="chip deadline-chip deadline-${info.state}" title="${escapeHtml(info.title)}"${data}>${escapeHtml(info.text)}</span>`;
+}
+
+function tickDeadlines() {
+  for (const chip of document.querySelectorAll('.deadline-chip')) {
+    const o = {};
+    for (const k of DEADLINE_FIELDS) o[k] = chip.getAttribute(`data-${k.replace(/_/g, '-')}`) || null;
+    const info = deadlineInfo(o);
+    if (!info) continue;
+    chip.className = `chip deadline-chip deadline-${info.state}`;
+    chip.textContent = info.text;
+    chip.title = info.title;
+  }
+}
+setInterval(tickDeadlines, 60000);
+
 // Подписи ячеек для «карточного» вида таблиц на узких экранах: data-label = заголовок колонки.
 // Строки добавляются динамически, поэтому следим за изменениями DOM.
 function labelTableCells() {

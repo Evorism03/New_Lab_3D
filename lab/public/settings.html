@@ -29,6 +29,7 @@
 <main>
   <div class="settings-tabs" role="tablist">
     <button type="button" data-tab="catalog" class="active">📦 Каталог</button>
+    <button type="button" data-tab="deadline">⏱ Дедлайн</button>
     <button type="button" data-tab="ozon">🚚 Ozon Доставка</button>
     <button type="button" data-tab="cdek">🟢 СДЭК</button>
     <button type="button" data-tab="npd">🧾 Мой налог</button>
@@ -79,6 +80,23 @@
     </div>
   </div>
 
+  </section>
+
+  <section data-panel="deadline" hidden>
+  <div class="card">
+    <h2>Дедлайн отправки</h2>
+    <p class="muted">Сколько времени есть с момента создания заказа до переноса в «Отправлен». На доске, в списке и в заказе
+      видно, сколько заказ уже висит и сколько осталось; просроченные подсвечиваются красным. 0 — без дедлайна (только счётчик времени).</p>
+    <div class="grid-3" style="max-width:720px">
+      <div class="field"><label>Заказы из CRM, часов</label><input id="deadline-crm" type="number" min="0" step="1"></div>
+      <div class="field"><label>Заказы с сайта (с печатью), часов</label><input id="deadline-site" type="number" min="0" step="1"></div>
+      <div class="field"><label>Предупреждать за, часов</label><input id="deadline-warn" type="number" min="0" step="1"></div>
+    </div>
+    <p class="muted" id="deadline-hint"></p>
+    <div class="toolbar" style="margin-top:10px">
+      <button type="button" id="deadline-save">Сохранить</button>
+    </div>
+  </div>
   </section>
 
   <section data-panel="ozon" hidden>
@@ -282,7 +300,7 @@
 </div>
 <script src="/app.js"></script>
 <script>
-// Вкладки настроек; активная запоминается в адресе (#catalog, #ozon, #cdek, #npd, #users).
+// Вкладки настроек; активная запоминается в адресе (#catalog, #deadline, #ozon, #cdek, #npd, #users).
 function showTab(name) {
   const btn = document.querySelector(`.settings-tabs [data-tab="${name}"]`);
   if (!btn || btn.hidden) name = 'catalog';
@@ -294,6 +312,38 @@ document.querySelectorAll('.settings-tabs [data-tab]').forEach((b) => b.addEvent
   showTab(b.dataset.tab);
 }));
 showTab(location.hash.slice(1) || 'catalog');
+
+// ---- Дедлайн отправки ----
+const deadlineInputs = { crm_hours: 'deadline-crm', site_hours: 'deadline-site', warn_hours: 'deadline-warn' };
+
+function renderDeadlineHint() {
+  const h = (id) => Number(document.getElementById(id).value) || 0;
+  const fmt = (hours) => (hours ? formatDuration(hours * 3600e3) : 'без срока');
+  document.getElementById('deadline-hint').textContent =
+    `CRM: ${fmt(h('deadline-crm'))} · сайт: ${fmt(h('deadline-site'))} · жёлтым — за ${fmt(h('deadline-warn'))} до срока`;
+}
+
+async function loadDeadline() {
+  const d = await api('/api/settings/deadline');
+  for (const [k, id] of Object.entries(deadlineInputs)) document.getElementById(id).value = d[k];
+  renderDeadlineHint();
+}
+
+Object.values(deadlineInputs).forEach((id) => document.getElementById(id).addEventListener('input', renderDeadlineHint));
+
+document.getElementById('deadline-save').addEventListener('click', async () => {
+  const body = {};
+  for (const [k, id] of Object.entries(deadlineInputs)) body[k] = document.getElementById(id).value.trim() || '0';
+  try {
+    await api('/api/settings/deadline', { method: 'PUT', body: JSON.stringify(body) });
+    toast('Дедлайн сохранён', 'success');
+    loadDeadline();
+  } catch (err) {
+    toast(err.message, 'error');
+  }
+});
+
+loadDeadline().catch((err) => toast(err.message, 'error'));
 
 // ---- Ozon Доставка ----
 let settings = {};

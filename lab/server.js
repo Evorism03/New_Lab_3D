@@ -30,6 +30,8 @@ import db, {
   getReceipt,
   deleteReceipt,
   getSetting,
+  getDeadlineSettings,
+  setDeadlineSettings,
   setSetting,
   setOrderOzonParams,
   setOrderOzonDeliveryPoint,
@@ -849,6 +851,14 @@ const server = http.createServer(async (req, res) => {
         boxes: readBoxTemplates(),
         delivery_services: DELIVERY_SERVICES,
       });
+    }
+
+    if (pathname === '/api/settings/deadline' && req.method === 'GET') {
+      return sendJson(res, 200, getDeadlineSettings());
+    }
+
+    if (pathname === '/api/settings/deadline' && req.method === 'PUT') {
+      return sendJson(res, 200, setDeadlineSettings(await readBody(req)));
     }
 
     if (pathname === '/api/serial' && req.method === 'POST') {

@@ -660,6 +660,15 @@ table.orders-table td.nowrap, table.orders-table th.nowrap, table.orders-table t
   white-space: nowrap;
 }
 .chip .dot { width: 8px; height: 8px; margin-right: 4px; }
+.deadline-chip { font-weight: 600; }
+.deadline-ok { color: var(--accent-2); }
+.deadline-none, .deadline-done { color: var(--muted); }
+.deadline-warn { color: var(--warn); background: rgba(240, 168, 64, 0.12); border-color: rgba(240, 168, 64, 0.45); }
+.deadline-overdue, .deadline-late { color: var(--danger); background: rgba(239, 90, 111, 0.12); border-color: rgba(239, 90, 111, 0.45); }
+.order-card .deadline-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 4px 0; font-size: 12px; color: var(--muted); }
+.order-card .deadline-chip { padding: 2px 8px; font-size: 11px; white-space: normal; max-width: 100%; border-radius: 8px; }
+.order-card:has(.deadline-overdue) { border-left: 3px solid var(--danger); }
+.order-card:has(.deadline-warn) { border-left: 3px solid var(--warn); }
 .chip-qty { background: rgba(91, 140, 255, 0.15); border-color: rgba(91, 140, 255, 0.4); font-weight: 700; }
 .serial {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;

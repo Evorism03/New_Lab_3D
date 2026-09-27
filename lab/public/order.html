@@ -1086,7 +1086,7 @@ function renderView(order) {
           <span class="ov-number">#${escapeHtml(order.display_number)}</span>
           ${tagBadge(order)} ${statusPill(order.status, statuses)} ${paid}
         </div>
-        <div class="muted ov-sub">Создан ${ruDateTime(order.created_at)}${order.customer_email ? ` · ${escapeHtml(order.customer_email)}` : ''}</div>
+        <div class="muted ov-sub">Создан ${ruDateTimeShort(order.created_at)}${order.customer_email ? ` · ${escapeHtml(order.customer_email)}` : ''} ${deadlineChip(order)}</div>
       </div>
       <div class="ov-head-side">
         <div class="ov-total">${money(order.grand_total)}</div>

@@ -67,7 +67,6 @@ function render(orders) {
   document.getElementById('empty').style.display = orders.length ? 'none' : 'block';
   for (const o of orders) {
     const itemsSummary = summarizeItems(o.items) || '—';
-    const date = new Date(o.created_at).toLocaleDateString('ru-RU');
     const row = el(`
       <div class="list-card clickable">
         <div class="lc-main">
@@ -80,7 +79,8 @@ function render(orders) {
           </div>
           <div class="lc-sub">
             <span>${escapeHtml(o.phone || '')}</span>
-            <span>${date}</span>
+            <span title="Дата создания">🗓 ${ruDateTimeShort(o.created_at)}</span>
+            ${deadlineChip(o)}
           </div>
           <div class="lc-line">${deliveryDot(o.delivery_service, catalog.delivery_services)}<strong>${escapeHtml(o.delivery_service || '—')}</strong>
             <span class="muted">${escapeHtml(o.pvz_address || '')}</span></div>

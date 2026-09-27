@@ -222,6 +222,7 @@ function render(orders) {
           <div class="name">#${escapeHtml(o.display_number)} ${tagBadge(o)} ${o.full_name || 'Без имени'}${o.receipts_count ? ` <span title="Файлов прикреплено: ${o.receipts_count}">📎${o.receipts_count}</span>` : ''}</div>
           <div class="meta">${deliveryDot(o.delivery_service, catalog.delivery_services)}${o.delivery_service || ''} · ${o.pvz_address || ''}</div>
           <div class="meta">${itemsSummary}</div>
+          <div class="deadline-row"><span title="Дата создания">🗓 ${ruDateTimeShort(o.created_at)}</span>${deadlineChip(o)}</div>
           ${filesLine(o)}
           <div class="total">${money(o.grand_total)}</div>
           <select class="card-move" aria-label="Переместить заказ"><option value="">⇄ Переместить в…</option>${moveOptions(o)}</select>

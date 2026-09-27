@@ -167,6 +167,8 @@ for (const stmt of [
   'ALTER TABLE ledger ADD COLUMN warranty_days INTEGER',
   // Пополнение какого счёта: 'ozon' | 'cdek' | '' (не указано).
   "ALTER TABLE delivery_topups ADD COLUMN carrier TEXT NOT NULL DEFAULT ''",
+  // Когда заказ ушёл в «Отправлен»/«Доставлен» — останавливает счётчик дедлайна отправки.
+  'ALTER TABLE orders ADD COLUMN shipped_at TEXT',
 ]) {
   try {
     db.exec(stmt);
@@ -179,6 +181,11 @@ for (const stmt of [
 // NULL допускает сколько угодно "обычных" заказов без external_order_id.
 db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_orders_external_order_id ON orders(external_order_id)');
 
+// Старые отправленные заказы: момент отправки неизвестен — берём время последнего изменения.
+db.exec(
+  "UPDATE orders SET shipped_at = updated_at WHERE shipped_at IS NULL AND status IN ('shipped', 'delivered')"
+);
+
 // Общее key/value хранилище настроек (токены/ID внешних интеграций и т.п.) — не в git, в data/orders.db.
 export function getSetting(key) {
   return db.prepare('SELECT value FROM settings WHERE key = ?').get(key)?.value ?? '';
@@ -190,6 +197,60 @@ export function setSetting(key, value) {
     value,
     value
   );
+}
+
+// Дедлайн отправки: сколько часов с создания заказа до «Отправлен». Для заказов с сайта — отдельно
+// (там ещё печать). warn_hours — за сколько часов до срока карточка становится жёлтой.
+const DEADLINE_DEFAULTS = { crm_hours: 48, site_hours: 120, warn_hours: 12 };
+
+export function getDeadlineSettings() {
+  let saved = {};
+  try {
+    saved = JSON.parse(getSetting('ship_deadline') || '{}');
+  } catch {
+    // битое значение — берём значения по умолчанию
+  }
+  const out = {};
+  for (const [key, def] of Object.entries(DEADLINE_DEFAULTS)) {
+    const n = Number(saved[key]);
+    out[key] = Number.isFinite(n) && n >= 0 ? n : def;
+  }
+  return out;
+}
+
+export function setDeadlineSettings(data) {
+  const current = getDeadlineSettings();
+  for (const key of Object.keys(DEADLINE_DEFAULTS)) {
+    if (data[key] == null || data[key] === '') continue;
+    const n = Number(String(data[key]).replace(',', '.'));
+    if (!Number.isFinite(n) || n < 0 || n > 24 * 365) throw httpError(400, 'Срок — число часов от 0 до 8760');
+    current[key] = Math.round(n * 10) / 10;
+  }
+  setSetting('ship_deadline', JSON.stringify(current));
+  return current;
+}
+
+const SHIPPED_STATUSES = ['shipped', 'delivered'];
+
+// Переход между статусами: в «Отправлен»/«Доставлен» — фиксируем момент отправки (если ещё не был),
+// обратно в работу — сбрасываем, счётчик снова идёт. «Отменён» дату не трогает.
+function syncShippedAt(id, status, now) {
+  if (SHIPPED_STATUSES.includes(status)) {
+    db.prepare('UPDATE orders SET shipped_at = ? WHERE id = ? AND shipped_at IS NULL').run(now, id);
+  } else if (status !== 'cancelled') {
+    db.prepare('UPDATE orders SET shipped_at = NULL WHERE id = ?').run(id);
+  }
+}
+
+function shipDeadline(order, settings) {
+  const hours = order.source === SITE_SOURCE ? settings.site_hours : settings.crm_hours;
+  if (!hours) return { ship_deadline_at: null, ship_warn_at: null };
+  const deadline = new Date(order.created_at).getTime() + hours * 3600e3;
+  return {
+    ship_deadline_hours: hours,
+    ship_deadline_at: new Date(deadline).toISOString(),
+    ship_warn_at: new Date(deadline - Math.min(settings.warn_hours, hours) * 3600e3).toISOString(),
+  };
 }
 
 export const STATUSES = [
@@ -328,7 +389,7 @@ function parseOzonShipment(raw) {
   }
 }
 
-function withTotals(order) {
+function withTotals(order, deadlineSettings = getDeadlineSettings()) {
   const items = itemsForOrder(order.id);
   const goodsTotal = items.reduce((sum, it) => sum + it.price * it.quantity, 0);
   const receiptsCount = db.prepare('SELECT COUNT(*) as c FROM receipts WHERE order_id = ?').get(order.id).c;
@@ -345,13 +406,15 @@ function withTotals(order) {
     ozon_shipment: parseOzonShipment(order.ozon_shipment),
     cdek_shipment: parseOzonShipment(order.cdek_shipment),
     npd_receipt: parseOzonShipment(order.npd_receipt),
+    ...shipDeadline(order, deadlineSettings),
   };
 }
 
 export function listOrders({ status, q } = {}) {
   let rows = db.prepare('SELECT * FROM orders ORDER BY id DESC').all();
   if (status) rows = rows.filter((o) => o.status === status);
-  let orders = rows.map(withTotals);
+  const deadlineSettings = getDeadlineSettings();
+  let orders = rows.map((o) => withTotals(o, deadlineSettings));
   if (q) {
     const needle = q.toLowerCase();
     orders = orders.filter((o) => {
@@ -454,6 +517,7 @@ export function createOrder(data) {
       data.shipping_address || ''
     );
   const orderId = info.lastInsertRowid;
+  syncShippedAt(orderId, data.status || 'new', now);
   if (number) db.prepare('UPDATE orders SET number = ? WHERE id = ?').run(number, orderId);
   insertItems(orderId, data.items || []);
   syncOrderLedger(orderId);
@@ -526,6 +590,7 @@ export function updateOrder(id, data) {
   // Заказ ушёл в другую колонку — встаёт наверх новой колонки, пока его не передвинут вручную.
   if (data.status && data.status !== existing.status) {
     db.prepare('UPDATE orders SET board_position = NULL WHERE id = ?').run(id);
+    syncShippedAt(id, data.status, now);
   }
   if (data.items) {
     db.prepare('DELETE FROM items WHERE order_id = ?').run(id);
@@ -544,7 +609,7 @@ export function reorderBoardColumn(status, ids) {
   db.exec('BEGIN');
   try {
     ids.forEach((id, index) => {
-      setStatus.run(status, now, id, status);
+      if (setStatus.run(status, now, id, status).changes) syncShippedAt(id, status, now);
       setPos.run(index, id);
     });
     db.exec('COMMIT');
