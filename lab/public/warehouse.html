@@ -45,6 +45,7 @@
       Вернули заказ назад, отменили или удалили — списанное возвращается. «Нужно» — сколько уйдёт на заказы,
       которые ещё не собраны («Новый заказ», «Печать», «Собрать»).
     </p>
+    <div id="unmatched"></div>
     <table class="wh-table">
       <thead>
         <tr>
@@ -52,6 +53,7 @@
           <th class="num">В наличии</th>
           <th class="num">Нужно</th>
           <th class="num">Свободно</th>
+          <th>Хватает?</th>
           <th class="num">Мин.</th>
           <th>В товарах</th>
           <th style="width:190px"></th>
@@ -94,11 +96,12 @@ function modal(html) {
 }
 
 async function load() {
-  const [{ components: list, products }, moves] = await Promise.all([
+  const [{ components: list, products, demand }, moves] = await Promise.all([
     api('/api/stock/components'),
     api('/api/stock/moves?limit=100'),
   ]);
   components = list;
+  renderUnmatched(demand.unmatched);
   render();
   renderBuildable(products);
   renderMoves(moves);
@@ -122,6 +125,9 @@ function render() {
         <td class="num" data-label="В наличии"><b class="${c.qty < 0 ? 'neg' : ''}">${fmtQty(c.qty)}</b> <span class="muted">${escapeHtml(c.unit)}</span></td>
         <td class="num" data-label="Нужно">${c.needed ? fmtQty(c.needed) : '<span class="muted">—</span>'}</td>
         <td data-label="Свободно" class="num ${c.free < 0 ? 'neg' : ''}">${fmtQty(c.free)}</td>
+        <td data-label="Хватает?">${!c.needed ? '<span class="muted">—</span>'
+          : c.free >= 0 ? '<span class="pos">✓ хватает</span>'
+          : `<b class="neg">не хватает ${fmtQty(-c.free)} ${escapeHtml(c.unit)}</b>`}</td>
         <td class="num muted" data-label="Мин.">${c.min_qty ? fmtQty(c.min_qty) : '—'}</td>
         <td class="muted" style="font-size:12px">${c.products.length ? c.products.map(escapeHtml).join(', ') : '—'}</td>
         <td style="white-space:nowrap;text-align:right">
@@ -137,6 +143,15 @@ function render() {
     }));
     tbody.appendChild(row);
   }
+}
+
+// Товары из несобранных заказов, у которых не задан состав, — их потребность не посчитана.
+function renderUnmatched(list) {
+  document.getElementById('unmatched').innerHTML = list.length
+    ? `<div class="wh-warn">⚠️ Не посчитаны — у товара не задан состав (Настройки → Каталог → 🧩):
+        ${list.map((u) => `<b>${escapeHtml(u.product_name)}</b> × ${fmtQty(u.qty)}`).join(', ')}.
+        Если такого товара нет в каталоге — добавьте его с тем же названием, что в заказе.</div>`
+    : '';
 }
 
 function renderBuildable(products) {

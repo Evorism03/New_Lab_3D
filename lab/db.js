@@ -1665,7 +1665,7 @@ export function importLedgerRows(rows) {
 // Компоненты (моторы, разъёмы, пластик, коробки…) с остатком. Состав товара задаётся в Настройках → Каталог
 // (templates[].components: [{ component_id, qty, color, connector }] — цвет/разъём пусто = для любого).
 // Когда заказ становится «Собран» (или сразу дальше), компоненты его товаров списываются; вернули заказ
-// назад, отменили или удалили — списанное возвращается. Все изменения остатка пишутся в stock_moves.
+// назад, отменили или удалили — списанное возвращается. До этого они в «Нужно» — потребность под заказы. Все изменения остатка пишутся в stock_moves.
 db.exec(`
   CREATE TABLE IF NOT EXISTS components (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1692,17 +1692,15 @@ db.exec(`
 
 // Статусы, в которых товар уже собран — его компоненты считаются израсходованными.
 const STOCK_CONSUMED_STATUSES = ['collected', 'shipped', 'delivered'];
-// Заказы, под которые компоненты понадобятся (ещё не собраны): «нужно под заказы» на странице склада.
+// Заказы, под которые компоненты понадобятся (ещё не собраны): «Нужно» на складе и на странице «Сборка».
 const STOCK_PENDING_STATUSES = ['new', 'printing', 'to_collect'];
 
-// Склад включён с этого момента: заказы, собранные раньше, задним числом не списываются.
+// Склад включён с этого момента: заказы, отправленные раньше, задним числом не списываются
+// (их компоненты уже не лежат на складе). Заказы в сборке списываются, даже если попали туда раньше.
 if (!getSetting('stock_since')) setSetting('stock_since', new Date().toISOString());
 
-function collectedSinceStock(orderId) {
-  const since = getSetting('stock_since');
-  return !!db
-    .prepare(`SELECT 1 FROM order_status_log WHERE order_id = ? AND at >= ? AND status IN (${STOCK_CONSUMED_STATUSES.map(() => '?').join(',')}) LIMIT 1`)
-    .get(orderId, since, ...STOCK_CONSUMED_STATUSES);
+function shippedBeforeStock(order) {
+  return !!order.shipped_at && order.shipped_at < getSetting('stock_since');
 }
 
 const roundQty = (n) => Math.round((Number(n) || 0) * 1000) / 1000;
@@ -1716,14 +1714,29 @@ function productTemplates() {
   }
 }
 
+// Товар каталога для позиции заказа: по названию, а если название другое — по модели (когда товар модели один).
+function templateForItem(it, templates) {
+  const name = String(it.product_name || '').trim().toLowerCase();
+  const byName = templates.find((t) => String(t.name || '').trim().toLowerCase() === name);
+  if (byName) return byName;
+  const byModel = it.model_id ? templates.filter((t) => t.model_id === it.model_id) : [];
+  return byModel.length === 1 ? byModel[0] : null;
+}
+
 // Сколько каждого компонента уходит на товары заказа: Map(component_id → количество).
-function orderComponentNeeds(items, templates = productTemplates()) {
-  const byName = new Map(templates.map((t) => [String(t.name || '').trim().toLowerCase(), t]));
+// unmatched (если передан) собирает позиции, для которых состав не задан, — чтобы показать, что не посчитано.
+function orderComponentNeeds(items, templates = productTemplates(), unmatched = null) {
   const needs = new Map();
   for (const it of items) {
     if (it.item_kind === 'print') continue;
-    const t = byName.get(String(it.product_name || '').trim().toLowerCase());
-    if (!t || !Array.isArray(t.components)) continue;
+    const t = templateForItem(it, templates);
+    if (!t || !Array.isArray(t.components) || !t.components.length) {
+      if (unmatched) {
+        const key = it.product_name || 'Товар';
+        unmatched.set(key, (unmatched.get(key) || 0) + (Number(it.quantity) || 0));
+      }
+      continue;
+    }
     const qty = Number(it.quantity) || 0;
     for (const c of t.components) {
       if (c.color && c.color !== it.color) continue;
@@ -1754,18 +1767,31 @@ function orderWrittenOff(orderId) {
 // Привести списание по заказу в соответствие со статусом. Уже списанное не пересчитывается, если потом
 // поменяли состав товара или позиции собранного заказа — меняется только при переходе собран/не собран.
 export function syncOrderStock(orderId) {
-  const order = db.prepare('SELECT id, number, status FROM orders WHERE id = ?').get(orderId);
+  const order = db.prepare('SELECT id, number, status, shipped_at FROM orders WHERE id = ?').get(orderId);
   const written = orderWrittenOff(orderId);
   const consumed = order && STOCK_CONSUMED_STATUSES.includes(order.status);
   const label = order ? `заказ #${order.number || order.id}` : `заказ #${orderId}`;
   const now = new Date().toISOString();
-  if (consumed && !written.size && collectedSinceStock(orderId)) {
+  if (consumed && !written.size && !shippedBeforeStock(order)) {
     const needs = orderComponentNeeds(itemsForOrder(orderId));
     for (const [id, qty] of needs) addStockMove(id, -qty, 'order', `Списание: ${label} собран`, orderId, now);
   } else if (!consumed && written.size) {
     const why = !order ? 'удалён' : order.status === 'cancelled' ? 'отменён' : 'возвращён в работу';
     for (const [id, qty] of written) addStockMove(id, qty, 'order', `Возврат: ${label} ${why}`, orderId, now);
   }
+}
+
+// Досписать заказы, которые уже в сборке, но ещё не списаны: попали туда до появления склада или до того,
+// как у товара задали состав. Вызывается при открытии склада и после сохранения каталога.
+export function syncAllOrdersStock() {
+  const ids = db
+    .prepare(
+      `SELECT o.id FROM orders o WHERE o.status IN (${STOCK_CONSUMED_STATUSES.map(() => '?').join(',')})
+         AND NOT EXISTS (SELECT 1 FROM stock_moves m WHERE m.order_id = o.id AND m.kind = 'order')`
+    )
+    .all(...STOCK_CONSUMED_STATUSES)
+    .map((r) => r.id);
+  for (const id of ids) syncOrderStock(id);
 }
 
 function cleanComponentInput(data, existing = {}) {
@@ -1782,16 +1808,39 @@ function cleanComponentInput(data, existing = {}) {
   };
 }
 
+// Потребность в компонентах под заказы в статусах statuses: Map(component_id → кол-во) и товары без состава.
+function componentDemand(statuses, templates = productTemplates()) {
+  const orders = db
+    .prepare(`SELECT id FROM orders WHERE status IN (${statuses.map(() => '?').join(',')})`)
+    .all(...statuses);
+  const needed = new Map();
+  const unmatched = new Map();
+  for (const o of orders) {
+    for (const [id, qty] of orderComponentNeeds(itemsForOrder(o.id), templates, unmatched)) {
+      needed.set(id, roundQty((needed.get(id) || 0) + qty));
+    }
+  }
+  return { needed, unmatched: [...unmatched].map(([product_name, qty]) => ({ product_name, qty })) };
+}
+
+// Материалы на заказы в статусах statuses (по умолчанию — все несобранные): нужно / есть / не хватает.
+export function materialsNeeded(statuses = STOCK_PENDING_STATUSES) {
+  syncAllOrdersStock();
+  const { needed, unmatched } = componentDemand(statuses);
+  const components = db.prepare('SELECT * FROM components ORDER BY name COLLATE NOCASE').all()
+    .filter((c) => needed.has(c.id))
+    .map((c) => {
+      const need = needed.get(c.id);
+      return { id: c.id, name: c.name, unit: c.unit, need, qty: c.qty, short: roundQty(Math.max(0, need - c.qty)) };
+    });
+  return { components, unmatched, enough: components.every((c) => !c.short) };
+}
+
 // Список компонентов с остатком, потребностью под несобранные заказы и тем, в каких товарах они участвуют.
 export function listComponents() {
+  syncAllOrdersStock();
   const templates = productTemplates();
-  const pendingOrders = db
-    .prepare(`SELECT id FROM orders WHERE status IN (${STOCK_PENDING_STATUSES.map(() => '?').join(',')})`)
-    .all(...STOCK_PENDING_STATUSES);
-  const needed = new Map();
-  for (const o of pendingOrders) {
-    for (const [id, qty] of orderComponentNeeds(itemsForOrder(o.id), templates)) needed.set(id, (needed.get(id) || 0) + qty);
-  }
+  const { needed } = componentDemand(STOCK_PENDING_STATUSES, templates);
   return db.prepare('SELECT * FROM components ORDER BY name COLLATE NOCASE').all().map((c) => {
     const need = roundQty(needed.get(c.id) || 0);
     return {

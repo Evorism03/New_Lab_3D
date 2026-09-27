@@ -79,6 +79,8 @@ import db, {
   deleteComponent,
   moveComponent,
   listStockMoves,
+  syncAllOrdersStock,
+  materialsNeeded,
 } from './db.js';
 import { parseLedgerText } from './lib/ledger-import.js';
 import { parseSerialsText } from './lib/serials-import.js';
@@ -1211,7 +1213,12 @@ const server = http.createServer(async (req, res) => {
 
     // ---- Склад ----
     if (pathname === '/api/stock/components' && req.method === 'GET') {
-      return sendJson(res, 200, { components: listComponents(), products: productsBuildable() });
+      return sendJson(res, 200, { components: listComponents(), products: productsBuildable(), demand: materialsNeeded() });
+    }
+    // Материалы под заказы: ?statuses=to_collect — только то, что сейчас в «Собрать» (страница «Сборка»).
+    if (pathname === '/api/stock/needs' && req.method === 'GET') {
+      const statuses = (url.searchParams.get('statuses') || '').split(',').filter((st) => STATUSES.some((x) => x.id === st));
+      return sendJson(res, 200, materialsNeeded(statuses.length ? statuses : undefined));
     }
     if (pathname === '/api/stock/components' && req.method === 'POST') {
       return sendJson(res, 201, createComponent(await readBody(req)));
@@ -1242,6 +1249,7 @@ const server = http.createServer(async (req, res) => {
       const data = await readBody(req);
       const templates = cleanProductTemplates(data.templates);
       setSetting('product_templates', JSON.stringify(templates));
+      syncAllOrdersStock(); // заказы в сборке с новым составом — списать
       return sendJson(res, 200, { templates });
     }
 
