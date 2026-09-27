@@ -1692,8 +1692,8 @@ db.exec(`
 
 // Статусы, в которых товар уже собран — его компоненты считаются израсходованными.
 const STOCK_CONSUMED_STATUSES = ['collected', 'shipped', 'delivered'];
-// Заказы, под которые компоненты понадобятся (ещё не собраны): «Нужно» на складе и на странице «Сборка».
-const STOCK_PENDING_STATUSES = ['new', 'printing', 'to_collect'];
+// Потребность («Нужно» на складе и на странице «Сборка») — только заказы в «Собрать».
+const STOCK_PENDING_STATUSES = ['to_collect'];
 
 // Склад включён с этого момента: заказы, отправленные раньше, задним числом не списываются
 // (их компоненты уже не лежат на складе). Заказы в сборке списываются, даже если попали туда раньше.
@@ -1823,7 +1823,7 @@ function componentDemand(statuses, templates = productTemplates()) {
   return { needed, unmatched: [...unmatched].map(([product_name, qty]) => ({ product_name, qty })) };
 }
 
-// Материалы на заказы в статусах statuses (по умолчанию — все несобранные): нужно / есть / не хватает.
+// Материалы на заказы в статусах statuses (по умолчанию — «Собрать»): нужно / есть / не хватает.
 export function materialsNeeded(statuses = STOCK_PENDING_STATUSES) {
   syncAllOrdersStock();
   const { needed, unmatched } = componentDemand(statuses);
@@ -1836,7 +1836,7 @@ export function materialsNeeded(statuses = STOCK_PENDING_STATUSES) {
   return { components, unmatched, enough: components.every((c) => !c.short) };
 }
 
-// Список компонентов с остатком, потребностью под несобранные заказы и тем, в каких товарах они участвуют.
+// Список компонентов с остатком, потребностью под заказы в «Собрать» и тем, в каких товарах они участвуют.
 export function listComponents() {
   syncAllOrdersStock();
   const templates = productTemplates();
