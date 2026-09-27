@@ -730,6 +730,12 @@ async function renderNpd(order) {
 }
 
 // ---- СДЭК ----
+// Пока номера нет: СДЭК либо ещё проверяет заказ (ACCEPTED/WAITING), либо принял и вот-вот присвоит номер.
+function cdekPendingText(sh) {
+  if (sh.request_state === 'SUCCESSFUL') return 'присваивается…';
+  return 'СДЭК проверяет заказ…';
+}
+
 function renderCdek(order) {
   const sh = order.cdek_shipment || {};
   document.getElementById('cdek-point-code').value = order.cdek_pvz_code || '';
@@ -737,12 +743,15 @@ function renderCdek(order) {
     ? `ПВЗ: ${sh.point.full_address}${sh.point.type === 'POSTAMAT' ? ' (постамат)' : ''}`
     : '';
   const lines = [];
-  if (sh.uuid) {
-    lines.push(`<div><strong>Номер СДЭК (трек):</strong> ${escapeText(sh.cdek_number || 'присваивается…')}${sh.status_name ? ` <span class="pill">${escapeText(sh.status_name)}</span>` : ''}</div>`);
+  if (sh.uuid && sh.errors?.length) {
+    lines.push('<div><strong>Номер СДЭК (трек):</strong> <span class="pill cancelled">заказ не создан</span></div>');
+  } else if (sh.uuid) {
+    lines.push(`<div><strong>Номер СДЭК (трек):</strong> ${escapeText(sh.cdek_number || cdekPendingText(sh))}${sh.status_name ? ` <span class="pill">${escapeText(sh.status_name)}</span>` : ''}</div>`);
   } else {
     lines.push(`<span class="muted">Заказ в СДЭК ещё не создан.${sh.cancelled_at ? ' Предыдущий заказ отменён.' : ''}</span>`);
   }
-  if (sh.errors?.length) lines.push(`<div style="color:var(--danger)">СДЭК отклонил заказ: ${escapeText(sh.errors.join('; '))}</div>`);
+  if (sh.errors?.length) lines.push(`<div style="color:var(--danger)">СДЭК отклонил заказ: ${escapeText(sh.errors.join('; '))}. Исправьте данные и нажмите «Создать заказ в СДЭК» ещё раз.</div>`);
+  if (sh.uuid && sh.test_mode) lines.push('<div class="muted">🧪 Создан в <b>тестовом контуре</b> СДЭК (api.edu.cdek.ru) — в личном кабинете СДЭК его не будет. Отключите тестовый режим в Настройках → СДЭК.</div>');
   if (sh.price) {
     const p = sh.price;
     const ins = p.insurance ? ` + страховка ${money(p.insurance)}` : '';
@@ -753,6 +762,34 @@ function renderCdek(order) {
   const created = Boolean(sh.uuid);
   document.getElementById('cdek-create').disabled = created && !sh.errors?.length;
   for (const btnId of ['cdek-refresh', 'cdek-label', 'cdek-cancel']) document.getElementById(btnId).disabled = !created;
+  scheduleCdekPoll(sh);
+}
+
+// СДЭК присваивает номер асинхронно — иногда через минуты после создания. Пока номера нет (и нет ошибок),
+// тихо переспрашиваем статус: 5 с, 10 с, … до 60 с между запросами, не дольше 15 минут с открытия страницы.
+let cdekPollTimer = null;
+let cdekPollDelay = 5000;
+const cdekPollUntil = Date.now() + 15 * 60e3;
+
+function scheduleCdekPoll(sh) {
+  clearTimeout(cdekPollTimer);
+  const waiting = sh.uuid && !sh.cdek_number && !sh.errors?.length && !sh.cancelled_at;
+  if (!waiting || Date.now() > cdekPollUntil) return;
+  cdekPollTimer = setTimeout(async () => {
+    cdekPollDelay = Math.min(cdekPollDelay * 2, 60000);
+    try {
+      const order = await api(`/api/orders/${id}/cdek/status`, { method: 'POST' });
+      if (currentOrder) {
+        currentOrder.cdek_shipment = order.cdek_shipment;
+        renderView(currentOrder);
+      }
+      renderCdek(order);
+      if (order.cdek_shipment?.cdek_number) toast(`СДЭК присвоил номер ${escapeText(order.cdek_shipment.cdek_number)}`, 'success');
+      else if (order.cdek_shipment?.errors?.length) toast('СДЭК отклонил заказ — причина указана в блоке СДЭК', 'error');
+    } catch {
+      scheduleCdekPoll(currentOrder?.cdek_shipment || sh); // сеть/СДЭК недоступны — попробуем позже
+    }
+  }, cdekPollDelay);
 }
 
 async function cdekAction(path, options, successMessage) {
@@ -1053,7 +1090,9 @@ function viewShipment(order) {
   }
   const cd = order.cdek_shipment;
   if (cd?.uuid) {
-    lines.push(`<div class="ov-kv"><span>СДЭК, трек</span><b>${escapeHtml(cd.cdek_number || 'присваивается…')}</b>${cd.status_name ? ` <span class="pill">${escapeHtml(cd.status_name)}</span>` : ''}</div>`);
+    lines.push(cd.errors?.length
+      ? `<div class="ov-kv"><span>СДЭК</span><span class="neg">отклонён: ${escapeHtml(cd.errors.join('; '))}</span></div>`
+      : `<div class="ov-kv"><span>СДЭК, трек</span><b>${escapeHtml(cd.cdek_number || cdekPendingText(cd))}</b>${cd.status_name ? ` <span class="pill">${escapeHtml(cd.status_name)}</span>` : ''}${cd.test_mode ? ' <span class="pill">🧪 тест</span>' : ''}</div>`);
   }
   if (cd?.point?.code) lines.push(`<div class="ov-kv"><span>ПВЗ СДЭК</span><span>${escapeHtml(cd.point.code)}</span></div>`);
   if (order.ozon_delivery_point_id) lines.push(`<div class="ov-kv"><span>ПВЗ Ozon</span><span>${escapeHtml(order.ozon_delivery_point_id)}</span></div>`);

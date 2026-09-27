@@ -679,8 +679,12 @@ function cdekSummary(result) {
   const entity = result?.entity || {};
   const statuses = (entity.statuses || []).slice().sort((a, b) => String(b.date_time).localeCompare(String(a.date_time)));
   const errors = (result?.requests || []).flatMap((r) => (r.state === 'INVALID' ? r.errors || [] : []));
+  // Состояние запроса на создание: ACCEPTED/WAITING — СДЭК ещё проверяет, SUCCESSFUL — принят, INVALID — отклонён.
+  const createRequest = (result?.requests || []).find((r) => r.type === 'CREATE') || result?.requests?.[0];
   return {
-    uuid: entity.uuid,
+    // Без entity (ответ без тела заказа) uuid не затираем — иначе заказ «потеряется» в CRM.
+    ...(entity.uuid ? { uuid: entity.uuid } : {}),
+    request_state: createRequest?.state || null,
     cdek_number: entity.cdek_number || null,
     status_code: statuses[0]?.code || null,
     status_name: statuses[0]?.name || null,
@@ -689,6 +693,26 @@ function cdekSummary(result) {
     checked_at: new Date().toISOString(),
   };
 }
+
+// Статус заказа в СДЭК. Отклонённый заказ СДЭК может вообще не отдавать (404 «сущность не найдена») —
+// это тоже ответ: сохраняем причину, иначе в CRM навсегда висит «присваивается…». Сразу после создания
+// 404 бывает и у нормального заказа (ещё не обработан), поэтому первые 2 минуты его не считаем отказом.
+async function cdekFetchSummary(shipment) {
+  try {
+    return cdekSummary(await cdek.getOrder(shipment.uuid));
+  } catch (err) {
+    const young = shipment.created_at && Date.now() - new Date(shipment.created_at).getTime() < 120_000;
+    const rejected = err.status >= 400 && err.status < 500 && ![401, 429].includes(err.status);
+    if (!rejected || young) throw err;
+    return {
+      request_state: 'INVALID',
+      errors: [String(err.message).replace(/^СДЭК GET \S+: /, '')],
+      checked_at: new Date().toISOString(),
+    };
+  }
+}
+
+const cdekSettled = (sum) => sum.cdek_number || sum.errors?.length || ['SUCCESSFUL', 'INVALID'].includes(sum.request_state);
 
 function ozonDimensions(order) {
   // Ozon принимает только целые числа (Int32) — дробные значения округляем.
@@ -1519,20 +1543,25 @@ const server = http.createServer(async (req, res) => {
           const point = await cdekRecipientPoint(order);
           const result = await cdek.createOrder(cdekOrderBody(getOrder(orderId), point));
           const newUuid = result?.entity?.uuid;
-          if (!newUuid) throw new Error('СДЭК не вернул идентификатор заказа');
-          patchOrderCdekShipment(orderId, {
-            uuid: newUuid, cdek_number: null, errors: [], cancelled_at: null, created_at: new Date().toISOString(),
-          });
-          // Заказ СДЭК обрабатывает асинхронно — через пару секунд уже видны номер или ошибки.
-          await new Promise((r) => setTimeout(r, 1500));
-          const info = await cdek.getOrder(newUuid).catch(() => null);
-          return sendJson(res, 200, info ? patchOrderCdekShipment(orderId, cdekSummary(info)) : getOrder(orderId));
+          const first = cdekSummary(result);
+          if (!newUuid) throw new Error(first.errors.length ? `СДЭК отклонил заказ: ${first.errors.join('; ')}` : 'СДЭК не вернул идентификатор заказа');
+          const shipment = patchOrderCdekShipment(orderId, {
+            ...first, uuid: newUuid, cdek_number: null, status_code: null, status_name: null, cancelled_at: null,
+            created_at: new Date().toISOString(), test_mode: getSetting('cdek_test_mode') === '1',
+          }).cdek_shipment;
+          // Заказ СДЭК проверяет асинхронно: ждём до ~10 с, пока он не будет принят или отклонён.
+          // Не дождались — страница заказа сама переспросит статус позже.
+          let sum = first;
+          for (let i = 0; i < 6 && !cdekSettled(sum); i++) {
+            await new Promise((r) => setTimeout(r, 1000 + i * 500));
+            sum = await cdekFetchSummary(shipment).catch(() => sum);
+          }
+          return sendJson(res, 200, patchOrderCdekShipment(orderId, sum));
         }
 
         if (action === 'status' && req.method === 'POST') {
           if (!uuid) return sendJson(res, 400, { error: 'Заказ в СДЭК ещё не создан' });
-          const info = await cdek.getOrder(uuid);
-          return sendJson(res, 200, patchOrderCdekShipment(orderId, cdekSummary(info)));
+          return sendJson(res, 200, patchOrderCdekShipment(orderId, await cdekFetchSummary(order.cdek_shipment)));
         }
 
         if (action === 'cancel' && req.method === 'POST') {
