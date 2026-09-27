@@ -697,10 +697,22 @@ function cdekSummary(result) {
 // Статус заказа в СДЭК. Отклонённый заказ СДЭК может вообще не отдавать (404 «сущность не найдена») —
 // это тоже ответ: сохраняем причину, иначе в CRM навсегда висит «присваивается…». Сразу после создания
 // 404 бывает и у нормального заказа (ещё не обработан), поэтому первые 2 минуты его не считаем отказом.
+// Заказ создан в одном контуре СДЭК (тестовом/боевом), а сейчас включён другой — СДЭК ответит «не найден»,
+// хотя заказ существует. У заказов, созданных до этой пометки, контур неизвестен (test_mode не задан).
+function cdekContourMismatch(shipment) {
+  if (shipment?.test_mode == null) return '';
+  const nowTest = getSetting('cdek_test_mode') === '1';
+  if (Boolean(shipment.test_mode) === nowTest) return '';
+  return `Заказ создавался в ${shipment.test_mode ? 'тестовом' : 'боевом'} контуре СДЭК, а сейчас включён `
+    + `${nowTest ? 'тестовый' : 'боевой'} — переключите «Тестовый режим» в Настройках → СДЭК и повторите.`;
+}
+
 async function cdekFetchSummary(shipment) {
   try {
     return cdekSummary(await cdek.getOrder(shipment.uuid));
   } catch (err) {
+    const mismatch = cdekContourMismatch(shipment);
+    if (mismatch) throw new Error(mismatch);
     const young = shipment.created_at && Date.now() - new Date(shipment.created_at).getTime() < 120_000;
     const rejected = err.status >= 400 && err.status < 500 && ![401, 429].includes(err.status);
     if (!rejected || young) throw err;
@@ -1566,10 +1578,24 @@ const server = http.createServer(async (req, res) => {
 
         if (action === 'cancel' && req.method === 'POST') {
           if (!uuid) return sendJson(res, 400, { error: 'Заказ в СДЭК ещё не создан' });
-          await cdek.deleteOrder(uuid);
-          return sendJson(res, 200, patchOrderCdekShipment(orderId, {
-            uuid: null, cdek_number: null, status_code: null, status_name: null, errors: [], cancelled_at: new Date().toISOString(),
-          }));
+          const mismatch = cdekContourMismatch(order.cdek_shipment);
+          if (mismatch) return sendJson(res, 409, { error: mismatch });
+          // «Не найден» — заказа в СДЭК нет (отклонён при проверке или уже удалён): отменять нечего,
+          // просто убираем привязку в CRM, чтобы можно было создать заказ заново.
+          let notFound = false;
+          try {
+            await cdek.deleteOrder(uuid);
+          } catch (err) {
+            if (err.status !== 404 && !/v2_entity_not_found/.test(err.message)) throw err;
+            notFound = true;
+          }
+          return sendJson(res, 200, {
+            ...patchOrderCdekShipment(orderId, {
+              uuid: null, cdek_number: null, status_code: null, status_name: null, request_state: null,
+              errors: [], cancelled_at: new Date().toISOString(),
+            }),
+            cdek_not_found: notFound,
+          });
         }
 
         if (action === 'label.pdf' && req.method === 'GET') {

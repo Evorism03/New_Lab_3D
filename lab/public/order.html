@@ -801,6 +801,7 @@ async function cdekAction(path, options, successMessage) {
       updatePreview();
     }
     if (order.cdek_shipment?.errors?.length) toast('СДЭК отклонил заказ — причина указана в блоке СДЭК', 'error');
+    else if (order.cdek_not_found) toast('В СДЭК такого заказа нет (не прошёл проверку или уже удалён) — привязка убрана, можно создать заново', 'info');
     else if (successMessage) toast(successMessage, 'success');
     return order;
   } catch (err) {
