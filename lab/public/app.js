@@ -173,8 +173,8 @@ function formatDuration(ms) {
 }
 
 function deadlineInfo(o, now = Date.now()) {
-  // «Согласовывается» — ещё не оплачен, срок не идёт. Отсчёт — с момента, когда заказ ушёл в работу.
-  if (!o.created_at || o.status === 'cancelled' || o.status === 'negotiating') return null;
+  // «Новый заказ»/«Согласовывается» — ещё не в работе, срок не идёт. Отсчёт — с момента, когда заказ ушёл в работу.
+  if (!o.created_at || ['cancelled', 'new', 'negotiating'].includes(o.status)) return null;
   const created = new Date(o.work_started_at || o.created_at).getTime();
   const deadline = o.ship_deadline_at ? new Date(o.ship_deadline_at).getTime() : null;
   const warn = o.ship_warn_at ? new Date(o.ship_warn_at).getTime() : null;

@@ -1,17 +1,20 @@
 // Статистика для страницы «Статистика» (/stats.html): поток заказов, скорость отправки,
 // что сейчас нужно произвести, спрос по товарам/цветам/разъёмам и прогноз на ближайшие недели.
 // Считается на лету из заказов — отдельных таблиц нет, кроме истории статусов (order_status_log).
-import db, { listOrders, STATUSES, COLORS, CONNECTORS, DELIVERY_SERVICES, localDate, colorShortLabel, connectorLabel } from '../db.js';
+import db, { listOrders, STATUSES, PRE_WORK_STATUSES, COLORS, CONNECTORS, DELIVERY_SERVICES, localDate, colorShortLabel, connectorLabel } from '../db.js';
 
 const DAY = 864e5;
 const HOUR = 3600e3;
 // «В работе» — ещё не отправлен; «к производству» — ещё не собран (что реально предстоит сделать).
-const ACTIVE = ['new', 'printing', 'to_collect', 'collected'];
-const TO_PRODUCE = ['new', 'printing', 'to_collect'];
+// Заказы в «Новый заказ» и «Согласовывается» в статистику не входят вовсе: они ещё не в работе.
+// Заказ попадает в статистику с момента, когда ушёл в работу (work_started_at), а не с создания.
+const ACTIVE = ['printing', 'to_collect', 'collected'];
+const TO_PRODUCE = ['printing', 'to_collect'];
 const FORECAST_WEEKS = 4;
 const WEEKDAYS = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'];
 
 const ts = (iso) => new Date(iso).getTime();
+const started = (o) => o.work_started_at || o.created_at;
 const units = (items) => items.reduce((sum, it) => sum + (Number(it.quantity) || 0), 0);
 const round1 = (n) => Math.round(n * 10) / 10;
 
@@ -84,7 +87,7 @@ function stageDurations(since) {
     const cur = rows[i];
     const next = rows[i + 1];
     if (next.order_id !== cur.order_id) continue;
-    if (['cancelled', 'delivered'].includes(cur.status) || next.status === 'cancelled') continue;
+    if (['cancelled', 'delivered', ...PRE_WORK_STATUSES].includes(cur.status) || next.status === 'cancelled') continue;
     const end = ts(next.at);
     if (end < since) continue;
     if (!byStatus.has(cur.status)) byStatus.set(cur.status, []);
@@ -101,8 +104,8 @@ export function getStats({ days = 30 } = {}) {
   const periodDays = Math.max(1, (now - since) / DAY);
   const weeks = periodDays / 7;
 
-  const live = all.filter((o) => o.status !== 'cancelled');
-  const created = live.filter((o) => ts(o.created_at) >= since);
+  const live = all.filter((o) => o.status !== 'cancelled' && !PRE_WORK_STATUSES.includes(o.status));
+  const created = live.filter((o) => ts(started(o)) >= since);
   const cancelled = all.filter((o) => o.status === 'cancelled' && ts(o.created_at) >= since);
   const shipped = live.filter((o) => o.shipped_at && ts(o.shipped_at) >= since);
   const active = live.filter((o) => ACTIVE.includes(o.status));
@@ -121,7 +124,7 @@ export function getStats({ days = 30 } = {}) {
   // Поток: сколько пришло и сколько ушло по интервалам.
   const { unit, buckets } = makeBuckets(since, now, periodDays);
   for (const o of created) {
-    const b = bucketFor(buckets, ts(o.created_at));
+    const b = bucketFor(buckets, ts(started(o)));
     if (b) {
       b.created++;
       b.created_units += units(o.items);
@@ -156,11 +159,11 @@ export function getStats({ days = 30 } = {}) {
         connector_label: connectorLabel(it.connector),
         qty: 0,
         orders: new Set(),
-        oldest: o.created_at,
+        oldest: started(o),
       };
       row.qty += qty;
       row.orders.add(o.id);
-      if (o.created_at < row.oldest) row.oldest = o.created_at;
+      if (started(o) < row.oldest) row.oldest = started(o);
       backlogMap.set(key, row);
     }
   }
@@ -172,7 +175,7 @@ export function getStats({ days = 30 } = {}) {
   const q = (it) => Number(it.quantity) || 0;
 
   const weekday = WEEKDAYS.map((label) => ({ label, orders: 0 }));
-  for (const o of created) weekday[(new Date(o.created_at).getDay() + 6) % 7].orders++;
+  for (const o of created) weekday[(new Date(started(o)).getDay() + 6) % 7].orders++;
 
   return {
     period: { days, since: new Date(since).toISOString(), period_days: round1(periodDays), unit },
@@ -195,7 +198,7 @@ export function getStats({ days = 30 } = {}) {
       // Бэклог закроется примерно за N дней при текущем темпе отправки.
       backlog_days: shippedUnitsPerDay > 0 ? round1(backlogUnits / shippedUnitsPerDay) : null,
       on_time_percent: withDeadline.length ? round1((onTime / withDeadline.length) * 100) : null,
-      lead_time: durationStats(shipped.map((o) => ts(o.shipped_at) - ts(o.created_at))),
+      lead_time: durationStats(shipped.map((o) => ts(o.shipped_at) - ts(started(o)))),
     },
     flow: buckets.map(({ date, created: c, shipped: s, created_units: u }) => ({ date, created: c, shipped: s, created_units: u })),
     backlog: [...backlogMap.values()].map(setToCount).sort((a, b) => b.qty - a.qty || a.oldest.localeCompare(b.oldest)),

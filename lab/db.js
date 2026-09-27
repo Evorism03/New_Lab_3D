@@ -258,18 +258,21 @@ function syncShippedAt(id, status, now) {
   }
 }
 
-// Когда заказ ушёл из «Согласовывается» в работу (null — не согласовывался, считаем от создания).
+// «Новый заказ» и «Согласовывается» — заказ ещё не в работе: срок отправки не идёт, в статистику не входит.
+export const PRE_WORK_STATUSES = ['new', 'negotiating'];
+
+// Когда заказ ушёл из «Новый заказ»/«Согласовывается» в работу (null — истории нет, считаем от создания).
 function workStartedAt(orderId) {
   return db
     .prepare(
       `SELECT MIN(at) AS at FROM order_status_log WHERE order_id = ? AND at >
-         (SELECT MAX(at) FROM order_status_log WHERE order_id = ? AND status = 'negotiating')`
+         (SELECT MAX(at) FROM order_status_log WHERE order_id = ? AND status IN ('new', 'negotiating'))`
     )
     .get(orderId, orderId).at;
 }
 
 function shipDeadline(order, settings) {
-  if (order.status === 'negotiating') return { ship_deadline_at: null, ship_warn_at: null, work_started_at: null };
+  if (PRE_WORK_STATUSES.includes(order.status)) return { ship_deadline_at: null, ship_warn_at: null, work_started_at: null };
   const startedAt = workStartedAt(order.id) || order.created_at;
   const hours = order.source === SITE_SOURCE ? settings.site_hours : settings.crm_hours;
   if (!hours) return { ship_deadline_at: null, ship_warn_at: null, work_started_at: startedAt };
