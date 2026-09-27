@@ -579,7 +579,7 @@ function openComposition(row) {
     }).filter((c) => c.component_id && c.qty > 0);
     row.querySelector('.comp-btn').textContent = compositionLabel(row._components);
     close();
-    toast('Состав изменён — не забудьте «Сохранить товары»', 'info');
+    saveProducts('Состав сохранён'); // сразу в базу — иначе при переходе на другую страницу состав терялся
   });
 }
 
@@ -617,7 +617,7 @@ async function loadProducts() {
 
 document.getElementById('product-add').addEventListener('click', () => addProductRow());
 
-document.getElementById('product-save').addEventListener('click', async () => {
+async function saveProducts(message = 'Товары сохранены') {
   const templates = [...productBody.querySelectorAll('tr')].map((row) => {
     const t = {};
     for (const input of row.querySelectorAll('[data-k]')) t[input.dataset.k] = input.value.trim();
@@ -626,12 +626,14 @@ document.getElementById('product-save').addEventListener('click', async () => {
   }).filter((t) => t.name);
   try {
     await api('/api/catalog/products', { method: 'PUT', body: JSON.stringify({ templates }) });
-    toast('Товары сохранены', 'success');
+    toast(message, 'success');
     loadProducts();
   } catch (err) {
     toast(err.message, 'error');
   }
-});
+}
+
+document.getElementById('product-save').addEventListener('click', () => saveProducts());
 
 loadProducts().catch((err) => toast(err.message, 'error'));
 
