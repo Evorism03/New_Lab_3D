@@ -733,6 +733,9 @@ async function renderNpd(order) {
 // Пока номера нет: СДЭК либо ещё проверяет заказ (ACCEPTED/WAITING), либо принял и вот-вот присвоит номер.
 function cdekPendingText(sh) {
   if (sh.request_state === 'SUCCESSFUL') return 'присваивается…';
+  // Обычно СДЭК обрабатывает заявку за секунды; если дольше 5 минут — это задержка на его стороне.
+  const waitMs = sh.created_at ? Date.now() - new Date(sh.created_at).getTime() : 0;
+  if (waitMs > 5 * 60e3) return `СДЭК не обрабатывает заявку уже ${formatDuration(waitMs)} — задержка на стороне СДЭК, повторно не создавайте`;
   return 'СДЭК проверяет заказ…';
 }
 

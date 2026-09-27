@@ -19,12 +19,12 @@ let tokenCache = { key: '', value: '', expiresAt: 0 };
 // Без таймаута зависший СДЭК подвешивает запрос навсегда (и вкладка этикетки остаётся about:blank).
 const TIMEOUT_MS = 20_000;
 
-async function fetchWithTimeout(url, init = {}) {
+async function fetchWithTimeout(url, init = {}, timeoutMs = TIMEOUT_MS) {
   try {
-    return await fetch(url, { ...init, signal: AbortSignal.timeout(TIMEOUT_MS) });
+    return await fetch(url, { ...init, signal: AbortSignal.timeout(timeoutMs) });
   } catch (err) {
     if (err.name === 'TimeoutError' || err.name === 'AbortError') {
-      throw new Error(`СДЭК не ответил за ${TIMEOUT_MS / 1000} с — похоже, сбой на стороне СДЭК. Попробуйте позже.`);
+      throw new Error(`СДЭК не ответил за ${timeoutMs / 1000} с — похоже, сбой на стороне СДЭК. Попробуйте позже.`);
     }
     throw new Error(`Нет связи со СДЭК: ${err.cause?.code || err.message}`);
   }
@@ -297,4 +297,62 @@ export async function barcodePdf(orderUuid, format = 'A6') {
   const res = await authorizedFetch(url);
   if (!res.ok) throw new Error(`Не удалось скачать этикетку СДЭК (${res.status})`);
   return Buffer.from(await res.arrayBuffer());
+}
+
+// ---- Проверка связи (Настройки → СДЭК → «Проверить связь») ----
+// Проверяем с сервера CRM (важна связь именно отсюда, а не из браузера) по шагам: интернет вообще →
+// доступность API СДЭК (боевой и тестовый) → вход по ключам → простой запрос данных. Каждый шаг с временем.
+async function timed(fn) {
+  const start = Date.now();
+  try {
+    const detail = await fn();
+    return { ok: true, ms: Date.now() - start, detail };
+  } catch (err) {
+    return { ok: false, ms: Date.now() - start, detail: err.message };
+  }
+}
+
+async function reach(url) {
+  let res;
+  try {
+    res = await fetch(url, { headers: BASE_HEADERS, signal: AbortSignal.timeout(10_000) });
+  } catch (err) {
+    if (err.name === 'TimeoutError') throw new Error('не ответил за 10 с');
+    throw new Error(`нет соединения (${err.cause?.code || err.message})`);
+  }
+  // Любой ответ API (даже 401 без токена) значит, что сервер жив; 5xx и HTML-заглушка защиты — нет.
+  const text = await res.text().catch(() => '');
+  if (res.status >= 500) throw new Error(`HTTP ${res.status} — ошибка на стороне СДЭК`);
+  if (res.status === 403 && /<html|<!doctype/i.test(text)) throw new Error(cdekErrorText({ raw: text }, 403));
+  return `отвечает (HTTP ${res.status})`;
+}
+
+export async function healthCheck() {
+  const testMode = getSetting('cdek_test_mode') === '1';
+  const steps = [];
+  steps.push({ name: 'Интернет на сервере CRM (ya.ru)', ...(await timed(() => reach('https://ya.ru/'))) });
+  steps.push({ name: `Боевой API СДЭК (api.cdek.ru)${testMode ? '' : ' — используется'}`, ...(await timed(() => reach(`${PROD_BASE}/location/cities?size=1`))) });
+  steps.push({ name: `Тестовый API СДЭК (api.edu.cdek.ru)${testMode ? ' — используется' : ''}`, ...(await timed(() => reach(`${TEST_BASE}/location/cities?size=1`))) });
+  const hasKeys = getSetting('cdek_client_id') && getSetting('cdek_client_secret');
+  if (hasKeys) {
+    steps.push({ name: 'Вход по ключам (Account / Secure password)', ...(await timed(async () => { await getToken(true); return 'токен получен'; })) });
+    steps.push({ name: 'Запрос данных (город Москва)', ...(await timed(async () => {
+      const list = await cdekRequest('GET', '/location/cities', { query: { code: 44, size: 1 } });
+      if (!Array.isArray(list) || !list.length) throw new Error('СДЭК вернул пустой ответ');
+      return `ответ получен: ${list[0].city}`;
+    })) });
+  }
+
+  const [internet, prod, test, auth, data] = steps;
+  const used = testMode ? test : prod;
+  let verdict;
+  if (!internet.ok && !used.ok) verdict = 'На сервере CRM, похоже, нет интернета — проверьте подключение сервера.';
+  else if (!used.ok) verdict = 'API СДЭК недоступен с сервера CRM, при этом интернет есть — сбой на стороне СДЭК. Подождите и повторите.';
+  else if (!hasKeys) verdict = 'API СДЭК отвечает. Ключи не заданы — вход и запросы не проверялись.';
+  else if (!auth.ok) verdict = 'API СДЭК отвечает, но вход по ключам не прошёл — проверьте Account / Secure password (или это сбой авторизации СДЭК).';
+  else if (!data.ok) verdict = 'Вход прошёл, но СДЭК не отдаёт данные — вероятно, частичный сбой у СДЭК.';
+  else if (used.ms > 5000 || data.ms > 5000) verdict = 'API СДЭК работает, но очень медленно — возможны таймауты.';
+  else verdict = 'API СДЭК работает нормально.';
+  const ok = used.ok && (!hasKeys || (auth.ok && data.ok));
+  return { ok, test_mode: testMode, verdict, steps, checked_at: new Date().toISOString() };
 }

@@ -1473,6 +1473,32 @@ const server = http.createServer(async (req, res) => {
     }
 
     // ---- СДЭК ----
+    if (pathname === '/api/cdek/health' && req.method === 'POST') {
+      const result = await cdek.healthCheck();
+      // API может отвечать, а очередь обработки СДЭК стоять: заявки висят в ACCEPTED без номера.
+      // Это видно только по нашим заказам — ищем созданные больше 5 минут назад и так и не обработанные.
+      const stuck = listOrders().filter((o) => {
+        const sh = o.cdek_shipment;
+        return sh?.uuid && !sh.cdek_number && !sh.errors?.length && sh.request_state !== 'SUCCESSFUL'
+          && sh.created_at && Date.now() - new Date(sh.created_at).getTime() > 5 * 60e3;
+      });
+      const oldest = stuck.reduce((max, o) => Math.max(max, Date.now() - new Date(o.cdek_shipment.created_at).getTime()), 0);
+      result.steps.push({
+        name: 'Обработка заказов СДЭК (заявки без номера дольше 5 минут)',
+        ok: !stuck.length,
+        ms: 0,
+        detail: stuck.length
+          ? `${stuck.length} шт.: ${stuck.slice(0, 5).map((o) => `#${o.display_number}`).join(', ')} — самая старая ждёт ${Math.round(oldest / 60e3)} мин`
+          : 'зависших заявок нет',
+      });
+      if (stuck.length && result.ok) {
+        result.ok = false;
+        result.verdict = 'API СДЭК отвечает, но заказы не обрабатывает: заявки висят в статусе «принята» без номера. '
+          + 'Это сбой очереди на стороне СДЭК — подождите, повторно заказы не создавайте (будут дубли).';
+      }
+      return sendJson(res, 200, result);
+    }
+
     if (pathname === '/api/cdek/log' && req.method === 'GET') {
       return sendJson(res, 200, { entries: cdek.requestLog() });
     }
@@ -1584,13 +1610,25 @@ const server = http.createServer(async (req, res) => {
           if (!uuid) return sendJson(res, 400, { error: 'Заказ в СДЭК ещё не создан' });
           const mismatch = cdekContourMismatch(order.cdek_shipment);
           if (mismatch) return sendJson(res, 409, { error: mismatch });
-          // «Не найден» — заказа в СДЭК нет (отклонён при проверке или уже удалён): отменять нечего,
-          // просто убираем привязку в CRM, чтобы можно было создать заказ заново.
+          // DELETE отвечает «не найден» в двух случаях: заказа в СДЭК действительно нет (отклонён/удалён) —
+          // тогда отменять нечего и привязку снимаем; или СДЭК ещё не обработал заявку (state ACCEPTED/WAITING) —
+          // тогда заказ может появиться позже, и снимать привязку нельзя, иначе после повторного создания будет дубль.
           let notFound = false;
           try {
             await cdek.deleteOrder(uuid);
           } catch (err) {
             if (err.status !== 404 && !/v2_entity_not_found/.test(err.message)) throw err;
+            const info = await cdek.getOrder(uuid).catch((e) => (e.status === 404 ? null : Promise.reject(e)));
+            const state = info ? cdekSummary(info) : null;
+            if (state && state.request_state !== 'INVALID' && !state.errors.length) {
+              patchOrderCdekShipment(orderId, state);
+              return sendJson(res, 409, {
+                error: state.cdek_number
+                  ? 'СДЭК не дал отменить заказ — попробуйте ещё раз или отмените его в личном кабинете СДЭК.'
+                  : 'СДЭК ещё не обработал этот заказ (заявка принята, номер не присвоен) — отменить его пока нельзя. '
+                    + 'Не создавайте заказ заново, иначе появится дубль: дождитесь номера и отмените снова.',
+              });
+            }
             notFound = true;
           }
           return sendJson(res, 200, {
