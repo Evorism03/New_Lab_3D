@@ -258,11 +258,24 @@ function syncShippedAt(id, status, now) {
   }
 }
 
+// Когда заказ ушёл из «Согласовывается» в работу (null — не согласовывался, считаем от создания).
+function workStartedAt(orderId) {
+  return db
+    .prepare(
+      `SELECT MIN(at) AS at FROM order_status_log WHERE order_id = ? AND at >
+         (SELECT MAX(at) FROM order_status_log WHERE order_id = ? AND status = 'negotiating')`
+    )
+    .get(orderId, orderId).at;
+}
+
 function shipDeadline(order, settings) {
+  if (order.status === 'negotiating') return { ship_deadline_at: null, ship_warn_at: null, work_started_at: null };
+  const startedAt = workStartedAt(order.id) || order.created_at;
   const hours = order.source === SITE_SOURCE ? settings.site_hours : settings.crm_hours;
-  if (!hours) return { ship_deadline_at: null, ship_warn_at: null };
-  const deadline = new Date(order.created_at).getTime() + hours * 3600e3;
+  if (!hours) return { ship_deadline_at: null, ship_warn_at: null, work_started_at: startedAt };
+  const deadline = new Date(startedAt).getTime() + hours * 3600e3;
   return {
+    work_started_at: startedAt,
     ship_deadline_hours: hours,
     ship_deadline_at: new Date(deadline).toISOString(),
     ship_warn_at: new Date(deadline - Math.min(settings.warn_hours, hours) * 3600e3).toISOString(),
@@ -270,6 +283,8 @@ function shipDeadline(order, settings) {
 }
 
 export const STATUSES = [
+  // Заказ заведён из переписки, но ещё не оплачен: в бухгалтерию не идёт, срок отправки не тикает.
+  { id: 'negotiating', label: 'Согласовывается' },
   { id: 'new', label: 'Новый заказ' },
   // Только для заказов с сайта (есть файл модели, который нужно напечатать) — см. assertPrintAllowed.
   { id: 'printing', label: 'Печать' },
@@ -780,6 +795,7 @@ export function setOrderNpdReceipt(id, receipt) {
     new Date().toISOString(),
     id
   );
+  syncOrderLedger(id); // продажа в бухгалтерии появляется по чеку и убирается при его аннулировании
   return getOrder(id);
 }
 
@@ -1202,13 +1218,27 @@ function saleDescription(order) {
   return [`Продажа ${goods || 'товаров'}`, order.delivery_service, city].filter(Boolean).join(' · ');
 }
 
-// Что должно лежать в журнале по заказу (или null — ничего). Заказы из CRM заводятся уже после
-// оплаты; заказы с сайта — только когда оплата подтверждена.
+// Раньше продажа попадала в журнал сразу при создании заказа. Теперь заказы заводятся до оплаты,
+// и продажа пишется по чеку «Мой налог». Заказы, созданные до перехода, живут по старому правилу.
+if (!getSetting('acc_receipt_since')) setSetting('acc_receipt_since', new Date().toISOString());
+
+// Дата продажи по старому правилу (заказ создан до перехода на чеки) или null.
+function legacySaleDate(order) {
+  if (order.created_at >= getSetting('acc_receipt_since')) return null;
+  if (order.status === 'negotiating') return null;
+  if (order.source === SITE_SOURCE && order.payment_status !== 'paid') return null;
+  return localDate(order.created_at);
+}
+
+// Что должно лежать в журнале по заказу (или null — ничего). Продажа появляется, когда по заказу
+// выдан чек «Мой налог», с датой расчёта из чека; чек аннулировали — запись убирается.
 function orderSaleEntry(order) {
   if (!order || order.status === 'cancelled') return null;
-  if (order.source === SITE_SOURCE && order.payment_status !== 'paid') return null;
   if (!(order.grand_total > 0)) return null;
-  const date = localDate(order.created_at);
+  const receipt = order.npd_receipt;
+  const hasReceipt = receipt?.uuid && !receipt.canceled_at;
+  const date = hasReceipt ? receipt.operation_date || localDate(receipt.created_at) : legacySaleDate(order);
+  if (!date) return null;
   if (date < getSetting('acc_auto_since')) return null;
   if (excludedOrders().has(order.id)) return null;
   // Гарантия — на изделия из каталога моделей (AL-1 и т.п.); печать на заказ — без гарантии.

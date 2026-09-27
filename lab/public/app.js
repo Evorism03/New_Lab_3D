@@ -173,8 +173,9 @@ function formatDuration(ms) {
 }
 
 function deadlineInfo(o, now = Date.now()) {
-  if (!o.created_at || o.status === 'cancelled') return null;
-  const created = new Date(o.created_at).getTime();
+  // «Согласовывается» — ещё не оплачен, срок не идёт. Отсчёт — с момента, когда заказ ушёл в работу.
+  if (!o.created_at || o.status === 'cancelled' || o.status === 'negotiating') return null;
+  const created = new Date(o.work_started_at || o.created_at).getTime();
   const deadline = o.ship_deadline_at ? new Date(o.ship_deadline_at).getTime() : null;
   const warn = o.ship_warn_at ? new Date(o.ship_warn_at).getTime() : null;
   if (o.shipped_at) {
@@ -187,7 +188,8 @@ function deadlineInfo(o, now = Date.now()) {
     };
   }
   const age = formatDuration(now - created);
-  const base = `Создан ${ruDateTimeShort(o.created_at)}, висит ${age}`;
+  const started = o.work_started_at && o.work_started_at !== o.created_at ? `, в работе с ${ruDateTimeShort(o.work_started_at)}` : '';
+  const base = `Создан ${ruDateTimeShort(o.created_at)}${started}, висит ${age}`;
   if (deadline == null) return { state: 'none', text: `⏱ ${age}`, title: base };
   const title = `${base}. Отправить до ${ruDateTimeShort(o.ship_deadline_at)}`;
   if (now > deadline) return { state: 'overdue', text: `🔥 ${age} · просрочен на ${formatDuration(now - deadline)}`, title };
@@ -195,7 +197,7 @@ function deadlineInfo(o, now = Date.now()) {
   return { state, text: `${state === 'warn' ? '⏳' : '⏱'} ${age} · осталось ${formatDuration(deadline - now)}`, title };
 }
 
-const DEADLINE_FIELDS = ['created_at', 'shipped_at', 'ship_deadline_at', 'ship_warn_at', 'status'];
+const DEADLINE_FIELDS = ['created_at', 'work_started_at', 'shipped_at', 'ship_deadline_at', 'ship_warn_at', 'status'];
 
 function deadlineChip(o) {
   const info = deadlineInfo(o);

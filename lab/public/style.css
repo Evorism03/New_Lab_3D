@@ -384,6 +384,7 @@ table.orders-table tr:hover { background: var(--panel-2); }
   border: 1px solid var(--border);
 }
 
+.pill.negotiating { color: var(--muted); border-style: dashed; }
 .pill.new { color: var(--accent); }
 .pill.printing { color: #c792ea; }
 .pill.to_collect { color: var(--warn); }

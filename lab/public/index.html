@@ -517,6 +517,9 @@ document.getElementById('order-form').addEventListener('submit', async (e) => {
     delivery_price: Number(form.delivery_price.value) || 0,
     notes: form.notes.value,
     items: readItems(),
+    // Заказ заводится до оплаты; после оплаты его переносят в «Новый заказ», а продажа попадает
+    // в бухгалтерию, когда выдан чек.
+    status: 'negotiating',
   };
   // Посылка, ПВЗ и расчёт уходят в заказ, если расчёт сделан для текущих данных формы.
   if (quote && quote.key === quoteKey()) {
