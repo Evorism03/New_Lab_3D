@@ -1497,36 +1497,6 @@ const server = http.createServer(async (req, res) => {
     }
 
     // ---- СДЭК ----
-    if (pathname === '/api/cdek/health' && req.method === 'POST') {
-      const result = await cdek.healthCheck();
-      // API может отвечать, а очередь обработки СДЭК стоять: заявки висят в ACCEPTED без номера.
-      // Это видно только по нашим заказам — ищем созданные больше 5 минут назад и так и не обработанные.
-      const stuck = listOrders().filter((o) => {
-        const sh = o.cdek_shipment;
-        return sh?.uuid && !sh.cdek_number && !sh.errors?.length && sh.request_state !== 'SUCCESSFUL'
-          && sh.created_at && Date.now() - new Date(sh.created_at).getTime() > 5 * 60e3;
-      });
-      const oldest = stuck.reduce((max, o) => Math.max(max, Date.now() - new Date(o.cdek_shipment.created_at).getTime()), 0);
-      result.steps.push({
-        name: 'Обработка заказов СДЭК (заявки без номера дольше 5 минут)',
-        ok: !stuck.length,
-        ms: 0,
-        detail: stuck.length
-          ? `${stuck.length} шт.: ${stuck.slice(0, 5).map((o) => `#${o.display_number}`).join(', ')} — самая старая ждёт ${Math.round(oldest / 60e3)} мин`
-          : 'зависших заявок нет',
-      });
-      if (stuck.length && result.ok) {
-        result.ok = false;
-        result.verdict = 'API СДЭК отвечает, но заказы не обрабатывает: заявки висят в статусе «принята» без номера. '
-          + 'Это сбой очереди на стороне СДЭК — подождите, повторно заказы не создавайте (будут дубли).';
-      }
-      return sendJson(res, 200, result);
-    }
-
-    if (pathname === '/api/cdek/log' && req.method === 'GET') {
-      return sendJson(res, 200, { entries: cdek.requestLog() });
-    }
-
     if (pathname === '/api/cdek/settings' && req.method === 'GET') {
       let shipmentPoint = null;
       try {

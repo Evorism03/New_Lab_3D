@@ -2,7 +2,7 @@
 // Авторизация — OAuth client_credentials: «Account» и «Secure password» из личного кабинета СДЭК
 // (Интеграция → API). Тестовый контур — api.edu.cdek.ru, боевой — api.cdek.ru.
 // Единицы: вес в граммах, габариты в сантиметрах, суммы в рублях.
-import { getSetting, setSetting } from '../db.js';
+import { getSetting } from '../db.js';
 import { addressQuery, addressWords, rankByAddress } from './address-match.js';
 
 const PROD_BASE = 'https://api.cdek.ru/v2';
@@ -105,51 +105,16 @@ async function authorizedFetch(url, init = {}) {
   return res;
 }
 
-// Журнал запросов по заказам и этикеткам (не справочники ПВЗ/городов): последние 30 — в Настройках → СДЭК,
-// чтобы видеть точный ответ СДЭК, а не только то, как его поняла CRM. Ключи/токен сюда не попадают.
-const LOG_KEY = 'cdek_request_log';
-const LOG_SIZE = 30;
-const cut = (value, max) => {
-  const text = typeof value === 'string' ? value : JSON.stringify(value);
-  return text && text.length > max ? `${text.slice(0, max)}…` : text || '';
-};
-
-function logRequest(entry) {
-  if (!/^\/(orders|print)/.test(entry.path)) return;
-  try {
-    const log = JSON.parse(getSetting(LOG_KEY) || '[]');
-    log.unshift({ at: new Date().toISOString(), test: getSetting('cdek_test_mode') === '1', ...entry });
-    setSetting(LOG_KEY, JSON.stringify(log.slice(0, LOG_SIZE)));
-  } catch {
-    // журнал — вспомогательный, его сбой не должен ломать запрос
-  }
-}
-
-export function requestLog() {
-  try {
-    return JSON.parse(getSetting(LOG_KEY) || '[]');
-  } catch {
-    return [];
-  }
-}
-
 export async function cdekRequest(method, pathname, { query, body } = {}) {
   const { base } = config();
   const url = new URL(`${base}${pathname}`);
   for (const [k, v] of Object.entries(query || {})) if (v != null && v !== '') url.searchParams.set(k, v);
-  let res;
-  try {
-    res = await authorizedFetch(url, {
-      method,
-      headers: body ? { 'Content-Type': 'application/json' } : {},
-      body: body ? JSON.stringify(body) : undefined,
-    });
-  } catch (err) {
-    logRequest({ method, path: pathname, status: 0, request: cut(body, 4000), response: `Нет ответа: ${err.message}` });
-    throw err;
-  }
+  const res = await authorizedFetch(url, {
+    method,
+    headers: body ? { 'Content-Type': 'application/json' } : {},
+    body: body ? JSON.stringify(body) : undefined,
+  });
   const text = await res.text();
-  logRequest({ method, path: pathname, status: res.status, request: cut(body, 4000), response: cut(text, 4000) });
   let data = {};
   try {
     data = text ? JSON.parse(text) : {};
@@ -303,62 +268,4 @@ export async function barcodePdf(orderUuid, format = 'A6') {
   const res = await authorizedFetch(url);
   if (!res.ok) throw new Error(`Не удалось скачать этикетку СДЭК (${res.status})`);
   return Buffer.from(await res.arrayBuffer());
-}
-
-// ---- Проверка связи (Настройки → СДЭК → «Проверить связь») ----
-// Проверяем с сервера CRM (важна связь именно отсюда, а не из браузера) по шагам: интернет вообще →
-// доступность API СДЭК (боевой и тестовый) → вход по ключам → простой запрос данных. Каждый шаг с временем.
-async function timed(fn) {
-  const start = Date.now();
-  try {
-    const detail = await fn();
-    return { ok: true, ms: Date.now() - start, detail };
-  } catch (err) {
-    return { ok: false, ms: Date.now() - start, detail: err.message };
-  }
-}
-
-async function reach(url) {
-  let res;
-  try {
-    res = await fetch(url, { headers: BASE_HEADERS, signal: AbortSignal.timeout(10_000) });
-  } catch (err) {
-    if (err.name === 'TimeoutError') throw new Error('не ответил за 10 с');
-    throw new Error(`нет соединения (${err.cause?.code || err.message})`);
-  }
-  // Любой ответ API (даже 401 без токена) значит, что сервер жив; 5xx и HTML-заглушка защиты — нет.
-  const text = await res.text().catch(() => '');
-  if (res.status >= 500) throw new Error(`HTTP ${res.status} — ошибка на стороне СДЭК`);
-  if (res.status === 403 && /<html|<!doctype/i.test(text)) throw new Error(cdekErrorText({ raw: text }, 403));
-  return `отвечает (HTTP ${res.status})`;
-}
-
-export async function healthCheck() {
-  const testMode = getSetting('cdek_test_mode') === '1';
-  const steps = [];
-  steps.push({ name: 'Интернет на сервере CRM (ya.ru)', ...(await timed(() => reach('https://ya.ru/'))) });
-  steps.push({ name: `Боевой API СДЭК (api.cdek.ru)${testMode ? '' : ' — используется'}`, ...(await timed(() => reach(`${PROD_BASE}/location/cities?size=1`))) });
-  steps.push({ name: `Тестовый API СДЭК (api.edu.cdek.ru)${testMode ? ' — используется' : ''}`, ...(await timed(() => reach(`${TEST_BASE}/location/cities?size=1`))) });
-  const hasKeys = getSetting('cdek_client_id') && getSetting('cdek_client_secret');
-  if (hasKeys) {
-    steps.push({ name: 'Вход по ключам (Account / Secure password)', ...(await timed(async () => { await getToken(true); return 'токен получен'; })) });
-    steps.push({ name: 'Запрос данных (город Москва)', ...(await timed(async () => {
-      const list = await cdekRequest('GET', '/location/cities', { query: { code: 44, size: 1 } });
-      if (!Array.isArray(list) || !list.length) throw new Error('СДЭК вернул пустой ответ');
-      return `ответ получен: ${list[0].city}`;
-    })) });
-  }
-
-  const [internet, prod, test, auth, data] = steps;
-  const used = testMode ? test : prod;
-  let verdict;
-  if (!internet.ok && !used.ok) verdict = 'На сервере CRM, похоже, нет интернета — проверьте подключение сервера.';
-  else if (!used.ok) verdict = 'API СДЭК недоступен с сервера CRM, при этом интернет есть — сбой на стороне СДЭК. Подождите и повторите.';
-  else if (!hasKeys) verdict = 'API СДЭК отвечает. Ключи не заданы — вход и запросы не проверялись.';
-  else if (!auth.ok) verdict = 'API СДЭК отвечает, но вход по ключам не прошёл — проверьте Account / Secure password (или это сбой авторизации СДЭК).';
-  else if (!data.ok) verdict = 'Вход прошёл, но СДЭК не отдаёт данные — вероятно, частичный сбой у СДЭК.';
-  else if (used.ms > 5000 || data.ms > 5000) verdict = 'API СДЭК работает, но очень медленно — возможны таймауты.';
-  else verdict = 'API СДЭК работает нормально.';
-  const ok = used.ok && (!hasKeys || (auth.ok && data.ok));
-  return { ok, test_mode: testMode, verdict, steps, checked_at: new Date().toISOString() };
 }

@@ -216,26 +216,6 @@
       <button type="button" class="secondary" id="cdek-edit-creds" hidden>Изменить ключи</button>
     </div>
 
-    <div class="card" style="margin-top:16px">
-      <h2>Проверка связи</h2>
-      <p class="muted">Проверяет с сервера CRM, отвечает ли API СДЭК: есть ли интернет, живы ли боевой и тестовый API,
-        проходит ли вход по ключам и отдаёт ли СДЭК данные. Сайты СДЭК могут не открываться, а API при этом работать — и наоборот.</p>
-      <div class="toolbar">
-        <button type="button" class="secondary" id="cdek-health">🩺 Проверить связь со СДЭК</button>
-      </div>
-      <div id="cdek-health-result"></div>
-    </div>
-
-    <div class="card" style="margin-top:16px">
-      <h2>Журнал запросов</h2>
-      <p class="muted">Последние 30 запросов к СДЭК по заказам и этикеткам — что CRM отправила и что СДЭК ответил дословно.
-        Если заказ не появляется в кабинете СДЭК, здесь видна настоящая причина.</p>
-      <div class="toolbar">
-        <button type="button" class="secondary" id="cdek-log-load">Показать журнал</button>
-        <button type="button" class="secondary" id="cdek-log-copy" hidden>Скопировать всё</button>
-      </div>
-      <div id="cdek-log"></div>
-    </div>
   </section>
 
   <section data-panel="npd" hidden>
@@ -682,67 +662,6 @@ document.getElementById('cdek-sender-find').addEventListener('click', async () =
 });
 
 loadCdek().catch((err) => toast(err.message, 'error'));
-
-// ---- СДЭК: проверка связи ----
-document.getElementById('cdek-health').addEventListener('click', async (e) => {
-  const btn = e.currentTarget;
-  const box = document.getElementById('cdek-health-result');
-  btn.disabled = true;
-  box.innerHTML = '<div class="muted" style="margin-top:8px">Проверяем… (до 30 секунд)</div>';
-  try {
-    const r = await api('/api/cdek/health', { method: 'POST' });
-    box.innerHTML = `
-      <div style="margin:10px 0;font-weight:600;color:${r.ok ? 'var(--accent-2)' : 'var(--danger)'}">${r.ok ? '✅' : '⚠️'} ${escapeText(r.verdict)}</div>
-      <div>${r.steps.map((st) => `
-        <div style="display:flex;gap:10px;align-items:baseline;padding:7px 0;border-top:1px solid var(--border)">
-          <span>${st.ok ? '✅' : '❌'}</span>
-          <span style="flex:1;min-width:0"><b style="font-weight:600">${escapeText(st.name)}</b><br><span class="muted" style="font-size:13px">${escapeText(st.detail)}</span></span>
-          <span class="muted" style="white-space:nowrap;font-size:13px">${st.ms ? `${(st.ms / 1000).toLocaleString('ru-RU', { maximumFractionDigits: 1 })} с` : ''}</span>
-        </div>`).join('')}</div>
-      <div class="muted" style="font-size:12px;margin-top:6px">Проверено ${escapeText(new Date(r.checked_at).toLocaleString('ru-RU'))}</div>`;
-  } catch (err) {
-    box.innerHTML = `<div style="color:var(--danger);margin-top:8px">${escapeText(err.message)}</div>`;
-  } finally {
-    btn.disabled = false;
-  }
-});
-
-// ---- СДЭК: журнал запросов ----
-let cdekLogText = '';
-document.getElementById('cdek-log-load').addEventListener('click', async () => {
-  const box = document.getElementById('cdek-log');
-  try {
-    const { entries } = await api('/api/cdek/log');
-    cdekLogText = entries.map((e) => [
-      `${new Date(e.at).toLocaleString('ru-RU')} ${e.method} ${e.path} → ${e.status || 'нет ответа'}${e.test ? ' [тестовый режим]' : ''}`,
-      e.request ? `Запрос: ${e.request}` : '',
-      `Ответ: ${e.response}`,
-    ].filter(Boolean).join('\n')).join('\n\n');
-    document.getElementById('cdek-log-copy').hidden = !entries.length;
-    box.innerHTML = entries.length
-      ? entries.map((e) => `
-        <details style="border-top:1px solid var(--border);padding:8px 0">
-          <summary style="cursor:pointer">
-            <span class="pill ${e.status >= 200 && e.status < 300 ? 'delivered' : 'cancelled'}">${e.status || '—'}</span>
-            <code>${escapeText(e.method)} ${escapeText(e.path)}</code>
-            <span class="muted">${escapeText(new Date(e.at).toLocaleString('ru-RU'))}${e.test ? ' · тестовый режим' : ''}</span>
-          </summary>
-          ${e.request ? `<div class="muted" style="margin-top:6px">Запрос</div><pre style="white-space:pre-wrap;word-break:break-all;font-size:12px;margin:4px 0">${escapeText(e.request)}</pre>` : ''}
-          <div class="muted">Ответ СДЭК</div><pre style="white-space:pre-wrap;word-break:break-all;font-size:12px;margin:4px 0">${escapeText(e.response)}</pre>
-        </details>`).join('')
-      : '<div class="muted">Запросов по заказам ещё не было (журнал ведётся с этого обновления).</div>';
-  } catch (err) {
-    toast(err.message, 'error');
-  }
-});
-document.getElementById('cdek-log-copy').addEventListener('click', async () => {
-  try {
-    await navigator.clipboard.writeText(cdekLogText);
-    toast('Журнал скопирован', 'success');
-  } catch {
-    toast('Не удалось скопировать — выделите текст вручную', 'error');
-  }
-});
 
 // ---- Мой налог ----
 let npdSettings = {};
