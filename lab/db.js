@@ -181,6 +181,22 @@ for (const stmt of [
 // NULL допускает сколько угодно "обычных" заказов без external_order_id.
 db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_orders_external_order_id ON orders(external_order_id)');
 
+// История смены статусов — для статистики «сколько заказ проводит на каждом этапе».
+// Ведётся с момента обновления; у старых заказов истории нет.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS order_status_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    order_id INTEGER NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
+    status TEXT NOT NULL,
+    at TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_status_log_order ON order_status_log(order_id, at);
+`);
+
+function logStatus(id, status, now) {
+  db.prepare('INSERT INTO order_status_log (order_id, status, at) VALUES (?, ?, ?)').run(id, status, now);
+}
+
 // Старые отправленные заказы: момент отправки неизвестен — берём время последнего изменения.
 db.exec(
   "UPDATE orders SET shipped_at = updated_at WHERE shipped_at IS NULL AND status IN ('shipped', 'delivered')"
@@ -518,6 +534,7 @@ export function createOrder(data) {
     );
   const orderId = info.lastInsertRowid;
   syncShippedAt(orderId, data.status || 'new', now);
+  logStatus(orderId, data.status || 'new', now);
   if (number) db.prepare('UPDATE orders SET number = ? WHERE id = ?').run(number, orderId);
   insertItems(orderId, data.items || []);
   syncOrderLedger(orderId);
@@ -591,6 +608,7 @@ export function updateOrder(id, data) {
   if (data.status && data.status !== existing.status) {
     db.prepare('UPDATE orders SET board_position = NULL WHERE id = ?').run(id);
     syncShippedAt(id, data.status, now);
+    logStatus(id, data.status, now);
   }
   if (data.items) {
     db.prepare('DELETE FROM items WHERE order_id = ?').run(id);
@@ -609,7 +627,10 @@ export function reorderBoardColumn(status, ids) {
   db.exec('BEGIN');
   try {
     ids.forEach((id, index) => {
-      if (setStatus.run(status, now, id, status).changes) syncShippedAt(id, status, now);
+      if (setStatus.run(status, now, id, status).changes) {
+        syncShippedAt(id, status, now);
+        logStatus(id, status, now);
+      }
       setPos.run(index, id);
     });
     db.exec('COMMIT');

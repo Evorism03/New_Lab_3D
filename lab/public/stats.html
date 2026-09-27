@@ -1,0 +1,541 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Статистика — Order Automation</title>
+<link rel="stylesheet" href="/style.css">
+<link rel="manifest" href="/manifest.webmanifest">
+<meta name="theme-color" content="#171d2b">
+</head>
+<body>
+<div class="layout">
+<aside class="sidebar" id="sidebar">
+  <div class="sidebar-top">
+    <span class="brand">📦 Заказы</span>
+    <button type="button" class="sidebar-toggle" id="sidebar-toggle" title="Свернуть/развернуть меню">☰</button>
+  </div>
+  <a href="/" class="new-order-btn"><span class="nav-icon">➕</span><span class="label">Новый заказ</span></a>
+  <nav class="sidebar-nav">
+    <a href="/board.html"><span class="nav-icon">🗂</span><span class="label">Доска</span></a>
+    <a href="/assembly.html"><span class="nav-icon">🔧</span><span class="label">Сборка</span></a>
+    <a href="/orders.html"><span class="nav-icon">📋</span><span class="label">Все заказы</span></a>
+    <a href="/serials.html"><span class="nav-icon">#️⃣</span><span class="label">Серийные номера</span></a>
+    <a href="/stats.html" class="active"><span class="nav-icon">📊</span><span class="label">Статистика</span></a>
+    <a href="/accounting.html" data-admin-only hidden><span class="nav-icon">💰</span><span class="label">Бухгалтерия</span></a>
+    <a href="/settings.html"><span class="nav-icon">⚙️</span><span class="label">Настройки</span></a>
+  </nav>
+  <div class="sidebar-bottom" id="sidebar-user"></div>
+</aside>
+<main>
+  <div class="toolbar">
+    <select id="period" title="Период" style="max-width:200px">
+      <option value="7">Последние 7 дней</option>
+      <option value="30" selected>Последние 30 дней</option>
+      <option value="90">Последние 90 дней</option>
+      <option value="365">Последний год</option>
+      <option value="0">За всё время</option>
+    </select>
+    <span class="muted" id="period-note"></span>
+  </div>
+
+  <div id="stats-root">
+    <h3 class="st-section">Сейчас</h3>
+    <div class="acc-stats" id="now-tiles"></div>
+
+    <h3 class="st-section">За период</h3>
+    <div class="acc-stats" id="period-tiles"></div>
+
+    <div class="card st-card">
+      <div class="st-card-head">
+        <h3>Поток заказов: пришло и отправлено</h3>
+        <div class="st-legend" id="flow-legend"></div>
+      </div>
+      <div class="st-chart" id="flow-chart"></div>
+      <details class="st-table-toggle"><summary>Таблица</summary><div id="flow-table"></div></details>
+    </div>
+
+    <div class="st-grid">
+      <div class="card st-card">
+        <h3>🔧 Что произвести сейчас</h3>
+        <p class="muted st-hint">Товары заказов в статусах «Новый», «Печать», «Собрать» — ещё не собраны.</p>
+        <div id="backlog"></div>
+        <div id="print-backlog"></div>
+      </div>
+      <div class="card st-card">
+        <h3>🔥 Просроченные заказы</h3>
+        <p class="muted st-hint">Не отправлены, срок из Настройки → Дедлайн уже прошёл.</p>
+        <div id="overdue"></div>
+      </div>
+    </div>
+
+    <div class="card st-card">
+      <div class="st-card-head">
+        <h3>📈 Спрос и прогноз</h3>
+        <span class="muted" id="demand-note"></span>
+      </div>
+      <p class="muted st-hint">Сколько штук заказали за период, средний темп в неделю и сколько при таком темпе понадобится
+        на ближайшие недели — для закупки комплектующих и пластика.</p>
+      <div class="st-grid" id="demand"></div>
+    </div>
+
+    <div class="st-grid">
+      <div class="card st-card">
+        <h3>📅 Заказы по дням недели</h3>
+        <div class="st-chart" id="weekday-chart"></div>
+      </div>
+      <div class="card st-card">
+        <h3>⏱ Сколько заказ проводит на этапе</h3>
+        <p class="muted st-hint">Среднее время в статусе (медиана в подсказке). История статусов ведётся с этого обновления.</p>
+        <div id="stages"></div>
+      </div>
+    </div>
+
+    <div class="st-grid">
+      <div class="card st-card">
+        <h3>🚚 Транспортные компании</h3>
+        <div id="delivery"></div>
+      </div>
+      <div class="card st-card">
+        <h3>🏷 Откуда заказы</h3>
+        <div id="sources"></div>
+      </div>
+    </div>
+  </div>
+</main>
+</div>
+<div class="viz-tip" id="viz-tip" role="tooltip" hidden></div>
+<style>
+  /* Цвета графиков: серии проверены на CVD и контраст с фоном карточки (#171d2b). */
+  main {
+    --series-1: #3987e5;
+    --series-2: #d95926;
+    --viz-grid: #262e40;
+    --viz-axis: #3a4458;
+  }
+  .st-section { margin: 4px 0 8px; font-size: 13px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; }
+  .st-card { margin-bottom: 16px; min-width: 0; }
+  .st-card h3 { margin: 0 0 10px; font-size: 16px; }
+  .st-card-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 8px 16px; }
+  .st-hint { font-size: 12px; margin: -4px 0 10px; line-height: 1.5; }
+  .st-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 16px; }
+  .st-grid > .st-card { margin-bottom: 16px; }
+  #demand { gap: 20px 28px; }
+  #demand h4 { margin: 0 0 8px; font-size: 13px; color: var(--muted); font-weight: 600; }
+  .st-chart { position: relative; width: 100%; }
+  .st-chart svg { display: block; width: 100%; overflow: visible; }
+  .st-chart text { fill: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+  .st-chart .val { fill: var(--text); font-weight: 600; }
+  .st-legend { display: flex; gap: 14px; font-size: 12px; color: var(--muted); }
+  .st-legend span { display: inline-flex; align-items: center; gap: 6px; }
+  .st-legend i { display: inline-block; width: 14px; height: 2px; border-radius: 1px; }
+  .st-table-toggle { margin-top: 8px; font-size: 13px; color: var(--muted); }
+  .st-table-toggle summary { cursor: pointer; }
+  .st-table-toggle table { margin-top: 8px; }
+  .st-empty { color: var(--muted); font-size: 13px; padding: 8px 0; }
+  /* Горизонтальные полосы: одна серия, подпись и значения — цветом текста, цвет несёт только полоса. */
+  .bar-list { display: grid; grid-template-columns: minmax(90px, 1.1fr) minmax(60px, 2fr) auto; column-gap: 10px; row-gap: 2px; }
+  .bar-row, .bar-head { grid-column: 1 / -1; display: grid; grid-template-columns: subgrid; align-items: center; padding: 5px 4px; border-radius: 6px; font-size: 13px; }
+  .bar-row:hover, .bar-row:focus-visible { background: var(--panel-2); outline: none; }
+  .bar-label { display: flex; align-items: center; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .bar-track { height: 10px; }
+  .bar-fill { height: 100%; min-width: 2px; background: var(--series-1); border-radius: 0 4px 4px 0; }
+  .bar-row:hover .bar-fill { filter: brightness(1.2); }
+  .bar-val { white-space: nowrap; font-variant-numeric: tabular-nums; text-align: right; }
+  .bar-val small { color: var(--muted); margin-left: 6px; }
+  .bar-head { padding: 0 4px 2px; font-size: 11px; color: var(--muted); }
+  .bar-head span:last-child { text-align: right; }
+  .st-scroll { overflow-x: auto; }
+  .st-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .st-table th { color: var(--muted); font-weight: 600; text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border); font-size: 12px; }
+  .st-table td { padding: 7px 8px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+  .st-table td.num, .st-table th.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .st-table tr.clickable { cursor: pointer; }
+  .st-table tr.clickable:hover { background: var(--panel-2); }
+  .acc-stat.warn .acc-stat-value { color: var(--warn); }
+  .viz-tip { position: fixed; z-index: 50; pointer-events: none; background: var(--panel-2); border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; font-size: 12px; color: var(--text); box-shadow: 0 6px 20px rgba(0,0,0,.35); max-width: 260px; }
+  .viz-tip .tip-title { color: var(--muted); margin-bottom: 4px; }
+  .viz-tip .tip-row { display: flex; align-items: center; gap: 8px; }
+  .viz-tip .tip-row b { font-variant-numeric: tabular-nums; }
+  .viz-tip .tip-row i { display: inline-block; width: 12px; height: 2px; border-radius: 1px; }
+  .viz-tip .tip-row span { color: var(--muted); }
+  #stats-root.loading { opacity: 0.55; transition: opacity .15s; }
+  @container main (max-width: 700px) {
+    .st-grid { grid-template-columns: minmax(0, 1fr); }
+    .bar-list { grid-template-columns: minmax(80px, 1fr) minmax(40px, 1fr) auto; }
+  }
+</style>
+<script src="/app.js"></script>
+<script>
+let catalog = {};
+let statuses = [];
+let data = null;
+
+const SERIES = [
+  { key: 'created', label: 'Пришло заказов', color: 'var(--series-1)' },
+  { key: 'shipped', label: 'Отправлено', color: 'var(--series-2)' },
+];
+
+const num = (n) => Number(n || 0).toLocaleString('ru-RU', { maximumFractionDigits: 1 });
+const rub = (n) => `${Math.round(Number(n) || 0).toLocaleString('ru-RU')} ₽`;
+const hoursText = (h) => (h == null ? '—' : formatDuration(h * 3600e3));
+
+// ---- Подсказка (одна на страницу; текст — только через textContent) ----
+const tip = document.getElementById('viz-tip');
+
+function showTip(x, y, title, rows) {
+  tip.replaceChildren();
+  const t = document.createElement('div');
+  t.className = 'tip-title';
+  t.textContent = title;
+  tip.appendChild(t);
+  for (const r of rows) {
+    const row = document.createElement('div');
+    row.className = 'tip-row';
+    if (r.color) {
+      const key = document.createElement('i');
+      key.style.background = r.color;
+      row.appendChild(key);
+    }
+    const b = document.createElement('b');
+    b.textContent = r.value;
+    const s = document.createElement('span');
+    s.textContent = r.label;
+    row.append(b, s);
+    tip.appendChild(row);
+  }
+  tip.hidden = false;
+  const w = tip.offsetWidth;
+  const h = tip.offsetHeight;
+  tip.style.left = `${Math.min(window.innerWidth - w - 8, x + 14)}px`;
+  tip.style.top = `${Math.max(8, y - h - 12)}px`;
+}
+function hideTip() { tip.hidden = true; }
+
+// ---- Плитки ----
+function tile(label, value, note = '', cls = '') {
+  return `<div class="acc-stat ${cls}"><div class="acc-stat-label">${label}</div><div class="acc-stat-value">${value}</div>${note ? `<div class="acc-stat-note">${note}</div>` : ''}</div>`;
+}
+
+function renderTiles(k) {
+  document.getElementById('now-tiles').innerHTML = [
+    tile('В работе', num(k.active), 'заказов не отправлено'),
+    tile('К производству', `${num(k.backlog_units)} шт`, `в ${num(k.to_produce)} заказах`),
+    tile('Ждут отправки', num(k.waiting_shipment), 'заказов собрано'),
+    tile('Просрочено', num(k.overdue), k.overdue ? '🔥 срок отправки прошёл' : 'всё в срок', k.overdue ? 'neg' : 'pos'),
+    tile('Бэклог закроется', k.backlog_days == null ? '—' : `≈ ${formatDuration(k.backlog_days * 864e5)}`,
+      k.backlog_days == null ? 'нет отправок за период' : `при темпе ${num(k.shipped_units_per_week)} шт/нед`),
+  ].join('');
+  const lt = k.lead_time;
+  document.getElementById('period-tiles').innerHTML = [
+    tile('Заказов', num(k.created), `${num(k.orders_per_week)} в неделю${k.cancelled ? ` · отменено ${num(k.cancelled)}` : ''}`),
+    tile('Штук заказано', num(k.created_units), `${num(k.units_per_week)} в неделю`),
+    tile('Выручка', rub(k.revenue), `средний чек ${rub(k.avg_check)}`),
+    tile('Отправлено', num(k.shipped), `${num(k.shipped_units)} шт`),
+    tile('До отправки', hoursText(lt.median_hours), lt.count ? `медиана · в среднем ${hoursText(lt.avg_hours)} · 90% за ${hoursText(lt.p90_hours)}` : 'нет отправок за период'),
+    tile('Отправлено в срок', k.on_time_percent == null ? '—' : `${num(k.on_time_percent)}%`, 'от отправленных с дедлайном',
+      k.on_time_percent == null ? '' : k.on_time_percent >= 90 ? 'pos' : k.on_time_percent >= 70 ? 'warn' : 'neg'),
+  ].join('');
+}
+
+// ---- Линейный график потока ----
+function bucketLabel(date, unit, long = false) {
+  const d = new Date(`${date}T00:00:00`);
+  if (unit === 'month') return d.toLocaleDateString('ru-RU', { month: long ? 'long' : 'short', year: long ? 'numeric' : '2-digit' });
+  const s = d.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit' });
+  return unit === 'week' ? (long ? `неделя с ${s}` : s) : s;
+}
+
+function niceMax(v) {
+  if (v <= 4) return 4;
+  const step = Math.pow(10, Math.floor(Math.log10(v)));
+  for (const m of [1, 2, 2.5, 5, 10]) if (m * step >= v) return m * step;
+  return 10 * step;
+}
+
+function renderFlow() {
+  const { flow, period } = data;
+  const wrap = document.getElementById('flow-chart');
+  document.getElementById('flow-legend').innerHTML = SERIES.map((s) => `<span><i style="background:${s.color}"></i>${s.label}</span>`).join('');
+  const W = Math.max(280, wrap.clientWidth);
+  const H = 240;
+  const m = { t: 12, r: 12, b: 26, l: 34 };
+  const iw = W - m.l - m.r;
+  const ih = H - m.t - m.b;
+  const max = niceMax(Math.max(1, ...flow.flatMap((b) => [b.created, b.shipped])));
+  const n = flow.length;
+  const x = (i) => m.l + (n <= 1 ? iw / 2 : (i / (n - 1)) * iw);
+  const y = (v) => m.t + ih - (v / max) * ih;
+  const ticks = [0, max / 4, max / 2, (3 * max) / 4, max].filter((v) => Number.isInteger(v));
+  const every = Math.max(1, Math.ceil(n / Math.max(2, Math.floor(iw / 56))));
+  let svg = `<svg viewBox="0 0 ${W} ${H}" height="${H}" role="img" aria-label="Пришло и отправлено заказов по ${period.unit === 'day' ? 'дням' : period.unit === 'week' ? 'неделям' : 'месяцам'}">`;
+  for (const t of ticks) {
+    svg += `<line x1="${m.l}" x2="${W - m.r}" y1="${y(t)}" y2="${y(t)}" stroke="${t === 0 ? 'var(--viz-axis)' : 'var(--viz-grid)'}" stroke-width="1"/>`;
+    svg += `<text x="${m.l - 6}" y="${y(t) + 4}" text-anchor="end">${t}</text>`;
+  }
+  // Подписи через равный шаг; последняя — только если не налезает на предыдущую.
+  const lastTick = Math.floor((n - 1) / every) * every;
+  flow.forEach((b, i) => {
+    if (i % every === 0 || (i === n - 1 && i - lastTick >= every / 2)) svg += `<text x="${x(i)}" y="${H - 8}" text-anchor="middle">${bucketLabel(b.date, period.unit)}</text>`;
+  });
+  for (const s of SERIES) {
+    const pts = flow.map((b, i) => `${x(i)},${y(b[s.key])}`).join(' ');
+    svg += `<polyline points="${pts}" fill="none" stroke="${s.color}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>`;
+    if (n) svg += `<circle cx="${x(n - 1)}" cy="${y(flow[n - 1][s.key])}" r="4" fill="${s.color}" stroke="var(--panel)" stroke-width="2"/>`;
+  }
+  svg += `<line class="xhair" x1="0" x2="0" y1="${m.t}" y2="${m.t + ih}" stroke="var(--muted)" stroke-width="1" visibility="hidden"/>`;
+  svg += SERIES.map((s) => `<circle class="hover-dot" data-k="${s.key}" r="4" fill="${s.color}" stroke="var(--panel)" stroke-width="2" visibility="hidden"/>`).join('');
+  svg += `<rect x="${m.l}" y="${m.t}" width="${iw}" height="${ih}" fill="transparent" tabindex="0"/></svg>`;
+  wrap.innerHTML = svg;
+
+  const el_ = wrap.querySelector('svg');
+  const hair = el_.querySelector('.xhair');
+  const dots = el_.querySelectorAll('.hover-dot');
+  const hit = el_.querySelector('rect');
+  const at = (i, cx, cy) => {
+    const b = flow[i];
+    hair.setAttribute('x1', x(i));
+    hair.setAttribute('x2', x(i));
+    hair.setAttribute('visibility', 'visible');
+    dots.forEach((d) => { d.setAttribute('cx', x(i)); d.setAttribute('cy', y(b[d.dataset.k])); d.setAttribute('visibility', 'visible'); });
+    showTip(cx, cy, bucketLabel(b.date, period.unit, true), [
+      ...SERIES.map((s) => ({ color: s.color, value: num(b[s.key]), label: s.label.toLowerCase() })),
+      { value: num(b.created_units), label: 'штук заказано' },
+    ]);
+  };
+  const clear = () => { hair.setAttribute('visibility', 'hidden'); dots.forEach((d) => d.setAttribute('visibility', 'hidden')); hideTip(); };
+  hit.addEventListener('pointermove', (e) => {
+    const r = el_.getBoundingClientRect();
+    const px = ((e.clientX - r.left) / r.width) * W;
+    const i = n <= 1 ? 0 : Math.max(0, Math.min(n - 1, Math.round(((px - m.l) / iw) * (n - 1))));
+    at(i, e.clientX, e.clientY);
+  });
+  hit.addEventListener('pointerleave', clear);
+  let focusIdx = n - 1;
+  hit.addEventListener('focus', () => { const r = hit.getBoundingClientRect(); at(focusIdx, r.left + r.width / 2, r.top); });
+  hit.addEventListener('blur', clear);
+  hit.addEventListener('keydown', (e) => {
+    if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+    e.preventDefault();
+    focusIdx = Math.max(0, Math.min(n - 1, focusIdx + (e.key === 'ArrowRight' ? 1 : -1)));
+    const r = hit.getBoundingClientRect();
+    at(focusIdx, r.left + ((x(focusIdx) - m.l) / iw) * r.width, r.top);
+  });
+
+  document.getElementById('flow-table').innerHTML = `
+    <table class="st-table"><thead><tr><th>Период</th><th class="num">Пришло</th><th class="num">Штук</th><th class="num">Отправлено</th></tr></thead>
+    <tbody>${flow.slice().reverse().map((b) => `<tr><td>${escapeHtml(bucketLabel(b.date, period.unit, true))}</td><td class="num">${b.created}</td><td class="num">${b.created_units}</td><td class="num">${b.shipped}</td></tr>`).join('')}</tbody></table>`;
+}
+
+// ---- Колонки по дням недели ----
+function renderWeekday() {
+  const wrap = document.getElementById('weekday-chart');
+  const rows = data.weekday;
+  const W = Math.max(260, wrap.clientWidth);
+  const H = 180;
+  const m = { t: 18, b: 22 };
+  const ih = H - m.t - m.b;
+  const max = Math.max(1, ...rows.map((r) => r.orders));
+  const band = W / rows.length;
+  const bw = Math.min(24, band * 0.5);
+  let svg = `<svg viewBox="0 0 ${W} ${H}" height="${H}" role="img" aria-label="Заказы по дням недели">`;
+  svg += `<line x1="0" x2="${W}" y1="${m.t + ih}" y2="${m.t + ih}" stroke="var(--viz-axis)" stroke-width="1"/>`;
+  rows.forEach((r, i) => {
+    const cx = band * i + band / 2;
+    const h = (r.orders / max) * ih;
+    const top = m.t + ih - h;
+    const rad = Math.min(4, h);
+    if (r.orders) {
+      svg += `<path d="M${cx - bw / 2},${m.t + ih} V${top + rad} Q${cx - bw / 2},${top} ${cx - bw / 2 + rad},${top} H${cx + bw / 2 - rad} Q${cx + bw / 2},${top} ${cx + bw / 2},${top + rad} V${m.t + ih} Z" fill="var(--series-1)"/>`;
+      svg += `<text class="val" x="${cx}" y="${top - 5}" text-anchor="middle">${r.orders}</text>`;
+    }
+    svg += `<text x="${cx}" y="${H - 6}" text-anchor="middle">${r.label}</text>`;
+    svg += `<rect class="wd-hit" data-i="${i}" x="${band * i}" y="0" width="${band}" height="${H}" fill="transparent" tabindex="0"/>`;
+  });
+  wrap.innerHTML = `${svg}</svg>`;
+  const total = rows.reduce((s, r) => s + r.orders, 0);
+  wrap.querySelectorAll('.wd-hit').forEach((h) => {
+    const r = rows[Number(h.dataset.i)];
+    const show = (cx, cy) => showTip(cx, cy, r.label, [{ value: num(r.orders), label: `заказов${total ? ` · ${num((r.orders / total) * 100)}%` : ''}` }]);
+    h.addEventListener('pointermove', (e) => show(e.clientX, e.clientY));
+    h.addEventListener('focus', () => { const b = h.getBoundingClientRect(); show(b.left + b.width / 2, b.top + 20); });
+    h.addEventListener('pointerleave', hideTip);
+    h.addEventListener('blur', hideTip);
+  });
+}
+
+// ---- Списки-полосы ----
+function barList(rows, { value, valueText, note, tipRows, head } = {}) {
+  if (!rows.length) return '<div class="st-empty">Нет данных за период.</div>';
+  const max = Math.max(...rows.map(value), 1);
+  const headHtml = head ? `<div class="bar-head"><span>${head[0]}</span><span></span><span>${head[1]}</span></div>` : '';
+  return `<div class="bar-list">${headHtml}${rows.map((r, i) => `
+    <div class="bar-row" tabindex="0" data-i="${i}">
+      <span class="bar-label">${r.swatch ? dot(r.swatch) : ''}${escapeHtml(r.label)}</span>
+      <span class="bar-track"><span class="bar-fill" style="display:block;width:${(value(r) / max) * 100}%"></span></span>
+      <span class="bar-val">${valueText(r)}${note ? `<small>${note(r)}</small>` : ''}</span>
+    </div>`).join('')}</div>`;
+}
+
+function bindBarTips(container, rows, tipRows) {
+  container.querySelectorAll('.bar-row').forEach((row) => {
+    const r = rows[Number(row.dataset.i)];
+    const show = (x, y) => showTip(x, y, r.label, tipRows(r));
+    row.addEventListener('pointermove', (e) => show(e.clientX, e.clientY));
+    row.addEventListener('focus', () => { const b = row.getBoundingClientRect(); show(b.left + b.width / 2, b.top); });
+    row.addEventListener('pointerleave', hideTip);
+    row.addEventListener('blur', hideTip);
+  });
+}
+
+function renderMix(id, rows, unitLabel = 'шт') {
+  const box = document.getElementById(id);
+  box.innerHTML = barList(rows, {
+    value: (r) => r.qty,
+    valueText: (r) => `${num(r.qty)}`,
+    note: (r) => `${num(r.share)}%`,
+  });
+  bindBarTips(box, rows, (r) => [
+    { value: `${num(r.qty)} ${unitLabel}`, label: `${num(r.share)}% от всех` },
+    { value: num(r.per_week), label: 'в неделю' },
+  ]);
+}
+
+function renderDemand() {
+  const d = data.demand;
+  document.getElementById('demand-note').textContent = `темп за ${num(d.weeks)} нед. · прогноз на ${d.forecast_weeks} нед.`;
+  const groups = [
+    ['products', 'Товары'],
+    ['colors', 'Цвета'],
+    ['connectors', 'Разъёмы'],
+    ['materials', 'Материалы печати'],
+  ].filter(([key]) => key !== 'materials' || d.materials.length);
+  const box = document.getElementById('demand');
+  box.innerHTML = groups.map(([key, title]) => `<div><h4>${title}</h4><div data-demand="${key}"></div></div>`).join('');
+  for (const [key] of groups) {
+    const rows = d[key];
+    const el2 = box.querySelector(`[data-demand="${key}"]`);
+    el2.innerHTML = barList(rows, {
+      head: ['', 'шт · в нед. · прогноз'],
+      value: (r) => r.qty,
+      valueText: (r) => `${num(r.qty)}`,
+      note: (r) => `${num(r.per_week)}/нед · ≈${num(r.forecast)}`,
+    });
+    bindBarTips(el2, rows, (r) => [
+      { value: `${num(r.qty)} шт`, label: `заказано за период (${num(r.share)}%)` },
+      { value: `${num(r.per_week)} шт`, label: 'в среднем в неделю' },
+      { value: `≈ ${num(r.forecast)} шт`, label: `понадобится на ${d.forecast_weeks} нед.` },
+    ]);
+  }
+}
+
+function renderBacklog() {
+  const rows = data.backlog;
+  document.getElementById('backlog').innerHTML = rows.length ? `
+    <div class="st-scroll"><table class="st-table"><thead><tr><th>Товар</th><th>Цвет</th><th>Разъём</th><th class="num">Шт</th><th class="num">Заказов</th><th class="num">Ждёт</th></tr></thead>
+    <tbody>${rows.map((r) => `<tr>
+      <td>${escapeHtml(r.product)}</td>
+      <td>${r.color ? `${dot(r.color_swatch)}${escapeHtml(r.color_label)}` : '—'}</td>
+      <td>${r.connector ? escapeHtml(r.connector_label) : '—'}</td>
+      <td class="num"><b>${num(r.qty)}</b></td>
+      <td class="num">${num(r.orders)}</td>
+      <td class="num" title="Самый старый заказ создан ${escapeHtml(ruDateTimeShort(r.oldest))}">${formatDuration(Date.now() - new Date(r.oldest).getTime())}</td>
+    </tr>`).join('')}</tbody></table></div>` : '<div class="st-empty">Собирать нечего — все заказы собраны. 🎉</div>';
+  const pr = data.print_backlog;
+  document.getElementById('print-backlog').innerHTML = pr.length ? `
+    <h4 style="margin:16px 0 6px;font-size:13px;color:var(--muted)">Печать (заказы с сайта)</h4>
+    <div class="st-scroll"><table class="st-table"><thead><tr><th>Материал</th><th>Отделка</th><th class="num">Шт</th><th class="num">Заказов</th></tr></thead>
+    <tbody>${pr.map((r) => `<tr><td>${escapeHtml(r.material)}</td><td>${escapeHtml(r.finish || '—')}</td><td class="num"><b>${num(r.qty)}</b></td><td class="num">${num(r.orders)}</td></tr>`).join('')}</tbody></table></div>` : '';
+}
+
+function renderOverdue() {
+  const rows = data.overdue_orders;
+  const box = document.getElementById('overdue');
+  box.innerHTML = rows.length ? `
+    <table class="st-table"><thead><tr><th>Заказ</th><th>Статус</th><th class="num">Просрочен на</th></tr></thead>
+    <tbody>${rows.map((o) => `<tr class="clickable" data-id="${o.id}">
+      <td><b>#${escapeHtml(o.display_number)}</b> ${escapeHtml(o.full_name || 'Без имени')}</td>
+      <td>${statusPill(o.status, statuses)}</td>
+      <td class="num">${formatDuration(Date.now() - new Date(o.ship_deadline_at).getTime())}</td>
+    </tr>`).join('')}</tbody></table>
+    ${data.kpi.overdue > rows.length ? `<div class="st-empty">…и ещё ${data.kpi.overdue - rows.length}</div>` : ''}` : '<div class="st-empty">Просроченных нет. ✅</div>';
+  box.querySelectorAll('tr[data-id]').forEach((tr) => tr.addEventListener('click', () => { location.href = `/order.html?id=${tr.dataset.id}`; }));
+}
+
+function renderStages() {
+  const rows = data.stages.map((s) => ({ ...s, swatch: null }));
+  const box = document.getElementById('stages');
+  if (!rows.length) {
+    box.innerHTML = '<div class="st-empty">Пока нет данных: появятся, когда заказы начнут переходить между статусами.</div>';
+    return;
+  }
+  box.innerHTML = barList(rows, {
+    value: (r) => r.avg_hours,
+    valueText: (r) => hoursText(r.avg_hours),
+    note: (r) => `${r.count} зак.`,
+  });
+  bindBarTips(box, rows, (r) => [
+    { value: hoursText(r.avg_hours), label: 'в среднем' },
+    { value: hoursText(r.median_hours), label: 'медиана' },
+    { value: hoursText(r.p90_hours), label: '90% заказов быстрее' },
+    { value: num(r.count), label: 'переходов учтено' },
+  ]);
+}
+
+function render() {
+  const { period, kpi } = data;
+  document.getElementById('period-note').textContent = period.days
+    ? ''
+    : `с ${new Date(period.since).toLocaleDateString('ru-RU')}`;
+  renderTiles(kpi);
+  renderFlow();
+  renderBacklog();
+  renderOverdue();
+  renderDemand();
+  renderWeekday();
+  renderStages();
+  renderMix('delivery', data.demand.delivery, 'заказов');
+  renderMix('sources', data.demand.sources, 'заказов');
+}
+
+async function load() {
+  const root = document.getElementById('stats-root');
+  root.classList.add('loading');
+  try {
+    const days = document.getElementById('period').value;
+    try { localStorage.setItem('stats-period', days); } catch { /* не критично */ }
+    const [st, cat, stats] = await Promise.all([
+      statuses.length ? statuses : api('/api/statuses'),
+      catalog.colors ? catalog : api('/api/catalog'),
+      api(`/api/stats?days=${days}`),
+    ]);
+    statuses = st;
+    catalog = cat;
+    data = stats;
+    render();
+  } catch (err) {
+    toast(err.message, 'error');
+  } finally {
+    root.classList.remove('loading');
+  }
+}
+
+try {
+  const saved = localStorage.getItem('stats-period');
+  if (saved && document.querySelector(`#period option[value="${saved}"]`)) document.getElementById('period').value = saved;
+} catch { /* не критично */ }
+document.getElementById('period').addEventListener('change', load);
+// Перерисовка графиков по ширине: и при ресайзе окна, и при сворачивании меню.
+let resizeTimer = null;
+let lastWidth = 0;
+new ResizeObserver(([entry]) => {
+  const w = Math.round(entry.contentRect.width);
+  if (!data || w === lastWidth) return;
+  lastWidth = w;
+  clearTimeout(resizeTimer);
+  resizeTimer = setTimeout(() => { renderFlow(); renderWeekday(); }, 120);
+}).observe(document.querySelector('main'));
+load();
+</script>
+</body>
+</html>

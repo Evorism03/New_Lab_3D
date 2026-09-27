@@ -75,6 +75,7 @@ import db, {
 } from './db.js';
 import { parseLedgerText } from './lib/ledger-import.js';
 import { parseSerialsText } from './lib/serials-import.js';
+import { getStats } from './lib/stats.js';
 import { buildLabelPdf } from './lib/label.js';
 import * as ozon from './lib/ozon.js';
 import * as cdek from './lib/cdek.js';
@@ -859,6 +860,11 @@ const server = http.createServer(async (req, res) => {
 
     if (pathname === '/api/settings/deadline' && req.method === 'PUT') {
       return sendJson(res, 200, setDeadlineSettings(await readBody(req)));
+    }
+
+    if (pathname === '/api/stats' && req.method === 'GET') {
+      const days = Number(url.searchParams.get('days') ?? 30);
+      return sendJson(res, 200, getStats({ days: Number.isFinite(days) && days > 0 ? Math.min(days, 3650) : 0 }));
     }
 
     if (pathname === '/api/serial' && req.method === 'POST') {
