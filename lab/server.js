@@ -707,6 +707,30 @@ function cdekContourMismatch(shipment) {
     + `${nowTest ? 'тестовый' : 'боевой'} — переключите «Тестовый режим» в Настройках → СДЭК и повторите.`;
 }
 
+// Итог запроса на удаление заказа в СДЭК: текст отказа или '' (удалён либо ещё обрабатывается).
+async function cdekDeleteRejection(uuid, reply) {
+  const errorsOf = (requests) => (requests || [])
+    .filter((r) => r.type === 'DELETE' && r.state === 'INVALID')
+    .flatMap((r) => (r.errors?.length ? r.errors.map((e) => e.message || e.code) : ['запрос отклонён']));
+  const immediate = errorsOf(reply?.requests?.map((r) => ({ type: 'DELETE', ...r })));
+  if (immediate.length) return immediate.join('; ');
+  for (let i = 0; i < 5; i++) {
+    await new Promise((r) => setTimeout(r, 1000 + i * 500));
+    let info;
+    try {
+      info = await cdek.getOrder(uuid);
+    } catch (err) {
+      if (err.status === 404) return ''; // заказа больше нет — удалён
+      continue;
+    }
+    const errors = errorsOf(info.requests);
+    if (errors.length) return errors.join('; ');
+    if ((info.requests || []).some((r) => r.type === 'DELETE' && r.state === 'SUCCESSFUL')) return '';
+    if ((info.entity?.statuses || []).some((st) => st.code === 'REMOVED')) return '';
+  }
+  return '';
+}
+
 async function cdekFetchSummary(shipment) {
   try {
     return cdekSummary(await cdek.getOrder(shipment.uuid));
@@ -1615,7 +1639,19 @@ const server = http.createServer(async (req, res) => {
           // тогда заказ может появиться позже, и снимать привязку нельзя, иначе после повторного создания будет дубль.
           let notFound = false;
           try {
-            await cdek.deleteOrder(uuid);
+            // СДЭК принимает удаление асинхронно (202 ACCEPTED) и может потом его отклонить — например, если
+            // заказ уже не в статусе «Создан». Раньше привязка снималась сразу, и в CRM заказ выглядел отменённым,
+            // а в СДЭК оставался. Ждём итог запроса DELETE и показываем причину отказа.
+            const reply = await cdek.deleteOrder(uuid);
+            const rejection = await cdekDeleteRejection(uuid, reply);
+            if (rejection) {
+              const state = await cdekFetchSummary(order.cdek_shipment).catch(() => null);
+              if (state) patchOrderCdekShipment(orderId, state);
+              return sendJson(res, 409, {
+                error: `СДЭК не дал удалить заказ: ${rejection}. Удалить можно только заказ в статусе «Создан» `
+                  + '(до сдачи посылки); после приёма на склад — оформите отказ в личном кабинете СДЭК.',
+              });
+            }
           } catch (err) {
             if (err.status !== 404 && !/v2_entity_not_found/.test(err.message)) throw err;
             const info = await cdek.getOrder(uuid).catch((e) => (e.status === 404 ? null : Promise.reject(e)));

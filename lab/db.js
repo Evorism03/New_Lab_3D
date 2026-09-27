@@ -283,9 +283,9 @@ function shipDeadline(order, settings) {
 }
 
 export const STATUSES = [
+  { id: 'new', label: 'Новый заказ' },
   // Заказ заведён из переписки, но ещё не оплачен: в бухгалтерию не идёт, срок отправки не тикает.
   { id: 'negotiating', label: 'Согласовывается' },
-  { id: 'new', label: 'Новый заказ' },
   // Только для заказов с сайта (есть файл модели, который нужно напечатать) — см. assertPrintAllowed.
   { id: 'printing', label: 'Печать' },
   { id: 'to_collect', label: 'Собрать' },
