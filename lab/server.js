@@ -1576,7 +1576,7 @@ const server = http.createServer(async (req, res) => {
       }
     }
 
-    const cdekMatch = pathname.match(/^\/api\/orders\/(\d+)\/cdek\/(point|calculate|create|status|cancel|label\.pdf)$/);
+    const cdekMatch = pathname.match(/^\/api\/orders\/(\d+)\/cdek\/(point|calculate|create|status|cancel|link|unlink|label\.pdf)$/);
     if (cdekMatch) {
       const orderId = Number(cdekMatch[1]);
       const action = cdekMatch[2];
@@ -1630,6 +1630,42 @@ const server = http.createServer(async (req, res) => {
           return sendJson(res, 200, patchOrderCdekShipment(orderId, await cdekFetchSummary(order.cdek_shipment)));
         }
 
+        // Заказы, «зависшие» при создании, пока СДЭК не работал: в СДЭК они есть, а CRM по своему uuid их
+        // не находит. Привязываем по номеру СДЭК из личного кабинета — дальше статус, этикетка и отмена работают.
+        if (action === 'link' && req.method === 'POST') {
+          const data = await readBody(req);
+          const cdekNumber = String(data.cdek_number || '').replace(/\s+/g, '');
+          if (!/^\d{6,}$/.test(cdekNumber)) return sendJson(res, 400, { error: 'Укажите номер заказа СДЭК (цифры из личного кабинета)' });
+          let found;
+          try {
+            found = await cdek.findOrder({ cdekNumber });
+          } catch (err) {
+            if (err.status === 404) {
+              return sendJson(res, 404, {
+                error: `Заказ ${cdekNumber} в СДЭК не найден`
+                  + (getSetting('cdek_test_mode') === '1' ? ' — включён тестовый режим, а заказ, скорее всего, в боевом контуре' : ''),
+              });
+            }
+            throw err;
+          }
+          if (!found?.entity?.uuid) return sendJson(res, 404, { error: `Заказ ${cdekNumber} в СДЭК не найден` });
+          const linked = patchOrderCdekShipment(orderId, {
+            ...cdekSummary(found), uuid: found.entity.uuid, request_state: 'SUCCESSFUL', errors: [], cancelled_at: null,
+            created_at: order.cdek_shipment?.created_at || new Date().toISOString(),
+            test_mode: getSetting('cdek_test_mode') === '1', linked_at: new Date().toISOString(),
+          });
+          return sendJson(res, 200, linked);
+        }
+
+        // Снять привязку, не обращаясь к СДЭК (заказа там нет или его удалили в личном кабинете).
+        if (action === 'unlink' && req.method === 'POST') {
+          if (!uuid) return sendJson(res, 400, { error: 'Заказ СДЭК не привязан' });
+          return sendJson(res, 200, patchOrderCdekShipment(orderId, {
+            uuid: null, cdek_number: null, status_code: null, status_name: null, request_state: null,
+            errors: [], cancelled_at: new Date().toISOString(),
+          }));
+        }
+
         if (action === 'cancel' && req.method === 'POST') {
           if (!uuid) return sendJson(res, 400, { error: 'Заказ в СДЭК ещё не создан' });
           const mismatch = cdekContourMismatch(order.cdek_shipment);
@@ -1661,8 +1697,9 @@ const server = http.createServer(async (req, res) => {
               return sendJson(res, 409, {
                 error: state.cdek_number
                   ? 'СДЭК не дал отменить заказ — попробуйте ещё раз или отмените его в личном кабинете СДЭК.'
-                  : 'СДЭК ещё не обработал этот заказ (заявка принята, номер не присвоен) — отменить его пока нельзя. '
-                    + 'Не создавайте заказ заново, иначе появится дубль: дождитесь номера и отмените снова.',
+                  : 'СДЭК не обработал эту заявку (принята, номер не присвоен) — удалить её по ссылке CRM нельзя. '
+                    + 'Если в личном кабинете СДЭК заказ есть — впишите его номер и нажмите «Привязать по номеру», '
+                    + 'затем отмените. Если заказа там нет — нажмите «Отвязать».',
               });
             }
             notFound = true;
@@ -1677,8 +1714,21 @@ const server = http.createServer(async (req, res) => {
         }
 
         if (action === 'label.pdf' && req.method === 'GET') {
-          if (!uuid) return sendJson(res, 400, { error: 'Сначала создайте заказ в СДЭК' });
-          const buffer = await cdek.barcodePdf(uuid, 'A6');
+          // Этикетка открывается прямо во вкладке браузера, поэтому ошибку отдаём страницей, а не JSON.
+          const fail = (status, text) => {
+            res.writeHead(status, { 'Content-Type': 'text/html; charset=utf-8' });
+            const safe = String(text).replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' })[c]);
+            return res.end(`<!doctype html><meta charset="utf-8"><title>Ошибка этикетки</title>`
+              + `<body style="font:16px system-ui,sans-serif;background:#0f1420;color:#ef5a6f;padding:32px">`
+              + `Не удалось получить этикетку: ${safe}</body>`);
+          };
+          if (!uuid) return fail(400, 'сначала создайте заказ в СДЭК');
+          let buffer;
+          try {
+            buffer = await cdek.barcodePdf(uuid, 'A6');
+          } catch (err) {
+            return fail(502, err.message);
+          }
           patchOrderCdekShipment(orderId, { label_downloaded_at: new Date().toISOString() });
           res.writeHead(200, {
             'Content-Type': 'application/pdf',

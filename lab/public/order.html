@@ -196,6 +196,12 @@
       <button type="button" class="secondary" id="cdek-refresh">Обновить статус</button>
       <button type="button" class="secondary" id="cdek-label">🏷 Этикетка СДЭК PDF</button>
       <button type="button" class="danger" id="cdek-cancel">Отменить заказ СДЭК</button>
+      <button type="button" class="secondary" id="cdek-unlink" title="Убрать привязку в CRM, ничего не отправляя в СДЭК">Отвязать</button>
+    </div>
+    <!-- Заказ есть в СДЭК, а CRM его не видит (завис при создании) — привязать по номеру из личного кабинета. -->
+    <div class="toolbar" style="margin-top:6px">
+      <input id="cdek-link-number" inputmode="numeric" placeholder="Номер заказа СДЭК" style="max-width:200px">
+      <button type="button" class="secondary" id="cdek-link">Привязать по номеру</button>
     </div>
   </div>
 
@@ -764,7 +770,7 @@ function renderCdek(order) {
   document.getElementById('cdek-status').innerHTML = lines.join('');
   const created = Boolean(sh.uuid);
   document.getElementById('cdek-create').disabled = created && !sh.errors?.length;
-  for (const btnId of ['cdek-refresh', 'cdek-label', 'cdek-cancel']) document.getElementById(btnId).disabled = !created;
+  for (const btnId of ['cdek-refresh', 'cdek-label', 'cdek-cancel', 'cdek-unlink']) document.getElementById(btnId).disabled = !created;
   scheduleCdekPoll(sh);
 }
 
@@ -864,7 +870,21 @@ document.getElementById('cdek-cancel').addEventListener('click', async () => {
   cdekAction('cancel', { method: 'POST' }, 'Заказ в СДЭК отменён');
 });
 
-document.getElementById('cdek-label').addEventListener('click', () => openPdf(`/api/orders/${id}/cdek/label.pdf`));
+document.getElementById('cdek-link').addEventListener('click', async () => {
+  const input = document.getElementById('cdek-link-number');
+  const cdekNumber = input.value.trim();
+  if (!cdekNumber) { toast('Введите номер заказа из личного кабинета СДЭК', 'error'); input.focus(); return; }
+  const order = await cdekAction('link', { method: 'POST', body: JSON.stringify({ cdek_number: cdekNumber }) }, `Заказ СДЭК ${cdekNumber} привязан`);
+  if (order) input.value = '';
+});
+
+document.getElementById('cdek-unlink').addEventListener('click', async () => {
+  if (!(await confirmDialog('Убрать привязку к СДЭК только в CRM? В самом СДЭК заказ (если он есть) останется — удалите его в личном кабинете.'))) return;
+  cdekAction('unlink', { method: 'POST' }, 'Привязка к СДЭК убрана');
+});
+
+// Этикетка СДЭК — сразу по ссылке в новой вкладке, без промежуточной страницы (ошибку сервер покажет там же).
+document.getElementById('cdek-label').addEventListener('click', () => window.open(`/api/orders/${id}/cdek/label.pdf`, '_blank'));
 
 // Показываем блок той службы доставки, что выбрана в заказе (для прочих — оба).
 function syncCarrierCards() {
@@ -896,7 +916,7 @@ function pdfTabMessage(win, text, isError = false) {
 
 async function openPdf(url) {
   const win = window.open('', '_blank');
-  pdfTabMessage(win, 'Загрузка этикетки… СДЭК формирует PDF, это может занять до 20 секунд.');
+  pdfTabMessage(win, 'Загрузка этикетки…');
   try {
     const res = await fetch(url, { credentials: 'same-origin' });
     if (!res.ok) {

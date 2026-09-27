@@ -272,6 +272,11 @@ export function getOrder(uuid) {
   return cdekRequest('GET', `/orders/${encodeURIComponent(uuid)}`);
 }
 
+// Поиск заказа по номеру СДЭК или номеру в ИС клиента — когда uuid в CRM потерялся или не тот.
+export function findOrder({ cdekNumber, imNumber }) {
+  return cdekRequest('GET', '/orders', { query: { cdek_number: cdekNumber, im_number: imNumber } });
+}
+
 export function deleteOrder(uuid) {
   return cdekRequest('DELETE', `/orders/${encodeURIComponent(uuid)}`);
 }
@@ -285,9 +290,10 @@ export async function barcodePdf(orderUuid, format = 'A6') {
   });
   const printUuid = created?.entity?.uuid;
   if (!printUuid) throw new Error(`СДЭК не создал задание на печать: ${cdekErrorText(created, 200)}`);
+  // Обычно PDF готов через 1–2 с — спрашиваем часто, чтобы не ждать лишнего.
   let url = '';
-  for (let i = 0; i < 15 && !url; i++) {
-    await sleep(i ? 1000 : 500);
+  for (let i = 0; i < 40 && !url; i++) {
+    await sleep(i < 10 ? 300 : 700);
     const info = await cdekRequest('GET', `/print/barcodes/${printUuid}`);
     url = info?.entity?.url || '';
     const invalid = (info?.entity?.statuses || []).find((s) => s.code === 'INVALID');
