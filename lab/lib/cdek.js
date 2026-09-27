@@ -16,6 +16,20 @@ const BASE_HEADERS = {
 
 let tokenCache = { key: '', value: '', expiresAt: 0 };
 
+// Без таймаута зависший СДЭК подвешивает запрос навсегда (и вкладка этикетки остаётся about:blank).
+const TIMEOUT_MS = 20_000;
+
+async function fetchWithTimeout(url, init = {}) {
+  try {
+    return await fetch(url, { ...init, signal: AbortSignal.timeout(TIMEOUT_MS) });
+  } catch (err) {
+    if (err.name === 'TimeoutError' || err.name === 'AbortError') {
+      throw new Error(`СДЭК не ответил за ${TIMEOUT_MS / 1000} с — похоже, сбой на стороне СДЭК. Попробуйте позже.`);
+    }
+    throw new Error(`Нет связи со СДЭК: ${err.cause?.code || err.message}`);
+  }
+}
+
 function config() {
   const clientId = getSetting('cdek_client_id');
   const clientSecret = getSetting('cdek_client_secret');
@@ -61,7 +75,7 @@ async function getToken(force) {
   // По спецификации параметры — в query-строке; дублируем их в теле формы, как делают
   // остальные клиенты СДЭК: пустой POST антибот-фильтр СДЭК может отклонить.
   const params = new URLSearchParams({ grant_type: 'client_credentials', client_id: clientId, client_secret: clientSecret });
-  const res = await fetch(`${base}/oauth/token?${params}`, {
+  const res = await fetchWithTimeout(`${base}/oauth/token?${params}`, {
     method: 'POST',
     headers: { ...BASE_HEADERS, 'Content-Type': 'application/x-www-form-urlencoded' },
     body: params.toString(),
@@ -82,7 +96,7 @@ async function getToken(force) {
 
 async function authorizedFetch(url, init = {}) {
   let token = await getToken();
-  const doFetch = () => fetch(url, { ...init, headers: { ...BASE_HEADERS, ...(init.headers || {}), Authorization: `Bearer ${token}` } });
+  const doFetch = () => fetchWithTimeout(url, { ...init, headers: { ...BASE_HEADERS, ...(init.headers || {}), Authorization: `Bearer ${token}` } });
   let res = await doFetch();
   if (res.status === 401) {
     token = await getToken(true);

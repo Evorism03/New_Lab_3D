@@ -874,8 +874,26 @@ function syncCarrierCards() {
 document.getElementById('delivery-service').addEventListener('change', syncCarrierCards);
 
 // PDF открываем в новой вкладке; ошибку показываем уведомлением, а не JSON во вкладке.
+// Вкладку открываем сразу (иначе браузер блокирует всплывающее окно), пока идёт запрос — показываем в ней
+// «Загрузка…», а при ошибке пишем причину прямо во вкладку: пользователь смотрит туда, а не на toast.
+function pdfTabMessage(win, text, isError = false) {
+  if (!win || win.closed) return;
+  try {
+    win.document.title = isError ? 'Ошибка этикетки' : 'Загрузка этикетки…';
+    win.document.body.style.cssText = 'font:16px system-ui,sans-serif;background:#0f1420;color:#e7ebf3;padding:32px;line-height:1.5';
+    win.document.body.innerHTML = '';
+    const p = win.document.createElement('p');
+    p.textContent = text;
+    if (isError) p.style.color = '#ef5a6f';
+    win.document.body.appendChild(p);
+  } catch {
+    // вкладка уже ушла на другой адрес — не наше дело
+  }
+}
+
 async function openPdf(url) {
   const win = window.open('', '_blank');
+  pdfTabMessage(win, 'Загрузка этикетки… СДЭК формирует PDF, это может занять до 20 секунд.');
   try {
     const res = await fetch(url, { credentials: 'same-origin' });
     if (!res.ok) {
@@ -885,7 +903,7 @@ async function openPdf(url) {
     const blobUrl = URL.createObjectURL(await res.blob());
     if (win) win.location.href = blobUrl; else window.location.href = blobUrl;
   } catch (err) {
-    if (win) win.close();
+    pdfTabMessage(win, `Не удалось получить этикетку: ${err.message}`, true);
     toast(err.message, 'error');
   }
 }
