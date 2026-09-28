@@ -97,6 +97,7 @@
           <button data-action="site-restart" data-confirm="Перезапустить сайт? Он будет недоступен около минуты, эта панель тоже.">Перезапустить</button>
           <button data-action="site-update" class="primary" data-confirm="Обновить сайт из репозитория? Сайт и эта панель будут недоступны несколько минут, пока идёт сборка.">Обновить</button>
           <button id="git-check">Проверить обновления</button>
+          <button class="ghost" data-local="site">localhost</button>
         </div>
       </section>
       <section class="card svc" id="svc-crm">
@@ -107,6 +108,7 @@
           <button data-action="crm-start" class="primary">Запустить</button>
           <button data-action="crm-stop" data-confirm="Остановить CRM «Заказы»?">Остановить</button>
           <button data-action="crm-restart">Перезапустить</button>
+          <button class="ghost" data-local="crm">localhost</button>
         </div>
       </section>
       <section class="card svc" id="svc-bambuddy">
@@ -117,6 +119,7 @@
           <button data-action="bambuddy-start" class="primary">Запустить</button>
           <button data-action="bambuddy-stop" data-confirm="Остановить Bambuddy? Управление принтерами будет недоступно.">Остановить</button>
           <button data-action="bambuddy-restart">Перезапустить</button>
+          <button class="ghost" data-local="bambuddy">localhost</button>
         </div>
       </section>
     </div>
@@ -201,6 +204,11 @@ function setButtons() {
     b.disabled = !enabled;
   }
   $("#git-check").disabled = busy;
+  for (const b of document.querySelectorAll("[data-local]")) {
+    const s = status?.[b.dataset.local];
+    b.disabled = !s || s.state !== "running" || !s.localPort;
+    if (s?.localPort) b.title = `http://localhost:${s.localPort} — откроется только в браузере на самом сервере`;
+  }
 }
 
 async function refreshStatus() {
@@ -290,6 +298,15 @@ for (const b of document.querySelectorAll("[data-action]")) {
     try { await api("/api/action", { method: "POST", body: JSON.stringify({ action: b.dataset.action }) }); }
     catch (err) { if (err.message !== "auth") alert(err.message); }
     refreshStatus(); pollJournal();
+  });
+}
+
+// localhost is always the machine the browser runs on — so these work when the panel is opened
+// on the server itself (the PC where everything is deployed).
+for (const b of document.querySelectorAll("[data-local]")) {
+  b.addEventListener("click", () => {
+    const port = status?.[b.dataset.local]?.localPort;
+    if (port) window.open(`http://localhost:${port}`, "_blank", "noopener");
   });
 }
 

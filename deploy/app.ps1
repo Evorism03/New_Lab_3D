@@ -140,6 +140,26 @@ function New-Button([string]$Content, [string]$Kind = "secondary", [int]$Width =
     return $b
 }
 
+$script:Tips = New-Object Windows.Forms.ToolTip
+
+# «localhost» в правом верхнем углу карточки сервиса: открывает его напрямую на этом компьютере,
+# в обход домена и HTTPS. Адрес (Tag) и подсказку выставляет Update-*Status.
+function New-LocalButton($Card) {
+    $b = New-Button "localhost" "ghost" 130 (G 0xE7F4)
+    $b.Height = 32
+    $b.Anchor = "Top,Right"
+    $b.Location = New-Object Drawing.Point(($Card.Width - 146), 16)
+    $b.Add_Click({ if ($this.Tag) { Start-Process ([string]$this.Tag) } })
+    $Card.Controls.Add($b)
+    return $b
+}
+
+function Set-LocalButton($Button, [int]$Port, [bool]$Running) {
+    $url = "http://localhost:$Port"
+    if ($Button.Tag -ne $url) { $Button.Tag = $url; $script:Tips.SetToolTip($Button, "$url - открыть на этом компьютере") }
+    $Button.Enabled = $Running
+}
+
 function New-Card($Fill = $ColCard, [int]$Radius = 16) {
     $card = New-Object Lab3D.CardPanel
     $card.Fill = $Fill
@@ -443,6 +463,8 @@ $btnRestart = New-Button "Перезапустить" "secondary" 176 (G 0xE72C)
 $btnOpen = New-Button "Открыть сайт" "secondary" 166 (G 0xE774)
 $actions.Controls.AddRange(@($btnStart, $btnStop, $btnRestart, $btnOpen))
 $cardHero.Controls.Add($actions)
+$btnLocal = New-LocalButton $cardHero
+$cardHero.Add_Resize({ $btnLocal.Left = $cardHero.Width - $btnLocal.Width - (Px 16) })
 $pOverview.Controls.Add($cardHero, 0, 1)
 
 # плитки: адрес / процессы / автозапуск / диск
@@ -541,6 +563,8 @@ $btnOrdersRestart = New-Button "Перезапустить" "secondary" 176 (G 0
 $btnOrdersOpen = New-Button "Открыть сайт" "secondary" 166 (G 0xE774)
 $actionsOrders.Controls.AddRange(@($btnOrdersStart, $btnOrdersStop, $btnOrdersRestart, $btnOrdersOpen))
 $cardOrdersHero.Controls.Add($actionsOrders)
+$btnOrdersLocal = New-LocalButton $cardOrdersHero
+$cardOrdersHero.Add_Resize({ $btnOrdersLocal.Left = $cardOrdersHero.Width - $btnOrdersLocal.Width - (Px 16) })
 $pOrders.Controls.Add($cardOrdersHero, 0, 1)
 
 # плитки: адрес / процесс / автозапуск / диск
@@ -628,8 +652,12 @@ $btnBbLogs = New-Button "Логи" "ghost" 104 (G 0xE8FD)
 $btnBbLogs.Height = 32
 $btnBbLogs.Anchor = "Top,Right"
 $btnBbLogs.Location = New-Object Drawing.Point(($cardBbHero.Width - 120), 16)
-$cardBbHero.Add_Resize({ $btnBbLogs.Left = $cardBbHero.Width - $btnBbLogs.Width - (Px 16) })
 $cardBbHero.Controls.Add($btnBbLogs)
+$btnBbLocal = New-LocalButton $cardBbHero
+$cardBbHero.Add_Resize({
+    $btnBbLogs.Left = $cardBbHero.Width - $btnBbLogs.Width - (Px 16)
+    $btnBbLocal.Left = $btnBbLogs.Left - $btnBbLocal.Width - (Px 6)
+})
 $pPrinters.Controls.Add($cardBbHero, 0, 1)
 
 # плитки: адрес / поддомен / принтеры / ключ API
@@ -1209,6 +1237,7 @@ function Update-Status {
     $btnStop.Enabled = $free -and $running
     $btnRestart.Enabled = $free -and $installed
     $btnOpen.Enabled = [bool]$script:SiteUrl
+    Set-LocalButton $btnLocal $(if ($config["APP_PORT"]) { [int]$config["APP_PORT"] } else { 3000 }) ([bool]($state -and $state.ready))
     foreach ($b in @($btnCheck, $btnUpdate, $btnConnect, $btnApply, $btnUninstall, $btnCache, $btnScan, $btnBanner)) { if ($b) { $b.Enabled = $free -and (($b -ne $btnUninstall) -or $installed) } }
     $btnPurge.Enabled = $free -and $script:ScanFound
     $mode = Get-UpdateMode
@@ -1233,6 +1262,7 @@ function Update-LabStatus {
         $script:OrdersFieldValues["Автозапуск"].Text = "-"
         $script:OrdersFieldValues["Диск"].Text = "-"
         $btnOrdersStart.Enabled = $false; $btnOrdersStop.Enabled = $false; $btnOrdersRestart.Enabled = $false; $btnOrdersOpen.Enabled = $false
+        $btnOrdersLocal.Enabled = $false
         return
     }
 
@@ -1288,6 +1318,7 @@ function Update-LabStatus {
     $btnOrdersStop.Enabled = $free -and $running
     $btnOrdersRestart.Enabled = $free -and $installed
     $btnOrdersOpen.Enabled = [bool]$script:LabSiteUrl
+    Set-LocalButton $btnOrdersLocal $(if ($config["PORT"]) { [int]$config["PORT"] } else { 3001 }) ([bool]($state -and $state.ready))
 }
 
 # Принтеры (Bambuddy) - служба Windows «Bambuddy» от его собственного установщика. Статус службы
@@ -1442,6 +1473,7 @@ function Update-BambuddyStatus([bool]$Poll = $true) {
     $btnBbStop.Enabled = $free -and $running
     $btnBbRestart.Enabled = $free -and [bool]$service
     $btnBbOpen.Enabled = [bool]$running
+    Set-LocalButton $btnBbLocal $port ([bool]$running)
     $btnBbLogs.Enabled = Test-Path $script:BbLogDir
     $btnBbKey.Enabled = $free -and (Test-Path $script:EnvFile)
     $btnBbSite.Enabled = $free -and [bool]$domain

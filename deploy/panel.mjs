@@ -32,10 +32,10 @@ const LOCKOUT_MS = 15 * 60 * 1000;
 
 // ---------------------------------------------------------------- settings
 
-function readEnv() {
+function readEnv(file = ENV_FILE) {
   const values = {};
   try {
-    for (const line of fs.readFileSync(ENV_FILE, "utf8").split(/\r?\n/)) {
+    for (const line of fs.readFileSync(file, "utf8").split(/\r?\n/)) {
       const m = line.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*?)\s*$/);
       if (m) values[m[1]] = m[2].replace(/^"(.*)"$/, "$1");
     }
@@ -312,12 +312,21 @@ const server = http.createServer(async (req, res) => {
     }
     if (req.method === "GET" && url.pathname === "/api/status") {
       const [bambuddy, head] = await Promise.all([bambuddyState(), gitHead()]);
+      // Ports for the "localhost" buttons — the services straight on the server, past domain and HTTPS.
+      const env = readEnv();
+      const labEnv = readEnv(path.join(LAB_ROOT, ".env"));
+      let bambuddyPort = 8000;
+      try {
+        if (env.BAMBUDDY_URL) bambuddyPort = Number(new URL(env.BAMBUDDY_URL).port) || 8000;
+      } catch {
+        // malformed URL — keep the default
+      }
       return send(res, 200, {
-        site: serviceState(path.join(DEPLOY, "state.json"), ENV_FILE),
+        site: { ...serviceState(path.join(DEPLOY, "state.json"), ENV_FILE), localPort: Number(env.APP_PORT) || 3000 },
         crm: fs.existsSync(LAB_SERVER_PS1)
-          ? serviceState(path.join(LAB_ROOT, "deploy", "state.json"), path.join(LAB_ROOT, ".env"))
+          ? { ...serviceState(path.join(LAB_ROOT, "deploy", "state.json"), path.join(LAB_ROOT, ".env")), localPort: Number(labEnv.PORT) || 3001 }
           : { state: "absent" },
-        bambuddy,
+        bambuddy: { ...bambuddy, localPort: bambuddyPort },
         operation: currentOperation(),
         version: head,
         updates: lastGitCheck,
