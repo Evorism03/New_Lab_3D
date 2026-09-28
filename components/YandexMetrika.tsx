@@ -1,52 +1,80 @@
 "use client";
 
 import { usePathname, useSearchParams } from "next/navigation";
-import Script from "next/script";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef } from "react";
 
 export const YANDEX_METRIKA_ID = 109081361;
+
+// Options of the counter code from Metrika; defer: true turns off its own page-view counting —
+// on an SPA every page view (the first one too) is sent explicitly with "hit", as Yandex's
+// "SPA sites" guide says.
+const OPTIONS = {
+  defer: true,
+  ssr: true,
+  webvisor: true,
+  clickmap: true,
+  ecommerce: "dataLayer",
+  accurateTrackBounce: true,
+  trackLinks: true,
+};
 
 // Admin screens (orders, customers' data) must not end up in Webvisor recordings.
 const isPrivate = (path: string) => path.startsWith("/admin") || path.startsWith("/login");
 
+type Ym = ((id: number, method: string, ...args: unknown[]) => void) & { a?: unknown[][]; l?: number };
+
 declare global {
   interface Window {
-    ym?: (id: number, method: string, ...args: unknown[]) => void;
+    ym?: Ym;
   }
 }
 
+// The official loader: a queueing stub right away, tag.js fetched async (once).
+function loadMetrika(): Ym {
+  if (!window.ym) {
+    const stub: Ym = (...args: unknown[]) => {
+      (stub.a = stub.a || []).push(args);
+    };
+    stub.l = Date.now();
+    window.ym = stub;
+    const src = `https://mc.yandex.ru/metrika/tag.js?id=${YANDEX_METRIKA_ID}`;
+    if (![...document.scripts].some((s) => s.src === src)) {
+      const script = document.createElement("script");
+      script.async = true;
+      script.src = src;
+      document.head.appendChild(script);
+    }
+  }
+  return window.ym;
+}
+
 /**
- * Yandex.Metrika counter. The official snippet counts the first page view on init; pages opened
- * after that are client-side navigations, so each of them is reported with an explicit "hit".
+ * Yandex.Metrika counter for this SPA: init once with defer, then a "hit" for every page the
+ * visitor sees. Going into the admin turns the counter off ("destruct"), coming back turns it on.
  */
 export function YandexMetrika() {
   const pathname = usePathname();
   const searchParams = useSearchParams();
-  const firstView = useRef(true);
-  // Decided once, by the page the visitor opened first.
-  const [landedOnPrivate] = useState(() => isPrivate(pathname));
   const url = `${pathname}${searchParams.size ? `?${searchParams}` : ""}`;
+  const active = useRef(false);
+  const previousUrl = useRef<string | null>(null);
 
   useEffect(() => {
-    if (firstView.current) {
-      firstView.current = false;
+    if (isPrivate(pathname)) {
+      if (active.current) {
+        window.ym?.(YANDEX_METRIKA_ID, "destruct");
+        active.current = false;
+      }
       return;
     }
-    if (!isPrivate(pathname)) window.ym?.(YANDEX_METRIKA_ID, "hit", window.location.href, { referer: document.referrer });
+    const ym = loadMetrika();
+    if (!active.current) {
+      ym(YANDEX_METRIKA_ID, "init", OPTIONS);
+      active.current = true;
+    }
+    ym(YANDEX_METRIKA_ID, "hit", window.location.href, { referer: previousUrl.current ?? document.referrer });
+    previousUrl.current = window.location.href;
   }, [url, pathname]);
 
-  // Opened straight on an admin page — the counter is not loaded at all.
-  if (landedOnPrivate) return null;
-
-  return (
-    <Script id="yandex-metrika" strategy="afterInteractive">
-      {`(function(m,e,t,r,i,k,a){
-        m[i]=m[i]||function(){(m[i].a=m[i].a||[]).push(arguments)};
-        m[i].l=1*new Date();
-        for (var j = 0; j < document.scripts.length; j++) {if (document.scripts[j].src === r) { return; }}
-        k=e.createElement(t),a=e.getElementsByTagName(t)[0],k.async=1,k.src=r,a.parentNode.insertBefore(k,a)
-      })(window, document,'script','https://mc.yandex.ru/metrika/tag.js?id=${YANDEX_METRIKA_ID}', 'ym');
-      ym(${YANDEX_METRIKA_ID}, 'init', {ssr:true, webvisor:true, clickmap:true, ecommerce:"dataLayer", referrer: document.referrer, url: location.href, accurateTrackBounce:true, trackLinks:true});`}
-    </Script>
-  );
+  return null;
 }
