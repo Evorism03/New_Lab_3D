@@ -36,6 +36,15 @@ function Import-Controls {
 Import-Controls
 
 [void][Lab3D.Native]::SetProcessDPIAware()
+
+# Масштаб экрана Windows (125%, 150%...). Шрифты в пунктах растут вместе с ним сами, а координаты и
+# размеры элементов заданы для 100% - их окно пересчитывает само (Form.Scale перед показом).
+# LAB3D_UI_SCALE=1.5 имитирует такой экран на обычном мониторе (тогда растут и шрифты) - для -Snapshot.
+$script:ScreenDpi = 96
+try { $probe = [Drawing.Graphics]::FromHwnd([IntPtr]::Zero); $script:ScreenDpi = $probe.DpiX; $probe.Dispose() } catch { }
+$script:UiScale = $script:ScreenDpi / 96
+$script:FontBoost = 1
+if ($env:LAB3D_UI_SCALE) { $script:UiScale = [double]$env:LAB3D_UI_SCALE; $script:FontBoost = $script:UiScale }
 [Windows.Forms.Application]::EnableVisualStyles()
 
 $script:ServerScript = Join-Path $PSScriptRoot "server.ps1"
@@ -81,12 +90,15 @@ $ColBlue = New-Color 110 190 220
 $ColConsole = New-Color 13 13 16
 $ColEmpty = [Drawing.Color]::Empty
 
+# Пиксели макета (при 100%) в пиксели экрана - для размеров, которые считаются уже после масштабирования.
+function Px([double]$Value) { return [int][Math]::Round($Value * $script:UiScale) }
+
 function G([int]$Code) { return [string][char]$Code }
 
 # ---------------------------------------------------------------- виджеты
 function New-Font([single]$Size = 10, [bool]$Bold = $false) {
     $family = if ($Bold) { "Segoe UI Semibold" } else { "Segoe UI" }
-    return New-Object Drawing.Font($family, $Size, [Drawing.FontStyle]::Regular)
+    return New-Object Drawing.Font($family, ($Size * $script:FontBoost), [Drawing.FontStyle]::Regular)
 }
 
 function New-Label([string]$Content, [single]$Size = 10, $Color = $ColInk, [bool]$Bold = $false, $Back = $ColCard) {
@@ -189,7 +201,7 @@ function New-Console {
     $box.ForeColor = $ColMuted
     $box.BorderStyle = "None"
     $box.ReadOnly = $true
-    $box.Font = New-Object Drawing.Font("Consolas", 9.5)
+    $box.Font = New-Object Drawing.Font("Consolas", (9.5 * $script:FontBoost))
     $box.Dock = "Fill"
     $box.DetectUrls = $false
     $box.HideSelection = $false
@@ -287,8 +299,7 @@ function ConvertTo-Arg([string]$Value) { return '"' + ($Value -replace '"', '\"'
 
 # ---------------------------------------------------------------- главное окно
 $form = New-Object Windows.Forms.Form
-$form.AutoScaleDimensions = New-Object Drawing.SizeF(96, 96)
-$form.AutoScaleMode = "Dpi"
+$form.AutoScaleMode = "None"  # масштаб экрана пересчитывается явно (Form.Scale перед показом)
 $form.Text = "Лаборатория 3Д - сервер"
 $form.StartPosition = "CenterScreen"
 $form.ClientSize = New-Object Drawing.Size(1120, 740)
@@ -345,7 +356,7 @@ $script:NavButtons = @{}
 $navItems = @(
     @("overview", "Обзор", (G 0xE80F)), @("orders", "Заказы", (G 0xE7BF)), @("printers", "Принтеры", (G 0xE749)),
     @("logs", "Логи", (G 0xE8FD)), @("updates", "Обновления", (G 0xE895)),
-    @("settings", "Настройки", (G 0xE713)), @("cleanup", "Очистка", (G 0xE74D))
+    @("settings", "Настройки", (G 0xE713)), @("panel", "Веб-панель", (G 0xE774)), @("cleanup", "Очистка", (G 0xE74D))
 )
 $navY = 108
 foreach ($item in $navItems) {
@@ -374,7 +385,7 @@ foreach ($item in $navItems) {
 $versionLabel = New-Label "" 9 $ColMuted $false $ColSide
 $versionLabel.Location = New-Object Drawing.Point(24, 660)
 $sidebar.Controls.Add($versionLabel)
-$sidebar.Add_Resize({ $versionLabel.Top = $sidebar.Height - 52 })
+$sidebar.Add_Resize({ $versionLabel.Top = $sidebar.Height - (Px 52) })
 
 function Show-Page([string]$Name) {
     foreach ($key in $script:Pages.Keys) { $script:Pages[$key].Visible = ($key -eq $Name) }
@@ -384,6 +395,7 @@ function Show-Page([string]$Name) {
     if ($Name -eq "updates") { Update-UpdatesView }
     if ($Name -eq "settings") { Load-SettingsValues }
     if ($Name -eq "printers") { $script:BbPollTick = 0; Update-BambuddyStatus }
+    if ($Name -eq "panel") { Update-PanelStatus }
 }
 
 function Add-Page([string]$Name, $Control) {
@@ -483,7 +495,7 @@ $btnBanner = New-Button "Обновить" "primary" 140 (G 0xE896)
 $btnBanner.Height = 38
 $btnBanner.Anchor = "Top,Right"
 $btnBanner.Location = New-Object Drawing.Point(($bannerUpdate.Width - 160), 11)
-$bannerUpdate.Add_Resize({ $btnBanner.Left = $bannerUpdate.Width - $btnBanner.Width - 16 })
+$bannerUpdate.Add_Resize({ $btnBanner.Left = $bannerUpdate.Width - $btnBanner.Width - (Px 16) })
 $bannerUpdate.Controls.AddRange(@($lblBanner, $btnBanner))
 $pOverview.Controls.Add($bannerUpdate, 0, 3)
 
@@ -616,7 +628,7 @@ $btnBbLogs = New-Button "Логи" "ghost" 104 (G 0xE8FD)
 $btnBbLogs.Height = 32
 $btnBbLogs.Anchor = "Top,Right"
 $btnBbLogs.Location = New-Object Drawing.Point(($cardBbHero.Width - 120), 16)
-$cardBbHero.Add_Resize({ $btnBbLogs.Left = $cardBbHero.Width - $btnBbLogs.Width - 16 })
+$cardBbHero.Add_Resize({ $btnBbLogs.Left = $cardBbHero.Width - $btnBbLogs.Width - (Px 16) })
 $cardBbHero.Controls.Add($btnBbLogs)
 $pPrinters.Controls.Add($cardBbHero, 0, 1)
 
@@ -683,7 +695,7 @@ $bbBottom.ColumnStyles.Clear()
 [void]$bbBottom.ColumnStyles.Add((New-Object Windows.Forms.ColumnStyle("Percent", 58)))
 [void]$bbBottom.ColumnStyles.Add((New-Object Windows.Forms.ColumnStyle("Percent", 42)))
 $printerView = New-Console
-$printerView.Font = New-Object Drawing.Font("Segoe UI", 10)
+$printerView.Font = New-Object Drawing.Font("Segoe UI", (10 * $script:FontBoost))
 $printerCard = New-ConsoleCard $printerView
 $printerCard.Margin = New-Object Windows.Forms.Padding(0, 0, 14, 0)
 $bbBottom.Controls.Add($printerCard, 0, 0)
@@ -781,7 +793,7 @@ $commitList.Dock = "Fill"
 $commitList.BackColor = $ColConsole
 $commitList.ForeColor = $ColInk
 $commitList.BorderStyle = "None"
-$commitList.Font = New-Object Drawing.Font("Consolas", 10)
+$commitList.Font = New-Object Drawing.Font("Consolas", (10 * $script:FontBoost))
 $commitList.Add_HandleCreated({ Set-DarkScroll $this })
 $cardCommits = New-Card $ColConsole 12
 $cardCommits.Dock = "Fill"
@@ -879,7 +891,7 @@ $btnDbAdvanced.Add_Click({
     $show = -not $inDbUrl.Visible
     $inDbUrl.Visible = $show
     $lblDbUrl.Visible = $show
-    $cardSet.Height = $(if ($show) { 476 } else { 416 })
+    $cardSet.Height = $(if ($show) { Px 476 } else { Px 416 })
 })
 $cardSet.Controls.Add($grid)
 $pSettings.Controls.Add($cardSet, 0, 1)
@@ -905,6 +917,69 @@ function Load-SettingsValues {
     $chkAutostart.Checked = [bool](Get-AutostartTask)
     $btnApply.Text = $(if ($config.Count -gt 0) { "Применить" } else { "Установить" })
     $btnUninstall.Enabled = ($config.Count -gt 0)
+}
+
+# ---------------------------------------------------------------- страница: веб-панель
+# То же управление в браузере на panel.<домен> (deploy/panel.mjs): статус, перезапуск, обновление,
+# логи. Журнал и блокировка операций общие с этим окном.
+$pPanel = New-Table @(80, 330, "*")
+$pPanel.Controls.Add((New-Heading "Веб-панель" "Управление сервером из браузера - с телефона или другого компьютера"), 0, 0)
+
+$cardPanel = New-Card $ColCard 16
+$cardPanel.Dock = "Fill"
+$cardPanel.Margin = New-Object Windows.Forms.Padding(0, 0, 0, 16)
+$pt = New-Label "Состояние" 10 $ColMuted
+$pt.Location = New-Object Drawing.Point(26, 22)
+$lblPanelState = New-Label "..." 12 $ColInk $true
+$lblPanelState.Location = New-Object Drawing.Point(150, 20)
+$pa = New-Label "Адрес" 10 $ColMuted
+$pa.Location = New-Object Drawing.Point(26, 62)
+$lnkPanel = New-Object Windows.Forms.LinkLabel
+$lnkPanel.AutoSize = $true
+$lnkPanel.Font = New-Font 11
+$lnkPanel.BackColor = $ColCard
+$lnkPanel.LinkColor = $ColBlue; $lnkPanel.ActiveLinkColor = $ColAccent; $lnkPanel.VisitedLinkColor = $ColBlue
+$lnkPanel.LinkBehavior = "HoverUnderline"
+$lnkPanel.Location = New-Object Drawing.Point(150, 60)
+$lnkPanel.Text = "-"
+$lnkPanel.Add_LinkClicked({ if ($script:PanelUrl) { Start-Process $script:PanelUrl } })
+$pp = New-Label "Новый пароль" 10 $ColMuted
+$pp.Location = New-Object Drawing.Point(26, 112)
+$inPanelPass = New-Input "" $true "не короче 10 символов (пусто - оставить прежний)"
+$inPanelPass.Dock = "None"
+$inPanelPass.SetBounds(150, 102, 420, 38)
+$panelBar = New-Object Windows.Forms.FlowLayoutPanel
+$panelBar.BackColor = [Drawing.Color]::Transparent
+$panelBar.SetBounds(22, 158, 900, 50)
+$btnPanelEnable = New-Button "Сохранить и включить" "primary" 250 (G 0xE73E)
+$btnPanelOpen = New-Button "Открыть" "secondary" 150 (G 0xE774)
+$btnPanelDisable = New-Button "Выключить" "danger" 160 (G 0xE711)
+$panelBar.Controls.AddRange(@($btnPanelEnable, $btnPanelOpen, $btnPanelDisable))
+$panelHint = New-Label ("Нужна DNS-запись A: panel.<домен> -> IP сервера (как у сайта).`n" +
+    "В панели: статус сайта, CRM и Bambuddy, перезапуск, обновление из git, журнал и логи.`n" +
+    "Пароль хранится только в виде хэша. 5 неверных попыток подряд блокируют вход на 15 минут.") 9 $ColMuted
+$panelHint.Location = New-Object Drawing.Point(26, 222)
+$cardPanel.Controls.AddRange(@($pt, $lblPanelState, $pa, $lnkPanel, $pp, $inPanelPass, $panelBar, $panelHint))
+$pPanel.Controls.Add($cardPanel, 0, 1)
+Add-Page "panel" $pPanel
+
+$script:PanelUrl = ""
+function Update-PanelStatus {
+    $config = Read-EnvFile $script:EnvFile
+    $port = if ($config["PANEL_PORT"]) { [int]$config["PANEL_PORT"] } else { 3100 }
+    $task = Get-ScheduledTask -TaskName $script:PanelTaskName -ErrorAction SilentlyContinue
+    $listening = [bool](Get-PortOwner $port)
+    $domain = Get-PanelDomain $config["DEPLOY_DOMAIN"]
+    $script:PanelUrl = if ($domain -and (Test-Path $script:PanelSiteFile)) { "https://$domain" } elseif ($listening) { "http://127.0.0.1:$port" } else { "" }
+    if (-not $task) { $lblPanelState.Text = "выключена"; $lblPanelState.ForeColor = $ColMuted }
+    elseif ($listening) { $lblPanelState.Text = "работает"; $lblPanelState.ForeColor = $ColAccent }
+    else { $lblPanelState.Text = "включена, но не отвечает (перезапустится сама в течение минуты)"; $lblPanelState.ForeColor = $ColYellow }
+    $lnkPanel.Text = $(if ($script:PanelUrl) { $script:PanelUrl } else { "-" })
+    $free = -not $script:Busy -and -not $script:WebOp
+    $btnPanelEnable.Enabled = $free -and ($config.Count -gt 0)
+    $btnPanelEnable.Text = $(if ($task) { "Сохранить пароль" } else { "Сохранить и включить" })
+    $btnPanelOpen.Enabled = [bool]$script:PanelUrl
+    $btnPanelDisable.Enabled = $free -and [bool]$task
 }
 
 # ---------------------------------------------------------------- страница: очистка
@@ -955,6 +1030,12 @@ $script:Current = $null
 $script:OnFinish = $null
 $script:Busy = $false
 
+# Свои строки - в общий журнал; позиция чтения сдвигается за них, чтобы не показать их второй раз.
+function Write-OwnJournal([string]$Text) {
+    Add-Journal $Text
+    try { $script:JournalPos = (Get-Item $script:JournalFile).Length } catch { }
+}
+
 function Set-Busy([bool]$Value) {
     $script:Busy = $Value
     Update-Status
@@ -964,6 +1045,12 @@ function Set-Busy([bool]$Value) {
 
 function Add-Steps([object[]]$Steps, [scriptblock]$OnFinish = $null) {
     if ($script:Current) { return }
+    # Веб-панель и это окно - одно целое: две операции одновременно не идут (тихие проверки - можно).
+    $web = Get-WebOperation
+    if ($web -and ($Steps | Where-Object { -not $_.Silent })) {
+        [void][Windows.Forms.MessageBox]::Show(("Сейчас выполняется «{0}» из веб-панели. Дождитесь окончания - ход видно в журнале." -f $web.title), "Лаборатория 3Д", "OK", "Information")
+        return
+    }
     foreach ($step in $Steps) { $script:Queue.Enqueue($step) }
     $script:OnFinish = $OnFinish
     Set-Busy $true
@@ -983,7 +1070,11 @@ function Start-NextStep {
     $out = Join-Path $logDir "gui-task-out.log"
     $err = Join-Path $logDir "gui-task-err.log"
     Remove-Item $out, $err -ErrorAction SilentlyContinue
-    if (-not $step.Silent) { Add-ConsoleText $stepConsole ("`n► " + $step.Title + "`n") (New-Color 110 190 220) }
+    if (-not $step.Silent) {
+        Add-ConsoleText $stepConsole ("`n► " + $step.Title + "`n") (New-Color 110 190 220)
+        Write-OwnJournal ("`n► " + $step.Title + "`n")
+        [IO.File]::WriteAllText($script:GuiLockFile, (@{ pid = $PID; title = $step.Title } | ConvertTo-Json -Compress))
+    }
     $argLine = '-NoProfile -ExecutionPolicy Bypass -File "{0}" {1}' -f $step.Script, $step.Args
     $process = Start-Process -FilePath "powershell.exe" -ArgumentList $argLine -WorkingDirectory $script:Root -PassThru -WindowStyle Hidden `
         -RedirectStandardOutput $out -RedirectStandardError $err
@@ -992,6 +1083,7 @@ function Start-NextStep {
 }
 
 function Complete-Steps([bool]$Ok) {
+    Remove-Item $script:GuiLockFile -Force -ErrorAction SilentlyContinue
     $script:Queue.Clear()
     $script:Current = $null
     $callback = $script:OnFinish
@@ -1008,7 +1100,7 @@ function Read-StepOutput($Current) {
         $Current["$($name)Pos"] = $position
         if ($chunk) {
             [void]$Current.Text.Append($chunk)
-            if (-not $Current.Step.Silent) { Add-ColoredLines $stepConsole $chunk }
+            if (-not $Current.Step.Silent) { Add-ColoredLines $stepConsole $chunk; Write-OwnJournal $chunk }
         }
     }
 }
@@ -1026,13 +1118,13 @@ function Step-Tick {
     $script:Current = $null
     if ($step.OnResult) { & $step.OnResult $text $code }
     if ($code -ne 0 -and -not $step.IgnoreFailure) {
-        if (-not $step.Silent) { Add-ConsoleText $stepConsole "× Операция завершилась с ошибкой.`n" $ColRed }
+        if (-not $step.Silent) { Add-ConsoleText $stepConsole "× Операция завершилась с ошибкой.`n" $ColRed; Write-OwnJournal "× Операция завершилась с ошибкой.`n" }
         $failHook = $step.OnFail
         Complete-Steps $false
         if ($failHook) { & $failHook $text }
         return
     }
-    if (-not $step.Silent -and $script:Queue.Count -eq 0) { Add-ConsoleText $stepConsole "√ Готово.`n" $ColAccent }
+    if (-not $step.Silent -and $script:Queue.Count -eq 0) { Add-ConsoleText $stepConsole "√ Готово.`n" $ColAccent; Write-OwnJournal "√ Готово.`n" }
     Start-NextStep
 }
 
@@ -1044,6 +1136,9 @@ function New-ServerStep([string]$Title, [string]$Arguments, [hashtable]$Extra = 
 
 # ---------------------------------------------------------------- статус
 $script:SiteUrl = ""
+$script:WebOp = $null
+# Общий журнал с веб-панелью: показываем только то новое, что появится после открытия окна.
+$script:JournalPos = $(if (Test-Path $script:JournalFile) { (Get-Item $script:JournalFile).Length } else { 0 })
 $script:DiskTick = 0
 $script:DiskText = "-"
 $script:LabSiteUrl = ""
@@ -1109,7 +1204,7 @@ function Update-Status {
     $script:FieldValues["Диск"].Text = $script:DiskText
 
     $running = [bool]$state
-    $free = -not $script:Busy
+    $free = -not $script:Busy -and -not $script:WebOp
     $btnStart.Enabled = $free -and $installed -and -not $running
     $btnStop.Enabled = $free -and $running
     $btnRestart.Enabled = $free -and $installed
@@ -1188,7 +1283,7 @@ function Update-LabStatus {
     $script:OrdersFieldValues["Диск"].Text = $script:LabDiskText
 
     $running = [bool]$state
-    $free = -not $script:Busy
+    $free = -not $script:Busy -and -not $script:WebOp
     $btnOrdersStart.Enabled = $free -and $installed -and -not $running
     $btnOrdersStop.Enabled = $free -and $running
     $btnOrdersRestart.Enabled = $free -and $installed
@@ -1342,7 +1437,7 @@ function Update-BambuddyStatus([bool]$Poll = $true) {
     }
     $script:BbFieldValues["Принтеры"].Text = $script:BbPrintersText
 
-    $free = -not $script:Busy
+    $free = -not $script:Busy -and -not $script:WebOp
     $btnBbStart.Enabled = $free -and $service -and -not $running
     $btnBbStop.Enabled = $free -and $running
     $btnBbRestart.Enabled = $free -and [bool]$service
@@ -1512,6 +1607,28 @@ $btnBbKey.Add_Click({
         if ($answer -eq "Yes") { Add-Steps @((New-BambuddyStep "Перезапуск сайта" "restart")) }
     }
 })
+$btnPanelOpen.Add_Click({ if ($script:PanelUrl) { Start-Process $script:PanelUrl } })
+$btnPanelEnable.Add_Click({
+    $password = $inPanelPass.Text
+    $hasPassword = [bool](Read-EnvFile $script:EnvFile)["PANEL_PASSWORD"]
+    if (-not $password -and -not $hasPassword) { [void][Windows.Forms.MessageBox]::Show("Придумайте пароль для входа в веб-панель.", "Веб-панель", "OK", "Information"); return }
+    if ($password -and $password.Length -lt 10) { [void][Windows.Forms.MessageBox]::Show("Пароль - не короче 10 символов.", "Веб-панель", "OK", "Information"); return }
+    $steps = @()
+    if ($password) {
+        # Пароль - через переменную окружения дочернего процесса, не в командной строке.
+        $env:LAB3D_PANEL_PASSWORD = $password
+        $steps += (New-ServerStep "Пароль веб-панели" "panel-password")
+    }
+    # Панель читает пароль при каждом входе - уже включённую перезапускать ради нового пароля не нужно.
+    if (-not (Get-ScheduledTask -TaskName $script:PanelTaskName -ErrorAction SilentlyContinue) -or -not $password) {
+        $steps += (New-ServerStep "Включение веб-панели" "panel-install")
+    }
+    Add-Steps $steps { param($ok) Remove-Item Env:LAB3D_PANEL_PASSWORD -ErrorAction SilentlyContinue; $inPanelPass.Text = ""; Update-PanelStatus }
+})
+$btnPanelDisable.Add_Click({
+    $answer = [Windows.Forms.MessageBox]::Show("Выключить веб-панель? Управлять сервером из браузера станет нельзя.", "Веб-панель", "YesNo", "Question")
+    if ($answer -eq "Yes") { Add-Steps @((New-ServerStep "Выключение веб-панели" "panel-remove")) { param($ok) Update-PanelStatus } }
+})
 $btnCheck.Add_Click({ Start-GitCheck $true })
 $btnUpdate.Add_Click({ Start-Update })
 $btnBanner.Add_Click({ Start-Update })
@@ -1609,6 +1726,11 @@ $pump = New-Object Windows.Forms.Timer
 $pump.Interval = 400
 $pump.Add_Tick({
     Step-Tick
+    # Операции из веб-панели (и прочие чужие строки журнала) - в журнал «Обзора», пока своя не идёт.
+    if (-not ($script:Current -and -not $script:Current.Step.Silent)) {
+        $chunk = Read-Appended $script:JournalFile ([ref]$script:JournalPos)
+        if ($chunk) { Add-ColoredLines $console $chunk }
+    }
     if ($script:CurrentPage -eq "logs") {
         $path = $logSources[$script:LogKey]
         $chunk = Read-Appended $path ([ref]$script:LogPos)
@@ -1617,7 +1739,11 @@ $pump.Add_Tick({
 })
 $statusTimer = New-Object Windows.Forms.Timer
 $statusTimer.Interval = 2000
-$statusTimer.Add_Tick({ Update-Status; Update-LabStatus; Update-BambuddyStatus })
+$statusTimer.Add_Tick({
+    $script:WebOp = Get-WebOperation
+    Update-Status; Update-LabStatus; Update-BambuddyStatus
+    if ($script:CurrentPage -eq "panel") { Update-PanelStatus }
+})
 $updateTimer = New-Object Windows.Forms.Timer
 $updateTimer.Interval = 30 * 60 * 1000
 $updateTimer.Add_Tick({ if ([bool](Get-Settings).autoCheck) { Start-GitCheck } })
@@ -1641,6 +1767,12 @@ $form.Add_Shown({
     if ([bool](Get-Settings).autoCheck) { Start-GitCheck }
 })
 
+# Всё окно собрано для 100% - растягиваем координаты, размеры и строки таблиц под масштаб экрана.
+if ($script:UiScale -ne 1) {
+    $form.Scale((New-Object Drawing.SizeF($script:UiScale, $script:UiScale)))
+    $form.MinimumSize = New-Object Drawing.Size((Px 1000), (Px 680))
+}
+
 if ($Snapshot) {
     New-Item -ItemType Directory -Force -Path $Snapshot | Out-Null
     $form.StartPosition = "Manual"
@@ -1654,7 +1786,7 @@ if ($Snapshot) {
         Wait-Idle
         for ($i = 0; $i -lt 25; $i++) { [Windows.Forms.Application]::DoEvents(); Start-Sleep -Milliseconds 100 }
     }
-    foreach ($name in @("overview", "printers", "logs", "updates", "settings", "cleanup")) {
+    foreach ($name in @("overview", "printers", "logs", "updates", "settings", "panel", "cleanup")) {
         Show-Page $name
         for ($i = 0; $i -lt 8; $i++) { [Windows.Forms.Application]::DoEvents(); Start-Sleep -Milliseconds 60 }
         $bitmap = New-Object Drawing.Bitmap($form.Width, $form.Height)

@@ -1,0 +1,319 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>Лаборатория 3Д — панель сервера</title>
+<style>
+  :root {
+    --bg: #0a0a0c; --side: #0e0e11; --card: #151519; --field: #1e1e23; --line: #2a2a30;
+    --ink: #eeeef0; --muted: #8c8c96; --accent: #7fbf7f; --accent-dark: #0a1e0c;
+    --red: #e86c6c; --yellow: #e8be5a; --blue: #6ebedc; --console: #0d0d10;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.45 "Segoe UI", system-ui, sans-serif; }
+  .wrap { max-width: 1100px; margin: 0 auto; padding: 20px 16px 40px; }
+  header { display: flex; align-items: center; gap: 12px; margin-bottom: 20px; }
+  header .brand { font-weight: 600; font-size: 18px; }
+  header .sub { color: var(--muted); font-size: 13px; }
+  header .spacer { flex: 1; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 16px; padding: 18px; }
+  .grid { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); margin-bottom: 14px; }
+  .svc h2 { margin: 0; font-size: 16px; font-weight: 600; }
+  .state { display: flex; align-items: center; gap: 10px; margin: 10px 0 4px; font-size: 22px; font-weight: 600; }
+  .dot { width: 14px; height: 14px; border-radius: 50%; background: var(--muted); flex: none; }
+  .ok { color: var(--accent); } .ok .dot { background: var(--accent); }
+  .warn { color: var(--yellow); } .warn .dot { background: var(--yellow); animation: pulse 1.2s infinite; }
+  .bad { color: var(--red); } .bad .dot { background: var(--red); }
+  .off { color: var(--muted); }
+  @keyframes pulse { 50% { opacity: .35; } }
+  .meta { color: var(--muted); font-size: 13px; min-height: 19px; overflow-wrap: anywhere; }
+  .meta a { color: var(--blue); }
+  .actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+  button { font: inherit; font-size: 14px; font-weight: 600; border-radius: 10px; padding: 8px 14px; cursor: pointer;
+    background: var(--field); color: var(--ink); border: 1px solid var(--line); }
+  button:hover:not(:disabled) { background: #28282f; }
+  button.primary { background: var(--accent); color: var(--accent-dark); border-color: var(--accent); }
+  button.primary:hover:not(:disabled) { background: #98d298; }
+  button.ghost { background: transparent; border-color: transparent; color: var(--muted); }
+  button:disabled { opacity: .45; cursor: default; }
+  .banner { display: none; margin-bottom: 14px; padding: 12px 16px; border-radius: 12px; font-weight: 600; }
+  .banner.show { display: block; }
+  .banner.busy { background: #2a2413; color: var(--yellow); border: 1px solid #5c4d22; }
+  .banner.update { background: #132617; color: var(--accent); border: 1px solid #3a6c40; }
+  .banner.lost { background: #2e1616; color: var(--red); border: 1px solid #6c3434; }
+  .section-head { display: flex; align-items: center; gap: 10px; margin: 22px 0 8px; }
+  .section-head h3 { margin: 0; font-size: 14px; font-weight: 500; color: var(--muted); }
+  .section-head .spacer { flex: 1; }
+  pre { margin: 0; background: var(--console); border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px;
+    height: 340px; overflow: auto; white-space: pre-wrap; word-break: break-word;
+    font: 13px/1.5 Consolas, "Cascadia Mono", monospace; color: var(--muted); }
+  pre .l-step { color: var(--blue); } pre .l-bad { color: var(--red); } pre .l-warn { color: var(--yellow); } pre .l-ok { color: var(--accent); }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+  .chips button { font-weight: 500; font-size: 13px; padding: 5px 12px; border-radius: 16px; color: var(--muted); }
+  .chips button.active { background: #16291a; color: var(--accent); border-color: #40763f; }
+  #login { max-width: 360px; margin: 12vh auto 0; }
+  #login h1 { font-size: 20px; margin: 0 0 4px; }
+  #login p { color: var(--muted); font-size: 13px; margin: 0 0 16px; }
+  input { width: 100%; font: inherit; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--line);
+    background: var(--field); color: var(--ink); outline: none; }
+  input:focus { border-color: var(--accent); }
+  #login button { width: 100%; margin-top: 12px; padding: 10px; }
+  .error { color: var(--red); font-size: 13px; min-height: 18px; margin-top: 8px; }
+  .hidden { display: none !important; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <form id="login" class="card hidden" autocomplete="on">
+    <h1>Лаборатория 3Д</h1>
+    <p>Панель сервера — та же, что окно Lab3D.exe на компьютере.</p>
+    <input id="password" type="password" autocomplete="current-password" placeholder="Пароль панели" required>
+    <button type="submit" class="primary">Войти</button>
+    <div class="error" id="login-error"></div>
+  </form>
+
+  <main id="app" class="hidden">
+    <header>
+      <div>
+        <div class="brand">Лаборатория 3Д</div>
+        <div class="sub" id="version">панель сервера</div>
+      </div>
+      <div class="spacer"></div>
+      <button class="ghost" id="logout">Выйти</button>
+    </header>
+
+    <div class="banner busy" id="busy"></div>
+    <div class="banner lost" id="lost">Нет связи с сервером — возможно, он перезапускается. Переподключаюсь…</div>
+    <div class="banner update" id="update"></div>
+
+    <div class="grid">
+      <section class="card svc" id="svc-site">
+        <h2>Сайт</h2>
+        <div class="state"><span class="dot"></span><span class="label">…</span></div>
+        <div class="meta"></div>
+        <div class="actions">
+          <button data-action="site-restart" data-confirm="Перезапустить сайт? Он будет недоступен около минуты, эта панель тоже.">Перезапустить</button>
+          <button data-action="site-update" class="primary" data-confirm="Обновить сайт из репозитория? Сайт и эта панель будут недоступны несколько минут, пока идёт сборка.">Обновить</button>
+          <button id="git-check">Проверить обновления</button>
+        </div>
+      </section>
+      <section class="card svc" id="svc-crm">
+        <h2>Заказы (CRM)</h2>
+        <div class="state"><span class="dot"></span><span class="label">…</span></div>
+        <div class="meta"></div>
+        <div class="actions">
+          <button data-action="crm-start" class="primary">Запустить</button>
+          <button data-action="crm-stop" data-confirm="Остановить CRM «Заказы»?">Остановить</button>
+          <button data-action="crm-restart">Перезапустить</button>
+        </div>
+      </section>
+      <section class="card svc" id="svc-bambuddy">
+        <h2>Принтеры (Bambuddy)</h2>
+        <div class="state"><span class="dot"></span><span class="label">…</span></div>
+        <div class="meta"></div>
+        <div class="actions">
+          <button data-action="bambuddy-start" class="primary">Запустить</button>
+          <button data-action="bambuddy-stop" data-confirm="Остановить Bambuddy? Управление принтерами будет недоступно.">Остановить</button>
+          <button data-action="bambuddy-restart">Перезапустить</button>
+        </div>
+      </section>
+    </div>
+
+    <div class="section-head">
+      <h3>Журнал действий — общий с окном Lab3D.exe</h3>
+    </div>
+    <pre id="journal"></pre>
+
+    <div class="section-head">
+      <h3>Логи</h3>
+      <div class="spacer"></div>
+    </div>
+    <div class="chips" id="log-chips"></div>
+    <pre id="log" style="margin-top:8px"></pre>
+  </main>
+</div>
+
+<script>
+const $ = (s) => document.querySelector(s);
+const LABELS = {
+  running: ["Работает", "ok"], starting: ["Запускается…", "warn"], stopping: ["Останавливается…", "warn"],
+  stopped: ["Остановлен", "bad"], "not-installed": ["Не установлен", "off"], absent: ["Не найден", "off"],
+};
+let journalOffset = null, logOffset = null, logSource = "site", status = null, connected = true;
+
+async function api(path, options = {}) {
+  const res = await fetch(path, {
+    ...options,
+    headers: { "Content-Type": "application/json", "X-Panel": "1", ...(options.headers || {}) },
+  });
+  const body = await res.json().catch(() => ({}));
+  if (res.status === 401 && path !== "/api/login") { showLogin(); throw new Error("auth"); }
+  if (!res.ok) throw new Error(body.error || res.statusText);
+  return body;
+}
+
+function showLogin() { $("#app").classList.add("hidden"); $("#login").classList.remove("hidden"); $("#password").focus(); }
+function showApp() { $("#login").classList.add("hidden"); $("#app").classList.remove("hidden"); }
+
+$("#login").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  $("#login-error").textContent = "";
+  try {
+    await api("/api/login", { method: "POST", body: JSON.stringify({ password: $("#password").value }) });
+    $("#password").value = "";
+    start();
+  } catch (err) { $("#login-error").textContent = err.message; }
+});
+$("#logout").addEventListener("click", async () => { await api("/api/logout", { method: "POST" }).catch(() => {}); location.reload(); });
+
+function uptime(since) {
+  if (!since) return "";
+  const s = Math.max(0, (Date.now() - new Date(since)) / 1000);
+  const d = Math.floor(s / 86400), h = Math.floor(s % 86400 / 3600), m = Math.floor(s % 3600 / 60);
+  return d ? `${d} д ${h} ч` : h ? `${h} ч ${m} мин` : `${m} мин`;
+}
+
+function renderService(id, svc, extra = "") {
+  const el = $(id);
+  const [label, cls] = LABELS[svc.state] || [svc.state, "off"];
+  const stateEl = el.querySelector(".state");
+  stateEl.className = `state ${cls}`;
+  stateEl.querySelector(".label").textContent = label;
+  const parts = [];
+  if (svc.url) parts.push(`<a href="${svc.url}" target="_blank" rel="noopener">${svc.url.replace(/^https?:\/\//, "")}</a>`);
+  if (svc.state === "running" && svc.startedAt) parts.push(`аптайм ${uptime(svc.startedAt)}`);
+  if (extra) parts.push(extra);
+  el.querySelector(".meta").innerHTML = parts.join(" · ");
+}
+
+function setButtons() {
+  const busy = !!status?.operation || !connected;
+  for (const b of document.querySelectorAll("[data-action]")) {
+    const [svc, act] = b.dataset.action.split(/-(?=[^-]+$)/);
+    const s = svc === "site" ? status?.site : svc === "crm" ? status?.crm : status?.bambuddy;
+    const running = s && (s.state === "running" || s.state === "starting");
+    const installed = s && !["not-installed", "absent"].includes(s.state);
+    let enabled = !busy && installed;
+    if (act === "start") enabled = enabled && !running;
+    if (act === "stop") enabled = enabled && running;
+    b.disabled = !enabled;
+  }
+  $("#git-check").disabled = busy;
+}
+
+async function refreshStatus() {
+  try {
+    status = await api("/api/status");
+    connected = true;
+    $("#lost").classList.remove("show");
+    renderService("#svc-site", status.site);
+    renderService("#svc-crm", status.crm);
+    const bbUrl = status.domain ? `<a href="https://bambu.${status.domain.replace(/^www\./, "")}" target="_blank" rel="noopener">bambu.${status.domain.replace(/^www\./, "")}</a>` : "";
+    renderService("#svc-bambuddy", status.bambuddy, bbUrl);
+    $("#version").textContent = status.version ? `версия ${status.version}` : "панель сервера";
+    const op = status.operation;
+    $("#busy").classList.toggle("show", !!op);
+    if (op) $("#busy").textContent = `Выполняется: ${op.title}${op.source === "gui" ? " — запущено в окне на сервере" : ""}`;
+    const u = status.updates;
+    const behind = u && u.behind > 0;
+    $("#update").classList.toggle("show", !!behind);
+    if (behind) $("#update").textContent = `Доступно обновление сайта: новых коммитов — ${u.behind}. Нажмите «Обновить».`;
+  } catch (err) {
+    if (err.message === "auth") return;
+    connected = false;
+    $("#lost").classList.add("show");
+  }
+  setButtons();
+}
+
+function appendColored(pre, text) {
+  const atBottom = pre.scrollTop + pre.clientHeight >= pre.scrollHeight - 30;
+  const frag = document.createDocumentFragment();
+  for (const line of text.replace(/\r/g, "").split("\n")) {
+    if (!line) continue;
+    const span = document.createElement("span");
+    span.textContent = line + "\n";
+    if (/^\s*(►|==>)/.test(line)) span.className = "l-step";
+    else if (/ошибк|error|не удал|не найден|failed|fatal|×/i.test(line)) span.className = "l-bad";
+    else if (/warn|предупрежд|^\s*!/i.test(line)) span.className = "l-warn";
+    else if (/готово|запущен|остановлен|завершен|актуал|обновлён|подключён|√/i.test(line)) span.className = "l-ok";
+    frag.appendChild(span);
+  }
+  pre.appendChild(frag);
+  while (pre.childNodes.length > 4000) pre.removeChild(pre.firstChild);
+  if (atBottom) pre.scrollTop = pre.scrollHeight;
+}
+
+async function pollJournal() {
+  try {
+    const q = journalOffset === null ? "" : `?from=${journalOffset}`;
+    const { text, offset } = await api(`/api/journal${q}`);
+    if (offset < (journalOffset ?? 0)) $("#journal").textContent = ""; // rotated
+    journalOffset = offset;
+    if (text) appendColored($("#journal"), text);
+  } catch { /* connection banner is handled by status */ }
+}
+
+async function pollLog() {
+  try {
+    const q = logOffset === null ? "" : `&from=${logOffset}`;
+    const { text, offset } = await api(`/api/logs?source=${logSource}${q}`);
+    if (offset < (logOffset ?? 0)) $("#log").textContent = "";
+    logOffset = offset;
+    if (text) appendColored($("#log"), text);
+  } catch { /* ignore */ }
+}
+
+async function loadLogChips() {
+  const { sources } = await api("/api/logs");
+  const chips = $("#log-chips");
+  chips.innerHTML = "";
+  for (const [key, label] of Object.entries(sources)) {
+    const b = document.createElement("button");
+    b.textContent = label;
+    b.className = key === logSource ? "active" : "";
+    b.onclick = () => {
+      logSource = key; logOffset = null; $("#log").textContent = "";
+      for (const c of chips.children) c.classList.toggle("active", c === b);
+      pollLog();
+    };
+    chips.appendChild(b);
+  }
+}
+
+for (const b of document.querySelectorAll("[data-action]")) {
+  b.addEventListener("click", async () => {
+    if (b.dataset.confirm && !confirm(b.dataset.confirm)) return;
+    b.disabled = true;
+    try { await api("/api/action", { method: "POST", body: JSON.stringify({ action: b.dataset.action }) }); }
+    catch (err) { if (err.message !== "auth") alert(err.message); }
+    refreshStatus(); pollJournal();
+  });
+}
+
+$("#git-check").addEventListener("click", async () => {
+  const b = $("#git-check");
+  b.disabled = true; b.textContent = "Проверяю…";
+  try {
+    const r = await api("/api/git-check", { method: "POST" });
+    alert(r.error ? `Не удалось проверить: ${r.error}` : r.behind > 0 ? `Доступно обновлений: ${r.behind}` : "Обновлений нет — версия актуальна.");
+  } catch (err) { if (err.message !== "auth") alert(err.message); }
+  b.textContent = "Проверить обновления";
+  refreshStatus();
+});
+
+let timers = [];
+async function start() {
+  try { await api("/api/status"); } catch { return; }
+  showApp();
+  await loadLogChips();
+  refreshStatus(); pollJournal(); pollLog();
+  timers.forEach(clearInterval);
+  timers = [setInterval(refreshStatus, 3000), setInterval(pollJournal, 1500), setInterval(pollLog, 2500)];
+}
+start();
+</script>
+</body>
+</html>

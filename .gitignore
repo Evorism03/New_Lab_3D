@@ -58,3 +58,5 @@ next-env.d.ts
 /deploy/app.ico
 /deploy/app-settings.json
 /deploy/controls-*.dll
+/deploy/operation.json
+/deploy/gui-operation.json

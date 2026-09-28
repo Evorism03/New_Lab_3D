@@ -150,6 +150,87 @@ $importLine
 
 # Bambuddy's site block for sites.d (see deploy/setup.ps1). reverse_proxy passes its
 # WebSocket through as is; the body limit is raised for large 3MF/G-code uploads.
+# ---------------------------------------------------------------------------
+# Веб-панель (deploy/panel.mjs) - то же окно управления, но в браузере на panel.<домен>.
+# Окно на ПК и веб-панель - одно целое: общий журнал операций и общая блокировка, чтобы
+# операция, начатая в одном месте, была видна в другом и две не шли одновременно.
+# ---------------------------------------------------------------------------
+$script:JournalFile = Join-Path $script:LogDir "journal.log"
+$script:WebLockFile = Join-Path $PSScriptRoot "operation.json"       # пишет panel.mjs
+$script:GuiLockFile = Join-Path $PSScriptRoot "gui-operation.json"   # пишет окно Lab3D.exe
+$script:PanelTaskName = "Lab3D Panel"
+$script:PanelSiteFile = Join-Path $PSScriptRoot "sites.d\panel.caddy"
+
+function Add-Journal([string]$Text) {
+    if (-not $Text) { return }
+    New-Item -ItemType Directory -Force -Path $script:LogDir | Out-Null
+    try {
+        if ((Test-Path $script:JournalFile) -and (Get-Item $script:JournalFile).Length -gt 1MB) {
+            Move-Item $script:JournalFile "$($script:JournalFile).1" -Force
+        }
+        [IO.File]::AppendAllText($script:JournalFile, $Text, (New-Object Text.UTF8Encoding($false)))
+    }
+    catch { }
+}
+
+# Операция, запущенная из веб-панели прямо сейчас ($null - нет).
+function Get-WebOperation {
+    if (-not (Test-Path $script:WebLockFile)) { return $null }
+    try { $op = Get-Content $script:WebLockFile -Raw -Encoding UTF8 | ConvertFrom-Json } catch { return $null }
+    if ($op.pid -and (Get-Process -Id $op.pid -ErrorAction SilentlyContinue)) { return $op }
+    return $null
+}
+
+function Get-PanelDomain([string]$Domain) {
+    if (-not $Domain) { return "" }
+    return "panel." + ($Domain -replace '^www\.', '')
+}
+
+# Пароль хранится только как хэш PBKDF2-SHA256 - panel.mjs проверяет его так же.
+function New-PanelPasswordHash([string]$Password) {
+    $salt = New-Object byte[] 16
+    [Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($salt)
+    $iterations = 210000
+    $kdf = New-Object Security.Cryptography.Rfc2898DeriveBytes($Password, $salt, $iterations, [Security.Cryptography.HashAlgorithmName]::SHA256)
+    return "pbkdf2-sha256`${0}`${1}`${2}" -f $iterations, [Convert]::ToBase64String($salt), [Convert]::ToBase64String($kdf.GetBytes(32))
+}
+
+function Set-PanelPassword([string]$Password) {
+    if ($Password.Length -lt 10) { throw "Пароль веб-панели - не короче 10 символов." }
+    $config = Read-EnvFile $script:EnvFile
+    if ($config.Count -eq 0) { throw "Сначала выполните установку сайта." }
+    $config["PANEL_PASSWORD"] = New-PanelPasswordHash $Password
+    if (-not $config["PANEL_SECRET"]) { $config["PANEL_SECRET"] = New-Secret 48 }
+    if (-not $config["PANEL_PORT"]) { $config["PANEL_PORT"] = "3100" }
+    Write-EnvFile $script:EnvFile $config
+}
+
+function New-PanelCaddySiteText([string]$Domain, [string]$Ip, [int]$Port) {
+    return @"
+$Domain {
+	bind $Ip
+	reverse_proxy 127.0.0.1:$Port
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options nosniff
+		X-Robots-Tag "noindex, nofollow"
+		-Server
+	}
+}
+"@
+}
+
+# Caddy перечитывает Caddyfile (с sites.d) без перезапуска, если он сейчас запущен.
+function Invoke-CaddyReload {
+    $config = Read-EnvFile $script:EnvFile
+    $state = Get-ServerState
+    $caddy = if ($config["DEPLOY_CADDY"] -and (Test-Path $config["DEPLOY_CADDY"])) { $config["DEPLOY_CADDY"] } else { Find-Caddy }
+    if (-not ($state -and $state.caddyPid -and $caddy -and (Test-Path $script:CaddyFile))) { return "not-running" }
+    $reload = Invoke-Native { & $caddy reload --config $script:CaddyFile --adapter caddyfile }
+    if ($reload.ExitCode -eq 0) { return "ok" }
+    return ($reload.Output -join " ")
+}
+
 # Bambuddy ставится своим установщиком как служба Windows «Bambuddy» (порт 8000) - мы им
 # только управляем и публикуем его на bambu.<домен>. Порт берётся из BAMBUDDY_URL.
 $script:BambuddyService = "Bambuddy"

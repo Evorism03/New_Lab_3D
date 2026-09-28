@@ -15,6 +15,8 @@
   server.bat cleanup        # очистка лишних файлов
   server.bat uninstall
   server.bat db-push        # применить схему базы вручную (с вопросом о рисках)
+  server.bat panel-password # пароль веб-панели (panel.<домен>)
+  server.bat panel-install  # включить веб-панель   (panel-remove - выключить)
 #>
 param(
     [Parameter(Position = 0)][string]$Command = "menu",
@@ -573,6 +575,62 @@ function Invoke-BambuddyService([string]$Action) {
     Write-Good ("Служба Bambuddy: {0}" -f (Get-Service -Name $script:BambuddyService).Status)
 }
 
+# ---------------------------------------------------------------- веб-панель (deploy/panel.mjs)
+# Пароль передаётся через переменную LAB3D_PANEL_PASSWORD (окно Lab3D.exe), а не аргументом -
+# так он не виден в списке процессов; в консоли его спрашивают.
+function Invoke-PanelPassword {
+    $password = $env:LAB3D_PANEL_PASSWORD
+    if (-not $password) {
+        $secure = Read-Host "Новый пароль веб-панели (не короче 10 символов)" -AsSecureString
+        $password = [Runtime.InteropServices.Marshal]::PtrToStringAuto([Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure))
+    }
+    try { Set-PanelPassword $password; Write-Good "Пароль веб-панели сохранён." }
+    catch { Write-Bad $_.Exception.Message }
+}
+
+function Invoke-PanelInstall {
+    $config = Read-EnvFile $script:EnvFile
+    if ($config.Count -eq 0) { Write-Bad "Сначала выполните установку сайта."; return }
+    if (-not $config["PANEL_PASSWORD"]) { Write-Bad "Сначала задайте пароль веб-панели."; return }
+    $node = if ($config["DEPLOY_NODE"] -and (Test-Path $config["DEPLOY_NODE"])) { $config["DEPLOY_NODE"] } else { Find-Executable "node" }
+    if (-not $node) { Write-Bad "Node.js не найден."; return }
+
+    # Отдельная задача, не часть сервера сайта: панель должна жить, пока сайт перезапускается.
+    $action = New-ScheduledTaskAction -Execute $node -Argument ('"{0}"' -f (Join-Path $PSScriptRoot "panel.mjs")) -WorkingDirectory $script:Root
+    $trigger = New-ScheduledTaskTrigger -AtStartup
+    $principal = New-ScheduledTaskPrincipal -UserId "SYSTEM" -LogonType ServiceAccount -RunLevel Highest
+    $settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit ([TimeSpan]::Zero) -RestartCount 999 `
+        -RestartInterval (New-TimeSpan -Minutes 1) -StartWhenAvailable -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
+    try {
+        Stop-ScheduledTask -TaskName $script:PanelTaskName -ErrorAction SilentlyContinue
+        Register-ScheduledTask -TaskName $script:PanelTaskName -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Force -ErrorAction Stop | Out-Null
+        Start-ScheduledTask -TaskName $script:PanelTaskName -ErrorAction Stop
+    }
+    catch { Write-Bad ("Не удалось зарегистрировать задачу «{0}»: {1}" -f $script:PanelTaskName, $_.Exception.Message); return }
+    Write-Good "Веб-панель запущена и будет стартовать вместе с Windows."
+
+    $domain = $config["DEPLOY_DOMAIN"]
+    if (-not $domain) { Write-Info "У сайта нет домена - панель доступна только на этом компьютере: http://127.0.0.1:$($config['PANEL_PORT'])"; return }
+    $panelDomain = Get-PanelDomain $domain
+    New-Item -ItemType Directory -Force -Path (Split-Path $script:PanelSiteFile) | Out-Null
+    [IO.File]::WriteAllText($script:PanelSiteFile, (New-PanelCaddySiteText $panelDomain $config["DEPLOY_IP"] ([int]$config["PANEL_PORT"])), (New-Object Text.UTF8Encoding($false)))
+    Write-Good "Адрес: https://$panelDomain"
+    Write-Info "Нужна DNS-запись A: $panelDomain -> внешний IP сервера (как у $domain)."
+    switch (Invoke-CaddyReload) {
+        "ok" { Write-Good "Caddy подхватил поддомен без перезапуска." }
+        "not-running" { Write-Info "Caddy сейчас не запущен - поддомен заработает при следующем запуске сервера." }
+        default { Write-Bad "Caddy не принял настройку: $_" }
+    }
+}
+
+function Invoke-PanelRemove {
+    Stop-ScheduledTask -TaskName $script:PanelTaskName -ErrorAction SilentlyContinue
+    Unregister-ScheduledTask -TaskName $script:PanelTaskName -Confirm:$false -ErrorAction SilentlyContinue
+    Remove-Item $script:PanelSiteFile -Force -ErrorAction SilentlyContinue
+    [void](Invoke-CaddyReload)
+    Write-Good "Веб-панель выключена."
+}
+
 function Invoke-BambuddySite {
     $config = Read-EnvFile $script:EnvFile
     $domain = $config["DEPLOY_DOMAIN"]
@@ -582,16 +640,11 @@ function Invoke-BambuddySite {
     $bambuddyDomain = Get-BambuddyDomain $domain
     Write-Good "https://$bambuddyDomain -> 127.0.0.1:$port"
     Write-Info "Нужна DNS-запись A: $bambuddyDomain -> внешний IP сервера."
-
-    $state = Get-ServerState
-    $caddy = if ($config["DEPLOY_CADDY"] -and (Test-Path $config["DEPLOY_CADDY"])) { $config["DEPLOY_CADDY"] } else { Find-Caddy }
-    if (-not ($state -and $state.caddyPid -and $caddy -and (Test-Path $script:CaddyFile))) {
-        Write-Info "Caddy сейчас не запущен - поддомен заработает при следующем запуске сервера."
-        return
+    switch (Invoke-CaddyReload) {
+        "ok" { Write-Good "Caddy подхватил поддомен без перезапуска." }
+        "not-running" { Write-Info "Caddy сейчас не запущен - поддомен заработает при следующем запуске сервера." }
+        default { Write-Bad "Caddy не принял настройку: $_" }
     }
-    $reload = Invoke-Native { & $caddy reload --config $script:CaddyFile --adapter caddyfile }
-    if ($reload.ExitCode -eq 0) { Write-Good "Caddy подхватил поддомен без перезапуска." }
-    else { Write-Bad ("Caddy не принял настройку: {0}" -f ($reload.Output -join " ")) }
 }
 
 try {
@@ -616,6 +669,9 @@ try {
         "bambuddy-stop" { Invoke-BambuddyService "stop" }
         "bambuddy-restart" { Invoke-BambuddyService "restart" }
         "bambuddy-site" { Invoke-BambuddySite }
+        "panel-password" { Invoke-PanelPassword }
+        "panel-install" { Invoke-PanelInstall }
+        "panel-remove" { Invoke-PanelRemove }
         # Interactive schema push (asks y/N itself) for changes setup/update refuse to apply unattended.
         "db-push" { Import-EnvFile $script:EnvFile | Out-Null; & npx prisma db push; if ($LASTEXITCODE -ne 0) { Write-Bad "prisma db push не удался." } }
         default {
