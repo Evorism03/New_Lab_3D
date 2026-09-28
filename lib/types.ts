@@ -75,6 +75,10 @@ export type OrderDTO = {
   email: string | null;
   shipping: {
     name: string | null;
+    phone: string | null;
+    /** Carrier as the CRM names it ("СДЭК", "Озон", "Почта России"). */
+    deliveryService: string | null;
+    /** Full delivery address line: city, street, house, extra (lib/address.ts). */
     address: string | null;
     city: string | null;
     postal: string | null;

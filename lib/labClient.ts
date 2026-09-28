@@ -40,8 +40,10 @@ async function callLab(path: string, init: RequestInit): Promise<void> {
   }
 }
 
+// shipping.address is already the whole line (city, street, house, extra — lib/address.ts);
+// the postal code and country only go into the informational shipping_address.
 function formatShippingAddress(shipping: OrderDTO["shipping"]): string {
-  return [shipping.address, shipping.city, shipping.postal, shipping.country].filter(Boolean).join(", ");
+  return [shipping.postal, shipping.address].filter(Boolean).join(", ");
 }
 
 // lab has no concept of files/materials/finishes — 3D-print items go in as free text
@@ -52,6 +54,11 @@ function toLabPayload(order: OrderDTO) {
     external_order_id: order.id,
     customer_email: order.email,
     full_name: order.shipping.name,
+    phone: order.shipping.phone,
+    // The CRM form's carrier, and its pickup address, which it splits into
+    // city / street / house / extra by itself.
+    delivery_service: order.shipping.deliveryService,
+    pvz_address: order.shipping.address,
     shipping_address: formatShippingAddress(order.shipping),
     payment_status: "unpaid",
     // Lab staff work in Russian, so color/finish go over in Russian.

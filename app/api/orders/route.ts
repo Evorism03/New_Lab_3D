@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
 import { auth } from "@/auth";
+import { DELIVERY_SERVICES, formatAddressLine } from "@/lib/address";
 import { availableCatalog } from "@/lib/colorSync";
 import { prisma } from "@/lib/db";
 import { OrderStatus } from "@/lib/generated/prisma/client";
@@ -29,11 +30,19 @@ const CreateOrderSchema = z.object({
   items: z.array(OrderItemSchema).min(1),
   email: z.string().email(),
   shipping: z.object({
-    name: z.string().min(1),
-    address: z.string().min(1),
-    city: z.string().min(1),
-    postal: z.string().min(1),
-    country: z.string().min(1),
+    name: z.string().trim().min(1).max(200),
+    // Digits, spaces, +, -, () — at least 10 digits (a Russian number without the country code).
+    phone: z
+      .string()
+      .trim()
+      .regex(/^[\d\s+()-]+$/)
+      .refine((v) => v.replace(/\D/g, "").length >= 10),
+    service: z.enum(DELIVERY_SERVICES),
+    city: z.string().trim().min(1).max(200),
+    street: z.string().trim().min(1).max(200),
+    house: z.string().trim().min(1).max(50),
+    extra: z.string().trim().max(200).optional(),
+    postal: z.string().trim().max(20).optional(),
   }),
 });
 
@@ -124,10 +133,13 @@ export async function POST(request: NextRequest) {
       status: "AWAITING_PAYMENT",
       email,
       shippingName: shipping.name,
-      shippingAddress: shipping.address,
+      shippingPhone: shipping.phone,
+      deliveryService: shipping.service,
+      // One line the CRM splits into city / street / house / extra (lib/address.ts).
+      shippingAddress: formatAddressLine(shipping),
       shippingCity: shipping.city,
-      shippingPostal: shipping.postal,
-      shippingCountry: shipping.country,
+      shippingPostal: shipping.postal || null,
+      shippingCountry: "Россия",
       totalCents,
       items: { create: resolvedItems },
     },

@@ -162,6 +162,9 @@ model Order {
   shippingCity    String?
   shippingPostal  String?
   shippingCountry String?
+  shippingPhone   String?
+  // Carrier as the CRM names it: "СДЭК", "Озон", "Почта России".
+  deliveryService String?
   email           String?
   totalCents      Int         @default(0)
   stripeSessionId String?     @unique

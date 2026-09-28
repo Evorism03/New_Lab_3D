@@ -54,6 +54,8 @@ export function serializeOrder(order: Order & { items: OrderItemWithRelations[] 
     email: order.email,
     shipping: {
       name: order.shippingName,
+      phone: order.shippingPhone,
+      deliveryService: order.deliveryService,
       address: order.shippingAddress,
       city: order.shippingCity,
       postal: order.shippingPostal,
