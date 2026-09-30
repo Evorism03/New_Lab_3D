@@ -397,3 +397,25 @@ function renderQuickAdd(mount, addRow) {
     mount.appendChild(btn);
   }
 }
+
+// ---- Навигация по заказам ----
+// Список, из которого открыли заказ (доска, «Все заказы»), запоминается на вкладку браузера —
+// в карточке заказа по нему работают стрелки «‹ предыдущий / следующий ›» и «← назад к списку».
+const ORDER_NAV_KEY = 'orderNav';
+
+function rememberOrderList(ids, back) {
+  try {
+    sessionStorage.setItem(ORDER_NAV_KEY, JSON.stringify({ ids: ids.map(Number), back }));
+  } catch {
+    // хранилище недоступно (приватный режим) — стрелки возьмут общий список заказов
+  }
+}
+
+function readOrderList() {
+  try {
+    const saved = JSON.parse(sessionStorage.getItem(ORDER_NAV_KEY) || 'null');
+    return saved && Array.isArray(saved.ids) ? saved : null;
+  } catch {
+    return null;
+  }
+}

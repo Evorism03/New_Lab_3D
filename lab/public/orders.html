@@ -98,7 +98,12 @@ function render(orders) {
         </div>
       </div>
     `);
-    row.addEventListener('click', () => { window.location.href = `/order.html?id=${o.id}`; });
+    row.addEventListener('click', () => {
+      // Стрелки в карточке заказа пойдут по этому списку (с текущим поиском и фильтром).
+      const status = document.getElementById('status-filter').value;
+      rememberOrderList(orders.map((x) => x.id), { href: `/orders.html${status ? `?status=${status}` : ''}`, label: 'Все заказы' });
+      window.location.href = `/order.html?id=${o.id}`;
+    });
     tbody.appendChild(row);
   }
 }

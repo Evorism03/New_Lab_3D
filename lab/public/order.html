@@ -29,6 +29,8 @@
   <div class="sidebar-bottom" id="sidebar-user"></div>
 </aside>
 <main>
+  <!-- Навигация: назад к списку, из которого открыли заказ, и стрелки к соседним заказам (клавиши ← →). -->
+  <div class="order-nav" id="order-nav" hidden></div>
   <!-- Просмотр (по умолчанию): заказ только для чтения. Правка — кнопкой «Редактировать». -->
   <div id="order-view" class="ov">
     <div class="ov-loading muted">Загрузка…</div>
@@ -1375,12 +1377,76 @@ document.getElementById('order-form').addEventListener('submit', async (e) => {
   }
 });
 
+// ---- Стрелки между заказами ----
+// Список — тот, из которого открыли заказ (доска, «Все заказы»); открыли по прямой ссылке — все заказы, новые сверху.
+let orderNav = { ids: [], back: { href: '/orders.html', label: 'Все заказы' } };
+
+const isEditing = () => !document.getElementById('order-edit').hidden;
+
+async function goToOrder(targetId) {
+  if (!targetId) return;
+  if (isEditing() && !(await confirmDialog('Перейти к другому заказу? Несохранённые изменения пропадут.'))) return;
+  window.location.href = `/order.html?id=${targetId}`;
+}
+
+function neighbours() {
+  const index = orderNav.ids.indexOf(Number(id));
+  return {
+    index,
+    prev: index > 0 ? orderNav.ids[index - 1] : null,
+    next: index >= 0 && index < orderNav.ids.length - 1 ? orderNav.ids[index + 1] : null,
+  };
+}
+
+function renderOrderNav() {
+  const bar = document.getElementById('order-nav');
+  const { index, prev, next } = neighbours();
+  bar.innerHTML = `
+    <a class="order-nav-back" href="${escapeHtml(orderNav.back.href)}">← ${escapeHtml(orderNav.back.label)}</a>
+    <div class="spacer"></div>
+    ${index >= 0 ? `
+      <button type="button" class="secondary order-nav-arrow" data-go="${prev ?? ''}" ${prev ? '' : 'disabled'} title="Предыдущий заказ (←)">‹</button>
+      <span class="muted order-nav-pos">${index + 1} из ${orderNav.ids.length}</span>
+      <button type="button" class="secondary order-nav-arrow" data-go="${next ?? ''}" ${next ? '' : 'disabled'} title="Следующий заказ (→)">›</button>` : ''}
+  `;
+  bar.querySelectorAll('[data-go]').forEach((btn) => btn.addEventListener('click', () => goToOrder(Number(btn.dataset.go))));
+  bar.hidden = false;
+}
+
+async function initOrderNav() {
+  const saved = readOrderList();
+  if (saved && saved.ids.includes(Number(id))) {
+    orderNav = { ids: saved.ids, back: saved.back || orderNav.back };
+  } else {
+    try {
+      orderNav.ids = (await api('/api/orders')).map((o) => o.id);
+    } catch {
+      orderNav.ids = [];
+    }
+  }
+  renderOrderNav();
+}
+
+// ← → листают заказы в режиме просмотра (в полях ввода и при правке стрелки работают как обычно).
+document.addEventListener('keydown', (e) => {
+  if (e.altKey || e.ctrlKey || e.metaKey || e.shiftKey || isEditing()) return;
+  if (e.target.closest('input, textarea, select, [contenteditable="true"]') || document.querySelector('.modal-overlay')) return;
+  const { prev, next } = neighbours();
+  if (e.key === 'ArrowLeft' && prev) goToOrder(prev);
+  if (e.key === 'ArrowRight' && next) goToOrder(next);
+});
+
 document.getElementById('delete-btn').addEventListener('click', async () => {
   if (!(await confirmDialog('Удалить заказ безвозвратно?'))) return;
   await api(`/api/orders/${id}`, { method: 'DELETE' });
-  window.location.href = '/orders.html';
+  // Удалённый заказ убираем из списка и открываем следующий (или возвращаемся к списку).
+  const { prev, next } = neighbours();
+  const ids = orderNav.ids.filter((x) => x !== Number(id));
+  rememberOrderList(ids, orderNav.back);
+  window.location.href = next || prev ? `/order.html?id=${next || prev}` : orderNav.back.href;
 });
 
+initOrderNav();
 load();
 </script>
 </body>

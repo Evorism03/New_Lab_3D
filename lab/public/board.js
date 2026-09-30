@@ -254,6 +254,9 @@ function render(orders) {
       });
       card.addEventListener('click', () => {
         if (suppressClick) return;
+        // Стрелки в карточке заказа пойдут по доске: колонка за колонкой, сверху вниз.
+        const ids = [...document.querySelectorAll('#board .order-card[data-id]')].map((c) => Number(c.dataset.id));
+        rememberOrderList(ids, { href: '/board.html', label: 'Доска' });
         window.location.href = `/order.html?id=${o.id}`;
       });
       // Запасной способ для телефона: выбрать колонку из списка на карточке.
