@@ -1189,3 +1189,10 @@ a.ov-serial:hover { border-color: var(--accent); color: var(--accent); text-deco
 .order-nav-back { font-size: 14px; }
 .order-nav-arrow { min-width: 44px; padding: 6px 12px; font-size: 20px; line-height: 1; }
 .order-nav-pos { font-size: 13px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+
+/* Просмотр заказа: статус и следующий шаг — без входа в редактирование */
+.ov-status-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; width: 100%; padding-top: 12px; border-top: 1px solid var(--border); }
+.ov-status-bar select { max-width: 220px; }
+.ov-track-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 6px; }
+.ov-track-actions a.small { font-size: 13px; }
+#order-ops .card > h2 { font-size: 18px; }
