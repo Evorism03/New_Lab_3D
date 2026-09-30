@@ -169,6 +169,8 @@ for (const stmt of [
   "ALTER TABLE delivery_topups ADD COLUMN carrier TEXT NOT NULL DEFAULT ''",
   // Когда заказ ушёл в «Отправлен»/«Доставлен» — останавливает счётчик дедлайна отправки.
   'ALTER TABLE orders ADD COLUMN shipped_at TEXT',
+  // Когда посылку получили (по трекингу СДЭК/Ozon) — заказ уходит в «Архив» с пометкой «Получено».
+  'ALTER TABLE orders ADD COLUMN received_at TEXT',
 ]) {
   try {
     db.exec(stmt);
@@ -201,6 +203,12 @@ function logStatus(id, status, now) {
 db.exec(
   "UPDATE orders SET shipped_at = updated_at WHERE shipped_at IS NULL AND status IN ('shipped', 'delivered')"
 );
+
+// Колонки «Доставлен» больше нет: такие заказы — в «Архив» с пометкой «Получено».
+db.exec(`
+  UPDATE orders SET status = 'archived', received_at = COALESCE(received_at, updated_at) WHERE status = 'delivered';
+  UPDATE order_status_log SET status = 'archived' WHERE status = 'delivered';
+`);
 
 // Общее key/value хранилище настроек (токены/ID внешних интеграций и т.п.) — не в git, в data/orders.db.
 export function getSetting(key) {
@@ -246,16 +254,18 @@ export function setDeadlineSettings(data) {
   return current;
 }
 
-const SHIPPED_STATUSES = ['shipped', 'delivered'];
+const SHIPPED_STATUSES = ['shipped', 'archived'];
 
-// Переход между статусами: в «Отправлен»/«Доставлен» — фиксируем момент отправки (если ещё не был),
+// Переход между статусами: в «Отправлен»/«Архив» — фиксируем момент отправки (если ещё не был),
 // обратно в работу — сбрасываем, счётчик снова идёт. «Отменён» дату не трогает.
+// Пометка «Получено» живёт только в архиве: вынули заказ из архива — пометка снимается.
 function syncShippedAt(id, status, now) {
   if (SHIPPED_STATUSES.includes(status)) {
     db.prepare('UPDATE orders SET shipped_at = ? WHERE id = ? AND shipped_at IS NULL').run(now, id);
   } else if (status !== 'cancelled') {
     db.prepare('UPDATE orders SET shipped_at = NULL WHERE id = ?').run(id);
   }
+  if (status !== 'archived') db.prepare('UPDATE orders SET received_at = NULL WHERE id = ?').run(id);
 }
 
 // «Новый заказ» и «Согласовывается» — заказ ещё не в работе: срок отправки не идёт, в статистику не входит.
@@ -294,7 +304,8 @@ export const STATUSES = [
   { id: 'to_collect', label: 'Собрать' },
   { id: 'collected', label: 'Собран' },
   { id: 'shipped', label: 'Отправлен' },
-  { id: 'delivered', label: 'Доставлен' },
+  // Завершённые заказы. Посылку получили (трекинг СДЭК/Ozon) — received_at, пометка «Получено».
+  { id: 'archived', label: 'Архив' },
   { id: 'cancelled', label: 'Отменён' },
 ];
 
@@ -663,6 +674,29 @@ export function reorderBoardColumn(status, ids) {
     syncOrderLedger(id);
     syncOrderStock(id);
   });
+}
+
+// Посылка получена (по трекингу ТК): «Отправлен» → «Архив» с пометкой «Получено».
+export function markOrderReceived(id, receivedAt) {
+  const now = new Date().toISOString();
+  const changed = db
+    .prepare("UPDATE orders SET status = 'archived', received_at = ?, board_position = NULL, updated_at = ? WHERE id = ? AND status = 'shipped'")
+    .run(receivedAt || now, now, id).changes;
+  if (!changed) return null;
+  syncShippedAt(id, 'archived', now);
+  logStatus(id, 'archived', now);
+  syncOrderLedger(id);
+  syncOrderStock(id);
+  return getOrder(id);
+}
+
+// Отправленные заказы с отправлением в СДЭК или Ozon — их статус проверяет ежедневный трекинг.
+export function listTrackedOrders() {
+  return db
+    .prepare("SELECT id FROM orders WHERE status = 'shipped' ORDER BY id")
+    .all()
+    .map((r) => getOrder(r.id))
+    .filter((o) => o.cdek_shipment?.uuid || o.ozon_shipment?.posting_number);
 }
 
 export function deleteOrder(id) {
@@ -1691,7 +1725,7 @@ db.exec(`
 `);
 
 // Статусы, в которых товар уже собран — его компоненты считаются израсходованными.
-const STOCK_CONSUMED_STATUSES = ['collected', 'shipped', 'delivered'];
+const STOCK_CONSUMED_STATUSES = ['collected', 'shipped', 'archived'];
 // Потребность («Нужно» на складе и на странице «Сборка») — только заказы в «Собрать».
 const STOCK_PENDING_STATUSES = ['to_collect'];
 

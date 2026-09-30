@@ -87,7 +87,7 @@ function stageDurations(since) {
     const cur = rows[i];
     const next = rows[i + 1];
     if (next.order_id !== cur.order_id) continue;
-    if (['cancelled', 'delivered', ...PRE_WORK_STATUSES].includes(cur.status) || next.status === 'cancelled') continue;
+    if (['cancelled', 'archived', ...PRE_WORK_STATUSES].includes(cur.status) || next.status === 'cancelled') continue;
     const end = ts(next.at);
     if (end < since) continue;
     if (!byStatus.has(cur.status)) byStatus.set(cur.status, []);

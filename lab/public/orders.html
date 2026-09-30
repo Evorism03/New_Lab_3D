@@ -48,14 +48,17 @@ let catalog = { delivery_services: [] };
 
 async function load() {
   const q = document.getElementById('search').value.trim();
-  const status = document.getElementById('status-filter').value;
   if (!statuses.length) {
     [statuses, catalog] = await Promise.all([api('/api/statuses'), api('/api/catalog')]);
     const sel = document.getElementById('status-filter');
     for (const s of statuses) {
       sel.appendChild(el(`<option value="${s.id}">${s.label}</option>`));
     }
+    // Ссылка вида /orders.html?status=archived (например, «ещё N» из архива на доске).
+    const fromUrl = new URLSearchParams(location.search).get('status');
+    if (fromUrl && statuses.some((s) => s.id === fromUrl)) sel.value = fromUrl;
   }
+  const status = document.getElementById('status-filter').value;
   const params = new URLSearchParams();
   if (q) params.set('q', q);
   if (status) params.set('status', status);
@@ -78,6 +81,7 @@ function render(orders) {
             <span class="lc-title">${escapeHtml(o.full_name || 'Без имени')}</span>
             ${o.receipts_count ? `<span class="chip" title="Файлов прикреплено: ${o.receipts_count}">📎 ${o.receipts_count}</span>` : ''}
             ${statusPill(o.status, statuses)}
+            ${o.status === 'archived' && o.received_at ? `<span class="chip" title="Посылка получена (по трекингу ТК)">✅ Получено ${ruDateTimeShort(o.received_at)}</span>` : ''}
           </div>
           <div class="lc-sub">
             <span>${escapeHtml(o.phone || '')}</span>

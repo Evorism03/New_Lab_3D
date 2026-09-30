@@ -403,7 +403,7 @@ table.orders-table tr:hover { background: var(--panel-2); }
 .tag-crm { color: var(--accent); background: rgba(91, 140, 255, 0.12); border-color: rgba(91, 140, 255, 0.35); }
 .pill.collected { color: var(--accent-2); }
 .pill.shipped { color: #6fd0ff; }
-.pill.delivered { color: #9be38a; }
+.pill.delivered, .pill.archived { color: #9be38a; }
 .pill.cancelled { color: var(--danger); }
 
 .toolbar {
@@ -1179,3 +1179,7 @@ a.ov-serial:hover { border-color: var(--accent); color: var(--accent); text-deco
   .wh-table .num { text-align: left; }
   .wh-table td[data-label]::before { content: attr(data-label); display: block; font-size: 11px; color: var(--muted); }
 }
+
+/* Архив на доске: пометка «Получено» и ссылка на остальные заказы архива */
+.order-card .received-mark { color: #9be38a; }
+.board-col .col-more { display: block; padding: 8px 4px 2px; font-size: 12px; text-align: center; }

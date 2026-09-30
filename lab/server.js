@@ -38,6 +38,8 @@ import db, {
   patchOrderOzonShipment,
   patchOrderCdekShipment,
   setOrderCdekPoint,
+  markOrderReceived,
+  listTrackedOrders,
   setOrderNpdReceipt,
   listUsers,
   findUserById,
@@ -768,6 +770,73 @@ async function cdekFetchSummary(shipment) {
 
 const cdekSettled = (sum) => sum.cdek_number || sum.errors?.length || ['SUCCESSFUL', 'INVALID'].includes(sum.request_state);
 
+// ---- Трекинг отправленных заказов ----
+// Раз в сутки спрашиваем СДЭК/Ozon, где посылки заказов в «Отправлен». Получена — заказ уходит
+// в «Архив» с пометкой «Получено» (received_at). Время прошлой проверки хранится в настройках,
+// поэтому перезапуск сервера не вызывает лишних проверок.
+const TRACKING_INTERVAL_MS = 24 * 3600e3;
+const CDEK_RECEIVED_CODES = ['DELIVERED']; // «Вручен»
+const OZON_RECEIVED_STATUSES = ['delivered'];
+let trackingRun = null;
+
+async function trackOrder(order) {
+  if (order.cdek_shipment?.uuid) {
+    const sum = await cdekFetchSummary(order.cdek_shipment);
+    patchOrderCdekShipment(order.id, sum);
+    if (CDEK_RECEIVED_CODES.includes(sum.status_code)) return { received_at: sum.status_at, status: sum.status_name };
+    return { status: sum.status_name || sum.status_code };
+  }
+  const result = await ozon.postingInfo([order.ozon_shipment.posting_number]);
+  const status = result.postings?.[0]?.status;
+  patchOrderOzonShipment(order.id, { live_status: status, live_status_checked_at: new Date().toISOString() });
+  if (OZON_RECEIVED_STATUSES.includes(status)) return { received_at: null, status };
+  return { status };
+}
+
+function runTracking() {
+  if (trackingRun) return trackingRun;
+  trackingRun = (async () => {
+    const summary = { started_at: new Date().toISOString(), checked: 0, received: [], errors: [] };
+    for (const order of listTrackedOrders()) {
+      summary.checked++;
+      try {
+        const res = await trackOrder(order);
+        if ('received_at' in res) {
+          const at = res.received_at && !Number.isNaN(Date.parse(res.received_at)) ? new Date(res.received_at).toISOString() : null;
+          if (markOrderReceived(order.id, at)) summary.received.push(order.display_number);
+        }
+      } catch (err) {
+        summary.errors.push(`#${order.display_number}: ${err.message}`);
+      }
+    }
+    summary.finished_at = new Date().toISOString();
+    setSetting('tracking_last_run', JSON.stringify(summary));
+    console.log(`[tracking] проверено ${summary.checked}, получено ${summary.received.length}, ошибок ${summary.errors.length}`);
+    return summary;
+  })().finally(() => {
+    trackingRun = null;
+  });
+  return trackingRun;
+}
+
+function lastTracking() {
+  try {
+    return JSON.parse(getSetting('tracking_last_run') || 'null');
+  } catch {
+    return null;
+  }
+}
+
+function scheduleTracking() {
+  const tick = () => {
+    const last = lastTracking();
+    const due = !last?.started_at || Date.now() - Date.parse(last.started_at) >= TRACKING_INTERVAL_MS;
+    if (due) runTracking().catch((err) => console.error(`[tracking] ${err.message}`));
+  };
+  setTimeout(tick, 60_000); // первая проверка — через минуту после старта
+  setInterval(tick, 3600e3); // дальше раз в час смотрим, не прошли ли сутки
+}
+
 function ozonDimensions(order) {
   // Ozon принимает только целые числа (Int32) — дробные значения округляем.
   const dims = {
@@ -915,6 +984,14 @@ const server = http.createServer(async (req, res) => {
       if (targetId === user.id) return sendJson(res, 400, { error: 'Нельзя удалить свою же учётную запись' });
       deleteUser(targetId);
       return sendJson(res, 200, { ok: true });
+    }
+
+    if (pathname === '/api/tracking' && req.method === 'GET') {
+      return sendJson(res, 200, { last: lastTracking(), running: !!trackingRun });
+    }
+
+    if (pathname === '/api/tracking/run' && req.method === 'POST') {
+      return sendJson(res, 200, { last: await runTracking(), running: false });
     }
 
     if (pathname === '/api/statuses' && req.method === 'GET') {
@@ -1923,4 +2000,5 @@ const server = http.createServer(async (req, res) => {
 
 server.listen(PORT, () => {
   console.log(`Order automation site running at http://localhost:${PORT}`);
+  scheduleTracking();
 });
