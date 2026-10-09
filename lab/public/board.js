@@ -196,21 +196,15 @@ function attachTouchDrag(card, o) {
 
 function moveOptions(o) {
   return statuses
-    .filter((s) => !HIDDEN_ON_BOARD.includes(s.id) && s.id !== o.status && canDropIn(s.id, o.source_tag === 'site'))
+    .filter((s) => !NOT_MOVABLE.includes(s.id) && s.id !== o.status && canDropIn(s.id, o.source_tag === 'site'))
     .map((s) => `<option value="${s.id}">${s.label}</option>`)
     .join('');
 }
 
-// Архив растёт бесконечно — на доске только последние, остальные в «Все заказы».
-const ARCHIVE_LIMIT = 30;
-
-function receivedLine(o) {
-  if (o.status !== 'archived' || !o.received_at) return '';
-  return `<div class="meta received-mark" title="Посылка получена (по трекингу ТК)">✅ Получено ${ruDateTimeShort(o.received_at)}</div>`;
-}
-
-// Отменённые и возвращённые заказы на доске не показываем — они в «Все заказы».
-const HIDDEN_ON_BOARD = ['cancelled', 'returned'];
+// Доска — только для заказов в работе: архив, отменённые и возвращённые — в «Все заказы».
+const HIDDEN_ON_BOARD = ['archived', 'cancelled', 'returned'];
+// Через «Переместить в…» на карточке можно отправить в архив, но не отменить и не оформить возврат.
+const NOT_MOVABLE = ['cancelled', 'returned'];
 
 function render(orders) {
   const board = document.getElementById('board');
@@ -218,14 +212,11 @@ function render(orders) {
   const searching = isSearching();
   const visibleStatuses = statuses.filter((s) => !HIDDEN_ON_BOARD.includes(s.id));
   for (const s of visibleStatuses) {
-    const allColOrders = sortColumn(orders.filter((o) => o.status === s.id));
-    const colOrders = s.id === 'archived' ? allColOrders.slice(0, ARCHIVE_LIMIT) : allColOrders;
-    const hidden = allColOrders.length - colOrders.length;
+    const colOrders = sortColumn(orders.filter((o) => o.status === s.id));
     const col = el(`
       <div class="board-col" data-status="${s.id}">
-        <h3><span>${s.label}</span><span>${allColOrders.length}</span></h3>
+        <h3><span>${s.label}</span><span>${colOrders.length}</span></h3>
         <div class="cards"></div>
-        ${hidden ? `<a class="muted col-more" href="/orders.html?status=${s.id}">ещё ${hidden} — в «Все заказы»</a>` : ''}
       </div>
     `);
     const cardsWrap = col.querySelector('.cards');
@@ -237,7 +228,6 @@ function render(orders) {
           <div class="meta">${deliveryDot(o.delivery_service, catalog.delivery_services)}${o.delivery_service || ''} · ${o.pvz_address || ''}</div>
           <div class="meta">${itemsSummary}</div>
           <div class="deadline-row"><span title="Дата создания">🗓 ${ruDateTimeShort(o.created_at)}</span>${deadlineChip(o)}</div>
-          ${receivedLine(o)}
           ${filesLine(o)}
           <div class="total">${money(o.grand_total)}</div>
           <select class="card-move" aria-label="Переместить заказ"><option value="">⇄ Переместить в…</option>${moveOptions(o)}</select>

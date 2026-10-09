@@ -1181,8 +1181,6 @@ a.ov-serial:hover { border-color: var(--accent); color: var(--accent); text-deco
 }
 
 /* Архив на доске: пометка «Получено» и ссылка на остальные заказы архива */
-.order-card .received-mark { color: #9be38a; }
-.board-col .col-more { display: block; padding: 8px 4px 2px; font-size: 12px; text-align: center; }
 
 /* Карточка заказа: назад к списку и стрелки к соседним заказам */
 .order-nav { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
