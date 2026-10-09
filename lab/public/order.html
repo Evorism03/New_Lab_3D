@@ -1643,14 +1643,7 @@ document.getElementById('delete-btn').addEventListener('click', async () => {
 });
 
 initOrderNav();
-load().then(() => {
-  // С доски заказ перетащили в «Возврат» — сразу открываем оформление.
-  const url = new URL(window.location.href);
-  if (url.searchParams.get('return') !== '1') return;
-  url.searchParams.delete('return');
-  history.replaceState(null, '', url);
-  if (currentOrder && canReturn(currentOrder)) openReturnDialog(currentOrder);
-});
+load();
 </script>
 </body>
 </html>

@@ -55,12 +55,6 @@ const isSearching = () => Boolean(document.getElementById('search').value.trim()
 
 // Перенос заказа в колонку. Без поиска — с порядком (по плейсхолдеру), при поиске / из выпадашки — только статус.
 async function commitMove(id, statusId, cardsWrap, statusOnly) {
-  // «Возврат» оформляется в карточке заказа (деньги, бухгалтерия, чек) — туда и отправляем.
-  if (statusId === 'returned' && !ordersById.get(id)?.return_info) {
-    placeholder.remove();
-    window.location.href = `/order.html?id=${id}&return=1`;
-    return;
-  }
   try {
     if (statusOnly || !cardsWrap) {
       await api(`/api/orders/${id}`, { method: 'PATCH', body: JSON.stringify({ status: statusId }) });
@@ -202,7 +196,7 @@ function attachTouchDrag(card, o) {
 
 function moveOptions(o) {
   return statuses
-    .filter((s) => s.id !== 'cancelled' && s.id !== o.status && canDropIn(s.id, o.source_tag === 'site'))
+    .filter((s) => !HIDDEN_ON_BOARD.includes(s.id) && s.id !== o.status && canDropIn(s.id, o.source_tag === 'site'))
     .map((s) => `<option value="${s.id}">${s.label}</option>`)
     .join('');
 }
@@ -215,17 +209,17 @@ function receivedLine(o) {
   return `<div class="meta received-mark" title="Посылка получена (по трекингу ТК)">✅ Получено ${ruDateTimeShort(o.received_at)}</div>`;
 }
 
-let ordersById = new Map();
+// Отменённые и возвращённые заказы на доске не показываем — они в «Все заказы».
+const HIDDEN_ON_BOARD = ['cancelled', 'returned'];
 
 function render(orders) {
-  ordersById = new Map(orders.map((o) => [o.id, o]));
   const board = document.getElementById('board');
   board.innerHTML = '';
   const searching = isSearching();
-  const visibleStatuses = statuses.filter((s) => s.id !== 'cancelled');
+  const visibleStatuses = statuses.filter((s) => !HIDDEN_ON_BOARD.includes(s.id));
   for (const s of visibleStatuses) {
     const allColOrders = sortColumn(orders.filter((o) => o.status === s.id));
-    const colOrders = ['archived', 'returned'].includes(s.id) ? allColOrders.slice(0, ARCHIVE_LIMIT) : allColOrders;
+    const colOrders = s.id === 'archived' ? allColOrders.slice(0, ARCHIVE_LIMIT) : allColOrders;
     const hidden = allColOrders.length - colOrders.length;
     const col = el(`
       <div class="board-col" data-status="${s.id}">
