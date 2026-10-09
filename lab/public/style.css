@@ -1196,3 +1196,10 @@ a.ov-serial:hover { border-color: var(--accent); color: var(--accent); text-deco
 .ov-track-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 6px; }
 .ov-track-actions a.small { font-size: 13px; }
 #order-ops .card > h2 { font-size: 18px; }
+
+/* Возврат заказа */
+.pill.returned { color: #f0a35e; }
+.ov-return { border-color: color-mix(in srgb, #f0a35e 45%, var(--border)); }
+.modal-box.return-modal { max-width: 520px; max-height: calc(100vh - 32px); overflow-y: auto; }
+.return-modal label.check { display: flex; gap: 8px; align-items: center; font-size: 14px; margin: 6px 0; cursor: pointer; }
+.return-modal label.check input { width: auto; }

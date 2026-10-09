@@ -40,6 +40,8 @@ import db, {
   setOrderCdekPoint,
   markOrderReceived,
   listTrackedOrders,
+  recordOrderReturn,
+  cancelOrderReturn,
   setOrderNpdReceipt,
   listUsers,
   findUserById,
@@ -1109,6 +1111,36 @@ const server = http.createServer(async (req, res) => {
       const order = markExternalOrderPaid(decodeURIComponent(externalPaymentMatch[1]));
       if (!order) return sendJson(res, 404, { error: 'Заказ не найден' });
       return sendJson(res, 200, order);
+    }
+
+    // Возврат заказа: POST — оформить (чек «Мой налог» аннулируется «возвратом средств», если отмечено),
+    // DELETE — отменить оформленный по ошибке возврат.
+    const returnMatch = pathname.match(/^\/api\/orders\/(\d+)\/return$/);
+    if (returnMatch) {
+      const orderId = Number(returnMatch[1]);
+      const order = getOrder(orderId);
+      if (!order) return sendJson(res, 404, { error: 'Заказ не найден' });
+      if (req.method === 'POST') {
+        const data = await readBody(req);
+        if (order.return_info) return sendJson(res, 409, { error: 'Возврат по заказу уже оформлен' });
+        const receipt = order.npd_receipt;
+        let npdAnnulled = false;
+        if (data.annul_receipt && receipt?.uuid && !receipt.canceled_at) {
+          try {
+            await npd.cancelIncome(receipt.uuid, 'refund');
+          } catch (err) {
+            return sendJson(res, 502, {
+              error: `Не удалось аннулировать чек «Мой налог»: ${err.message}. Аннулируйте его в приложении «Мой налог» `
+                + 'и оформите возврат без галочки про чек.',
+            });
+          }
+          setOrderNpdReceipt(orderId, { ...receipt, canceled_at: new Date().toISOString(), cancel_reason: npd.CANCEL_REASONS.refund });
+          npdAnnulled = true;
+        }
+        return sendJson(res, 200, recordOrderReturn(orderId, { ...data, npd_annulled: npdAnnulled }));
+      }
+      if (req.method === 'DELETE') return sendJson(res, 200, cancelOrderReturn(orderId));
+      return sendJson(res, 405, { error: 'Метод не поддерживается' });
     }
 
     const orderMatch = pathname.match(/^\/api\/orders\/(\d+)$/);

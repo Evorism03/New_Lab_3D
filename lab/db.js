@@ -171,6 +171,9 @@ for (const stmt of [
   'ALTER TABLE orders ADD COLUMN shipped_at TEXT',
   // Когда посылку получили (по трекингу СДЭК/Ozon) — заказ уходит в «Архив» с пометкой «Получено».
   'ALTER TABLE orders ADD COLUMN received_at TEXT',
+  // Возврат заказа: JSON { at, date, refund, return_delivery, delivery_account, reason, npd_annulled,
+  //   prev_status, ledger_ids } — см. recordOrderReturn.
+  'ALTER TABLE orders ADD COLUMN return_info TEXT',
 ]) {
   try {
     db.exec(stmt);
@@ -254,7 +257,7 @@ export function setDeadlineSettings(data) {
   return current;
 }
 
-const SHIPPED_STATUSES = ['shipped', 'archived'];
+const SHIPPED_STATUSES = ['shipped', 'archived', 'returned'];
 
 // Переход между статусами: в «Отправлен»/«Архив» — фиксируем момент отправки (если ещё не был),
 // обратно в работу — сбрасываем, счётчик снова идёт. «Отменён» дату не трогает.
@@ -306,6 +309,8 @@ export const STATUSES = [
   { id: 'shipped', label: 'Отправлен' },
   // Завершённые заказы. Посылку получили (трекинг СДЭК/Ozon) — received_at, пометка «Получено».
   { id: 'archived', label: 'Архив' },
+  // Покупатель вернул заказ: деньги (вместе с доставкой) вернули, обратную доставку оплатили сами.
+  { id: 'returned', label: 'Возврат' },
   { id: 'cancelled', label: 'Отменён' },
 ];
 
@@ -451,6 +456,7 @@ function withTotals(order, deadlineSettings = getDeadlineSettings()) {
     ozon_shipment: parseOzonShipment(order.ozon_shipment),
     cdek_shipment: parseOzonShipment(order.cdek_shipment),
     npd_receipt: parseOzonShipment(order.npd_receipt),
+    return_info: parseOzonShipment(order.return_info),
     ...shipDeadline(order, deadlineSettings),
   };
 }
@@ -601,7 +607,17 @@ function insertItems(orderId, items) {
 export const SITE_SOURCE = 'new_lab_3d';
 
 // «Печать» — только для заказов с сайта: у них есть файл, который нужно напечатать.
+// «Возврат» — только через оформление возврата (там деньги и бухгалтерия), не простой сменой статуса.
 function assertPrintAllowed(status, orderIds) {
+  if (status === 'returned') {
+    for (const oid of orderIds) {
+      const row = db.prepare('SELECT return_info FROM orders WHERE id = ?').get(oid);
+      if (row && !row.return_info) {
+        throw httpError(400, 'Возврат оформляется в карточке заказа кнопкой «↩ Возврат»');
+      }
+    }
+    return;
+  }
   if (status !== 'printing') return;
   for (const oid of orderIds) {
     const row = db.prepare('SELECT source FROM orders WHERE id = ?').get(oid);
@@ -674,6 +690,103 @@ export function reorderBoardColumn(status, ids) {
     syncOrderLedger(id);
     syncOrderStock(id);
   });
+}
+
+// ---- Возврат заказа ----
+// Оформление возврата: заказ → «Возврат», в бухгалтерию — «Возврат денег покупателю» (вся сумма заказа,
+// включая доставку) и «Обратная доставка» (её платим мы). Чек «Мой налог» аннулирует сервер до вызова.
+export function recordOrderReturn(id, data) {
+  const order = getOrder(id);
+  if (!order) return null;
+  if (order.return_info) throw httpError(409, 'Возврат по заказу уже оформлен');
+  const date = /^\d{4}-\d{2}-\d{2}$/.test(data.date || '') ? data.date : localDate();
+  const money = (v) => roundMoney(Number(String(v ?? '').replace(',', '.')) || 0);
+  const refund = money(data.refund ?? order.grand_total);
+  const returnDelivery = money(data.return_delivery);
+  if (refund < 0 || returnDelivery < 0) throw httpError(400, 'Суммы возврата не могут быть отрицательными');
+  const reason = String(data.reason || '').trim().slice(0, 500);
+  const who = order.full_name ? ` (${order.full_name})` : '';
+  const ledgerIds = [];
+  const addEntry = (entry) => {
+    const now = new Date().toISOString();
+    ledgerIds.push(Number(db.prepare(
+      `INSERT INTO ledger (date, income, expense, description, category, warranty, taxable, delivery_account,
+         linked_order_id, locked, created_at, updated_at) VALUES (?, 0, ?, ?, ?, 0, 0, ?, ?, 0, ?, ?)`
+    ).run(date, entry.expense, entry.description, entry.category, entry.delivery_account, id, now, now).lastInsertRowid));
+  };
+  db.exec('BEGIN');
+  try {
+    if (refund > 0) {
+      addEntry({
+        expense: refund,
+        description: `Возврат денег покупателю по заказу #${order.display_number}${who}${reason ? ` — ${reason}` : ''}`,
+        category: 'Возврат',
+        delivery_account: 0,
+      });
+    }
+    if (returnDelivery > 0) {
+      addEntry({
+        expense: returnDelivery,
+        description: `Обратная доставка по возврату заказа #${order.display_number}${order.delivery_service ? ` · ${order.delivery_service}` : ''}`,
+        category: 'Логистика',
+        delivery_account: data.delivery_account ? 1 : 0,
+      });
+    }
+    const now = new Date().toISOString();
+    const info = {
+      at: now,
+      date,
+      refund,
+      return_delivery: returnDelivery,
+      delivery_account: !!data.delivery_account,
+      reason,
+      npd_annulled: !!data.npd_annulled,
+      prev_status: order.status,
+      ledger_ids: ledgerIds,
+    };
+    db.prepare("UPDATE orders SET return_info = ?, status = 'returned', board_position = NULL, updated_at = ? WHERE id = ?")
+      .run(JSON.stringify(info), now, id);
+    if (order.status !== 'returned') {
+      syncShippedAt(id, 'returned', now);
+      logStatus(id, 'returned', now);
+    }
+    db.exec('COMMIT');
+  } catch (err) {
+    db.exec('ROLLBACK');
+    throw err;
+  }
+  syncOrderLedger(id);
+  syncOrderStock(id);
+  return getOrder(id);
+}
+
+// Отмена возврата (оформили по ошибке): записи возврата убираются, заказ — в прежний статус.
+// Аннулированный чек «Мой налог» так не вернуть — его при необходимости выдают заново.
+export function cancelOrderReturn(id) {
+  const order = getOrder(id);
+  if (!order) return null;
+  const info = order.return_info;
+  if (!info) throw httpError(400, 'Возврат по заказу не оформлен');
+  const now = new Date().toISOString();
+  const status = order.status === 'returned' ? info.prev_status || 'archived' : order.status;
+  db.exec('BEGIN');
+  try {
+    for (const ledgerId of info.ledger_ids || []) {
+      db.prepare('DELETE FROM ledger WHERE id = ? AND linked_order_id = ?').run(ledgerId, id);
+    }
+    db.prepare('UPDATE orders SET return_info = NULL, status = ?, updated_at = ? WHERE id = ?').run(status, now, id);
+    if (status !== order.status) {
+      syncShippedAt(id, status, now);
+      logStatus(id, status, now);
+    }
+    db.exec('COMMIT');
+  } catch (err) {
+    db.exec('ROLLBACK');
+    throw err;
+  }
+  syncOrderLedger(id);
+  syncOrderStock(id);
+  return getOrder(id);
 }
 
 // Посылка получена (по трекингу ТК): «Отправлен» → «Архив» с пометкой «Получено».
@@ -1280,12 +1393,18 @@ function orderSaleEntry(order) {
   if (!(order.grand_total > 0)) return null;
   const receipt = order.npd_receipt;
   const hasReceipt = receipt?.uuid && !receipt.canceled_at;
-  const date = hasReceipt ? receipt.operation_date || localDate(receipt.created_at) : legacySaleDate(order);
+  // Возврат: продажа остаётся в журнале как была (деньги же приходили), возврат денег и обратная
+  // доставка — отдельными записями. Чек аннулирован «возвратом средств» — налога с продажи нет.
+  const returned = order.return_info;
+  const date = hasReceipt ? receipt.operation_date || localDate(receipt.created_at)
+    : returned && receipt?.uuid ? receipt.operation_date || localDate(receipt.created_at)
+    : legacySaleDate(order);
   if (!date) return null;
   if (date < getSetting('acc_auto_since')) return null;
   if (excludedOrders().has(order.id)) return null;
   // Гарантия — на изделия из каталога моделей (AL-1 и т.п.); печать на заказ — без гарантии.
-  const warranty = order.items.some((it) => MODELS.some((m) => m.id === it.model_id)) ? 1 : 0;
+  // У возвращённого заказа гарантии больше нет — деньги уже вернули.
+  const warranty = !returned && order.items.some((it) => MODELS.some((m) => m.id === it.model_id)) ? 1 : 0;
   const printOnly = order.items.length > 0 && order.items.every((it) => it.item_kind === 'print');
   const expense = roundMoney(order.delivery_price);
   return {
@@ -1295,7 +1414,7 @@ function orderSaleEntry(order) {
     description: saleDescription(order),
     category: printOnly ? '3D-печать' : SALE_CATEGORY,
     warranty,
-    taxable: 1,
+    taxable: returned && !hasReceipt ? 0 : 1,
     delivery_account: expense > 0 ? 1 : 0,
   };
 }
@@ -1725,7 +1844,8 @@ db.exec(`
 `);
 
 // Статусы, в которых товар уже собран — его компоненты считаются израсходованными.
-const STOCK_CONSUMED_STATUSES = ['collected', 'shipped', 'archived'];
+// Возврат не возвращает компоненты на склад сам: вернувшееся изделие приходуют вручную, если оно цело.
+const STOCK_CONSUMED_STATUSES = ['collected', 'shipped', 'archived', 'returned'];
 // Потребность («Нужно» на складе и на странице «Сборка») — только заказы в «Собрать».
 const STOCK_PENDING_STATUSES = ['to_collect'];
 

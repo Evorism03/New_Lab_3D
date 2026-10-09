@@ -1225,9 +1225,115 @@ function trackActions(order) {
     </div>`;
 }
 
+// ---- Возврат ----
+const NO_RETURN_STATUSES = ['new', 'negotiating', 'cancelled'];
+const canReturn = (order) => !order.return_info && !NO_RETURN_STATUSES.includes(order.status);
+const isCarrierAccount = (order) => /сдэк|cdek|озон|ozon/i.test(order.delivery_service || '');
+
+function viewReturn(order) {
+  const r = order.return_info;
+  if (!r) return '';
+  const date = (r.date || '').split('-').reverse().join('.');
+  return `
+    <div class="card ov-block ov-return">
+      <h3>↩ Возврат</h3>
+      <div class="ov-kv"><span>Дата</span><span>${escapeHtml(date)}</span></div>
+      <div class="ov-kv"><span>Вернули покупателю</span><span class="neg">−${money(r.refund)}</span></div>
+      <div class="ov-kv"><span>Обратная доставка (платим мы)</span><span class="neg">${r.return_delivery ? `−${money(r.return_delivery)}` : '—'}${r.return_delivery && r.delivery_account ? ' <span class="muted">со счёта ТК</span>' : ''}</span></div>
+      <div class="ov-kv"><span>Чек «Мой налог»</span><span>${r.npd_annulled ? 'аннулирован (возврат средств)' : order.npd_receipt?.uuid && !order.npd_receipt.canceled_at ? '<span class="neg">не аннулирован</span>' : '—'}</span></div>
+      ${r.reason ? `<div class="ov-notes">${escapeHtml(r.reason)}</div>` : ''}
+      <div><button type="button" class="secondary small" id="ov-return-cancel" title="Возврат оформлен по ошибке: убрать записи возврата из бухгалтерии и вернуть прежний статус">Отменить возврат</button></div>
+    </div>`;
+}
+
+function openReturnDialog(order) {
+  const receipt = order.npd_receipt;
+  const activeReceipt = receipt?.uuid && !receipt.canceled_at;
+  const today = localDateInput();
+  const overlay = el(`
+    <div class="modal-overlay">
+      <form class="modal-box return-modal">
+        <h3 style="margin-top:0">↩ Возврат заказа #${escapeHtml(order.display_number)}</h3>
+        <p class="muted">Деньги покупателю переводите сами — CRM запишет возврат в бухгалтерию${activeReceipt ? ', аннулирует чек' : ''} и переведёт заказ в «Возврат».</p>
+        ${receipt?.uuid ? '' : '<p class="neg" style="font-size:13px">По заказу не выдавался чек «Мой налог» — продажи в бухгалтерии, скорее всего, нет. Возврат всё равно запишется расходом: проверьте, что поступление денег по заказу в журнале есть.</p>'}
+        <div class="field"><label>Дата возврата</label><input type="date" name="date" value="${today}" max="${today}" required></div>
+        <div class="field">
+          <label>Вернуть покупателю, ₽ <span class="muted" style="font-weight:normal">— товары ${money(order.goods_total)} + доставка ${money(order.delivery_price)}</span></label>
+          <input type="number" name="refund" min="0" step="0.01" value="${order.grand_total}" required>
+        </div>
+        <div class="field">
+          <label>Обратная доставка от покупателя, ₽ <span class="muted" style="font-weight:normal">— платим мы</span></label>
+          <input type="number" name="return_delivery" min="0" step="0.01" placeholder="0">
+        </div>
+        <label class="check"><input type="checkbox" name="delivery_account" ${isCarrierAccount(order) ? 'checked' : ''}> Обратная доставка списана со счёта ТК (${escapeHtml(order.delivery_service || 'ТК')})</label>
+        ${activeReceipt ? `<label class="check"><input type="checkbox" name="annul_receipt" checked> Аннулировать чек «Мой налог» с причиной «Возврат средств»</label>` : ''}
+        <div class="field" style="margin-top:10px"><label>Причина / комментарий</label><textarea name="reason" rows="2" placeholder="Брак разъёма, не подошёл…"></textarea></div>
+        <div class="modal-actions">
+          <button type="button" class="secondary" id="return-cancel">Отмена</button>
+          <button type="submit" class="danger">Оформить возврат</button>
+        </div>
+      </form>
+    </div>
+  `);
+  document.body.appendChild(overlay);
+  const form = overlay.querySelector('form');
+  const close = () => overlay.remove();
+  overlay.querySelector('#return-cancel').addEventListener('click', close);
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const btn = form.querySelector('[type="submit"]');
+    btn.disabled = true;
+    try {
+      const updated = await api(`/api/orders/${id}/return`, {
+        method: 'POST',
+        body: JSON.stringify({
+          date: form.date.value,
+          refund: form.refund.value,
+          return_delivery: form.return_delivery.value,
+          delivery_account: form.delivery_account.checked,
+          annul_receipt: !!form.annul_receipt?.checked,
+          reason: form.reason.value,
+        }),
+      });
+      close();
+      applyOrder(updated);
+      renderNpd(updated);
+      toast('Возврат оформлен', 'success');
+    } catch (err) {
+      btn.disabled = false;
+      toast(err.message, 'error');
+    }
+  });
+  form.refund.focus();
+}
+
+function localDateInput(d = new Date()) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
 function bindViewActions(view, order) {
   view.querySelector('#edit-btn').addEventListener('click', () => setMode('edit'));
-  view.querySelector('#ov-status').addEventListener('change', (e) => changeStatus(e.target.value));
+  view.querySelector('#ov-status').addEventListener('change', (e) => {
+    // «Возврат» — не просто статус: открываем оформление (деньги, бухгалтерия, чек).
+    if (e.target.value === 'returned' && !order.return_info) {
+      e.target.value = order.status;
+      openReturnDialog(order);
+      return;
+    }
+    changeStatus(e.target.value);
+  });
+  view.querySelector('#ov-return')?.addEventListener('click', () => openReturnDialog(order));
+  view.querySelector('#ov-return-cancel')?.addEventListener('click', async () => {
+    const npdNote = order.return_info?.npd_annulled ? ' Аннулированный чек «Мой налог» не восстановится — при необходимости сформируйте его заново.' : '';
+    if (!(await confirmDialog(`Отменить возврат? Записи возврата уберутся из бухгалтерии, заказ вернётся в прежний статус.${npdNote}`))) return;
+    try {
+      applyOrder(await api(`/api/orders/${id}/return`, { method: 'DELETE' }));
+      toast('Возврат отменён', 'success');
+    } catch (err) {
+      toast(err.message, 'error');
+    }
+  });
   view.querySelector('#ov-next')?.addEventListener('click', (e) => changeStatus(e.currentTarget.dataset.status));
   view.querySelector('#ov-track-copy')?.addEventListener('click', async (e) => {
     try {
@@ -1279,6 +1385,7 @@ function renderView(order) {
         <label class="muted" for="ov-status">Статус</label>
         <select id="ov-status">${statusOptions(order)}</select>
         ${nextLabel ? `<button type="button" id="ov-next" data-status="${next}">→ ${escapeHtml(nextLabel)}</button>` : ''}
+        ${canReturn(order) ? '<div class="spacer"></div><button type="button" class="secondary" id="ov-return" title="Покупатель вернул заказ: вернуть деньги (с доставкой), учесть обратную доставку">↩ Возврат</button>' : ''}
       </div>
     </div>
 
@@ -1307,6 +1414,8 @@ function renderView(order) {
         <div class="ov-kv ov-grand"><span>Итого</span><span>${money(order.grand_total)}</span></div>
       </div>
     </div>
+
+    ${viewReturn(order)}
 
     <div id="ov-ledger"></div>
   `;
@@ -1534,7 +1643,14 @@ document.getElementById('delete-btn').addEventListener('click', async () => {
 });
 
 initOrderNav();
-load();
+load().then(() => {
+  // С доски заказ перетащили в «Возврат» — сразу открываем оформление.
+  const url = new URL(window.location.href);
+  if (url.searchParams.get('return') !== '1') return;
+  url.searchParams.delete('return');
+  history.replaceState(null, '', url);
+  if (currentOrder && canReturn(currentOrder)) openReturnDialog(currentOrder);
+});
 </script>
 </body>
 </html>

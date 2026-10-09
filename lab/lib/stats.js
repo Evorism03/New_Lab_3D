@@ -87,7 +87,7 @@ function stageDurations(since) {
     const cur = rows[i];
     const next = rows[i + 1];
     if (next.order_id !== cur.order_id) continue;
-    if (['cancelled', 'archived', ...PRE_WORK_STATUSES].includes(cur.status) || next.status === 'cancelled') continue;
+    if (['cancelled', 'archived', 'returned', ...PRE_WORK_STATUSES].includes(cur.status) || next.status === 'cancelled') continue;
     const end = ts(next.at);
     if (end < since) continue;
     if (!byStatus.has(cur.status)) byStatus.set(cur.status, []);
@@ -111,7 +111,8 @@ export function getStats({ days = 30 } = {}) {
   const active = live.filter((o) => ACTIVE.includes(o.status));
   const toProduce = live.filter((o) => TO_PRODUCE.includes(o.status));
 
-  const revenue = created.reduce((s, o) => s + o.grand_total, 0);
+  // Деньги по возвращённым заказам вернули покупателю — в выручку они не идут.
+  const revenue = created.reduce((s, o) => s + (o.return_info ? 0 : o.grand_total), 0);
   const createdUnits = created.reduce((s, o) => s + units(o.items), 0);
   const shippedUnits = shipped.reduce((s, o) => s + units(o.items), 0);
   const backlogUnits = toProduce.reduce((s, o) => s + units(o.items), 0);
@@ -183,7 +184,7 @@ export function getStats({ days = 30 } = {}) {
       created: created.length,
       created_units: createdUnits,
       revenue,
-      avg_check: created.length ? revenue / created.length : 0,
+      avg_check: created.some((o) => !o.return_info) ? revenue / created.filter((o) => !o.return_info).length : 0,
       cancelled: cancelled.length,
       shipped: shipped.length,
       shipped_units: shippedUnits,
